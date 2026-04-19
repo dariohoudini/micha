@@ -1,15 +1,17 @@
 from django.urls import path
-from .views import MyStoreListView, PublicStoreListView, PublicStoreDetailView
+from .views import (
+    MyStoreListView,
+    PublicStoreListView,
+    PublicStoreDetailView,
+    StoreReviewCreateView,
+    StoreReviewListView,
+)
 
-app_name = "stores"
 
 urlpatterns = [
-    # Authenticated user's stores
-    path("my/", MyStoreListView.as_view(), name="my-stores"),
-
-    # Public stores list
-    path("", PublicStoreListView.as_view(), name="public-stores"),
-
-    # Public store detail (includes nested products)
-    path("<int:pk>/", PublicStoreDetailView.as_view(), name="public-store-detail"),
+    path('', PublicStoreListView.as_view(), name='public-stores'),
+    path('my/', MyStoreListView.as_view(), name='my-stores'),
+    path('<int:pk>/', PublicStoreDetailView.as_view(), name='store-detail'),
+    path('<int:pk>/review/', StoreReviewCreateView.as_view(), name='store-review-create'),
+    path('<int:pk>/reviews/', StoreReviewListView.as_view(), name='store-reviews'),
 ]

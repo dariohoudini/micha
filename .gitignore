@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Django
+db.sqlite3
+*.log
+local_settings.py
+media/
+
+# Environment
+.env
+.env.*
+!.env.example
+venv/
+env/
+
+# Old project copies — don't push these
+micha_ai_backend/
+micha_ai_full/
+micha_cissp/
+micha_final/
+micha_gaps/
+micha_security/
+micha_technical/
+micha_v4/
+micha_verification/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

@@ -1,35 +1,47 @@
 from django.db import models
 from django.conf import settings
-from django.utils import timezone
-
 User = settings.AUTH_USER_MODEL
 
-class SellerVerification(models.Model):
-    STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("verified", "Verified"),
-        ("suspended", "Suspended"),
-        ("expired", "Expired"),
-    ]
-
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="seller_verification")
-    id_number = models.CharField(max_length=50, blank=True, null=True)
-    id_document = models.FileField(upload_to="seller_ids/", blank=True, null=True)
-    selfie = models.ImageField(upload_to="seller_selfies/", blank=True, null=True)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
-    expiry_date = models.DateField(blank=True, null=True)
+class SellerProfile(models.Model):
+    seller = models.OneToOneField(User, on_delete=models.CASCADE, related_name='seller_profile')
+    store_logo = models.ImageField(upload_to='store_logos/', blank=True, null=True)
+    store_banner = models.ImageField(upload_to='store_banners/', blank=True, null=True)
+    return_policy = models.TextField(blank=True, null=True)
+    shipping_policy = models.TextField(blank=True, null=True)
+    working_hours = models.JSONField(default=dict)
+    is_on_holiday = models.BooleanField(default=False)
+    holiday_message = models.TextField(blank=True, null=True)
+    holiday_until = models.DateField(null=True, blank=True)
+    revenue_goal = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    subscription_plan = models.CharField(max_length=20, choices=(('free','Free'),('premium','Premium')), default='free')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return f"SellerVerification({self.user.email})"
+class SellerFAQ(models.Model):
+    seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='faqs')
+    question = models.CharField(max_length=300)
+    answer = models.TextField()
+    ordering = models.PositiveIntegerField(default=0)
+    class Meta: ordering = ['ordering']
 
-
-class VerificationLog(models.Model):
-    seller_verification = models.ForeignKey(SellerVerification, on_delete=models.CASCADE, related_name="logs")
-    action = models.CharField(max_length=50)  # e.g., "approved", "rejected", "suspended"
-    note = models.TextField(blank=True, null=True)
+class SellerAnnouncement(models.Model):
+    seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='announcements')
+    title = models.CharField(max_length=200)
+    message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+    class Meta: ordering = ['-created_at']
 
-    def __str__(self):
-        return f"{self.action} - {self.seller_verification.user.email}"
+class SellerOnboardingChecklist(models.Model):
+    seller = models.OneToOneField(User, on_delete=models.CASCADE, related_name='onboarding')
+    profile_completed = models.BooleanField(default=False)
+    verification_submitted = models.BooleanField(default=False)
+    verification_approved = models.BooleanField(default=False)
+    first_store_created = models.BooleanField(default=False)
+    first_product_added = models.BooleanField(default=False)
+    bank_account_added = models.BooleanField(default=False)
+    first_sale_made = models.BooleanField(default=False)
+    @property
+    def completion_percentage(self):
+        f = [self.profile_completed, self.verification_submitted, self.verification_approved,
+             self.first_store_created, self.first_product_added, self.bank_account_added, self.first_sale_made]
+        return round(sum(f) / len(f) * 100)

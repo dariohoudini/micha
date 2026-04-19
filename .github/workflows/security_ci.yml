@@ -1,0 +1,118 @@
+name: Security Checks
+
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+
+  # ── Secret scanning ─────────────────────────────────────────────────────────
+  secrets:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: HEAD~1
+          head: HEAD
+
+  # ── SAST ────────────────────────────────────────────────────────────────────
+  sast:
+    name: Static Security Analysis (Bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install bandit
+      - name: Run Bandit SAST
+        run: |
+          bandit -r apps/ config/ middleware/ \
+            -ll \
+            --exclude apps/*/migrations \
+            -f json -o bandit-report.json || true
+          bandit -r apps/ config/ middleware/ \
+            -ll \
+            --exclude apps/*/migrations \
+            -f txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # ── Dependency vulnerability scan ────────────────────────────────────────────
+  dependencies:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install pip-audit
+      - name: Scan dependencies for CVEs
+        run: |
+          pip install -r requirements.txt
+          pip-audit --strict --desc --format json -o pip-audit-report.json || true
+          pip-audit --strict --desc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+  # ── Security headers check ───────────────────────────────────────────────────
+  headers:
+    name: Security Headers Check
+    runs-on: ubuntu-latest
+    needs: []
+    if: github.ref == 'refs/heads/staging'
+    steps:
+      - name: Check security headers on staging
+        run: |
+          response=$(curl -sI https://staging.micha.app/health/)
+          echo "$response"
+          echo "$response" | grep -q "Content-Security-Policy" || (echo "MISSING: Content-Security-Policy" && exit 1)
+          echo "$response" | grep -q "X-Content-Type-Options" || (echo "MISSING: X-Content-Type-Options" && exit 1)
+          echo "$response" | grep -q "X-Frame-Options" || (echo "MISSING: X-Frame-Options" && exit 1)
+          echo "$response" | grep -q "Strict-Transport-Security" || (echo "MISSING: HSTS" && exit 1)
+          echo "All security headers present"
+
+  # ── OWASP ZAP baseline scan ──────────────────────────────────────────────────
+  dast:
+    name: DAST — OWASP ZAP Baseline
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    steps:
+      - uses: actions/checkout@v4
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'https://staging.micha.app'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+        continue-on-error: true
+
+  # ── Django security check ────────────────────────────────────────────────────
+  django_security:
+    name: Django Security Checks
+    runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: ci-test-key-minimum-50-characters-long-for-testing
+      DEBUG: 'False'
+      ALLOWED_HOSTS: 'localhost'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r requirements.txt
+      - name: Run Django security check
+        run: python manage.py check --deploy --fail-level WARNING

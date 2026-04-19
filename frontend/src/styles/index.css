@@ -1,0 +1,203 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gold: #C9A84C;
+  --color-gold-light: #E2C47A;
+  --color-gold-dark: #A67C35;
+  --color-micha-black: #0A0A0A;
+  --color-micha-surface: #141414;
+  --color-micha-card: #1E1E1E;
+  --color-micha-border: #2A2A2A;
+  --font-display: 'Playfair Display', serif;
+  --font-body: 'DM Sans', sans-serif;
+}
+
+/* ── Reset ── */
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Safe area variables ── */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+
+  /* Page top padding = status bar + design spacing */
+  --page-top: calc(var(--sat) + 16px);
+  /* Bottom nav padding = home indicator + design spacing */
+  --page-bottom: calc(var(--sab) + 8px);
+}
+
+html {
+  height: 100%;
+  overflow: hidden;
+  /* Tell the browser we handle safe areas */
+  height: -webkit-fill-available;
+}
+
+body {
+  height: 100%;
+  height: -webkit-fill-available;
+  width: 100%;
+  background-color: #0A0A0A;
+  color: #FFFFFF;
+  font-family: 'DM Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* Prevent rubber-band scroll on iOS */
+  overscroll-behavior: none;
+}
+
+#root {
+  height: 100%;
+  height: -webkit-fill-available;
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  /* Apply left/right safe areas */
+  padding-left: var(--sal);
+  padding-right: var(--sar);
+}
+
+/* ── Scrollable screen ── */
+.screen {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  overscroll-behavior-y: contain;
+}
+
+.screen::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Safe area padding helpers ── */
+.safe-top {
+  padding-top: var(--page-top);
+}
+
+.safe-bottom {
+  padding-bottom: var(--page-bottom);
+}
+
+/* Status bar area — add gold top line */
+.page-header {
+  padding-top: var(--page-top);
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Bottom nav safe area */
+.bottom-nav {
+  padding-bottom: var(--page-bottom);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* ── Reusable styles ── */
+.btn-primary {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 1rem;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+  background-color: #C9A84C;
+  color: #0A0A0A;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-primary:active {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-secondary {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 1rem;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  background-color: transparent;
+  color: #C9A84C;
+  border: 1.5px solid #C9A84C;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.btn-secondary:active {
+  opacity: 0.75;
+}
+
+.input-base {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  font-family: 'DM Sans', sans-serif;
+  outline: none;
+  background-color: #1E1E1E;
+  border: 1px solid #2A2A2A;
+  color: #FFFFFF;
+  transition: border-color 0.2s ease;
+  -webkit-appearance: none;
+}
+
+.input-base:focus {
+  border-color: #C9A84C;
+}
+
+.input-base::placeholder {
+  color: #9A9A9A;
+}
+
+/* Fix iOS select styling */
+select.input-base {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A9A' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+.card {
+  background-color: #1E1E1E;
+  border: 1px solid #2A2A2A;
+  border-radius: 1rem;
+}
+
+/* ── Keyboard avoidance on iOS ── */
+@supports (-webkit-touch-callout: none) {
+  .screen {
+    /* On iOS, ensure content isn't hidden behind keyboard */
+    padding-bottom: env(keyboard-inset-height, 0px);
+  }
+}
+
+/* ── Prevent text selection on UI elements ── */
+button, .no-select {
+  -webkit-user-select: none;
+  user-select: none;
+}

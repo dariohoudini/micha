@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=DM+Sans:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  max-width: 430px;       /* mobile frame */
+  margin: 0 auto;
+  background-color: #0A0A0A;
+  color: #FFFFFF;
+  font-family: 'DM Sans', sans-serif;
+  overflow-x: hidden;
+}
+/* Fix Framer Motion page wrapper height */
+[data-framer-component-type] {
+  min-height: 0;
+}

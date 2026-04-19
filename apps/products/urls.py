@@ -1,28 +1,23 @@
 from django.urls import path
-
 from .views import (
-    PublicProductListView,
-    PublicProductDetailView,
-    SellerProductCreateView,
-    SellerProductUpdateView,
-    SellerProductDeleteView,
-    SellerMyProductsListView,
+    CategoryListView,
+    ProductListView, ProductDetailView,
+    SellerProductListView, ProductCreateView, ProductUpdateView,
+    ProductImageUploadView, BulkProductCreateView,
+    ProductCompareView, ProductQAListCreateView, ProductDuplicateView,
 )
 
-app_name = "products"
 
 urlpatterns = [
-    # ============================
-    # PUBLIC
-    # ============================
-    path("", PublicProductListView.as_view(), name="public-product-list"),
-    path("<int:pk>/", PublicProductDetailView.as_view(), name="public-product-detail"),
-
-    # ============================
-    # SELLER
-    # ============================
-    path("seller/my/", SellerMyProductsListView.as_view(), name="seller-my-products"),
-    path("seller/create/", SellerProductCreateView.as_view(), name="seller-product-create"),
-    path("seller/<int:pk>/update/", SellerProductUpdateView.as_view(), name="seller-product-update"),
-    path("seller/<int:pk>/delete/", SellerProductDeleteView.as_view(), name="seller-product-delete"),
+    path("", ProductListView.as_view(), name="list"),
+    path("categories/", CategoryListView.as_view(), name="categories"),
+    path("compare/", ProductCompareView.as_view(), name="compare"),
+    path("bulk/", BulkProductCreateView.as_view(), name="bulk-create"),
+    path("my/", SellerProductListView.as_view(), name="my-products"),
+    path("create/", ProductCreateView.as_view(), name="create"),
+    path("<slug:slug>/", ProductDetailView.as_view(), name="detail"),
+    path("<int:pk>/update/", ProductUpdateView.as_view(), name="update"),
+    path("<int:pk>/images/", ProductImageUploadView.as_view(), name="upload-image"),
+    path("<int:pk>/qa/", ProductQAListCreateView.as_view(), name="qa"),
+    path("<int:pk>/duplicate/", ProductDuplicateView.as_view(), name="duplicate"),
 ]

@@ -1,0 +1,119 @@
+name: MICHA CI
+
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+
+  # ── Security: Scan for secrets accidentally committed ──────────────────────
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for secret scanning
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: HEAD~1
+          head: HEAD
+
+  # ── Lint ────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install flake8 black
+      - name: Run flake8
+        run: flake8 apps/ config/ middleware/ --max-line-length=120 --exclude=migrations
+      - name: Check formatting
+        run: black --check apps/ config/ middleware/ --exclude migrations
+
+  # ── Tests + Migration check ─────────────────────────────────────────────────
+  test:
+    name: Test & Migration Check
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: micha_test
+          POSTGRES_USER: micha_user
+          POSTGRES_PASSWORD: test_pass
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+
+    env:
+      SECRET_KEY: test-secret-key-minimum-50-characters-long-for-ci-run
+      DEBUG: 'True'
+      DB_NAME: micha_test
+      DB_USER: micha_user
+      DB_PASSWORD: test_pass
+      DB_HOST: localhost
+      REDIS_URL: redis://localhost:6379/0
+      FIELD_ENCRYPTION_KEY: ''  # empty in test — encryption disabled
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check no pending migrations
+        run: python manage.py migrate --check
+        continue-on-error: false  # fail if migrations not applied
+
+      - name: Run migrations
+        run: python manage.py migrate
+
+      - name: Run tests
+        run: python manage.py test tests --verbosity=2
+
+      - name: Check health endpoint
+        run: |
+          python manage.py runserver 8001 &
+          sleep 3
+          curl -f http://localhost:8001/health/ || exit 1
+          kill %1
+
+  # ── Build Docker image ──────────────────────────────────────────────────────
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t micha-api:${{ github.sha }} .
+
+      - name: Tag as latest
+        run: docker tag micha-api:${{ github.sha }} micha-api:latest
+
+      # Push to your registry here (Docker Hub, AWS ECR, etc.)
+      # - name: Push to registry
+      #   run: docker push your-registry/micha-api:latest

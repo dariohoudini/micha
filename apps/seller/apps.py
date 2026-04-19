@@ -1,5 +1,4 @@
 from django.apps import AppConfig
-
-class SellerConfig(AppConfig):
+class sellerConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.seller'  # ✅ Must be the full path
+    name = 'apps.seller'

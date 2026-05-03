@@ -41,6 +41,7 @@ const DisputeFilingPage     = lazy(() => import('@/pages/buyer/DisputeFilingPage
 const SellerDashboardPage   = lazy(() => import('@/pages/seller/SellerDashboardPage'))
 const SellerProductsPage    = lazy(() => import('@/pages/seller/SellerProductsPage'))
 const SellerProductNewPage  = lazy(() => import('@/pages/seller/SellerProductNewPage'))
+const SellerProductEditPage = lazy(() => import('@/pages/seller/SellerProductEditPage'))
 const SellerOrdersPage      = lazy(() => import('@/pages/seller/SellerOrdersPage'))
 const SellerWalletPage      = lazy(() => import('@/pages/seller/SellerWalletPage'))
 const SellerSetupPage       = lazy(() => import('@/pages/seller/SellerSetupPage'))
@@ -179,8 +180,9 @@ export default function App() {
 
             {/* ── Seller ── */}
             <Route path="/seller"              element={<S><SellerDashboardPage /></S>} />
-            <Route path="/seller/products"     element={<S><SellerProductsPage /></S>} />
-            <Route path="/seller/product/new"  element={<S><SellerProductNewPage /></S>} />
+            <Route path="/seller/products"              element={<S><SellerProductsPage /></S>} />
+            <Route path="/seller/products/new"          element={<S><SellerProductNewPage /></S>} />
+            <Route path="/seller/products/:id/edit"     element={<S><SellerProductEditPage /></S>} />
             <Route path="/seller/orders"       element={<S><SellerOrdersPage /></S>} />
             <Route path="/seller/wallet"       element={<S><SellerWalletPage /></S>} />
             <Route path="/seller/setup"        element={<S><SellerSetupPage /></S>} />

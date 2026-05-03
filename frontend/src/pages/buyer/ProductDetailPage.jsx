@@ -152,15 +152,27 @@ export default function ProductDetailPage() {
     }
   }
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     addToCart({ ...product, quantity, selectedSize, selectedColor })
     trackCartAdd(product)
     setAddedToCart(true)
     setTimeout(() => setAddedToCart(false), 2000)
+    client.post('/api/v1/cart/', {
+      product_id: product.id,
+      quantity,
+      ...(selectedSize ? { size: selectedSize } : {}),
+      ...(selectedColor ? { color: selectedColor } : {}),
+    }).catch(() => {})
   }
 
-  const handleBuyNow = () => {
+  const handleBuyNow = async () => {
     addToCart({ ...product, quantity, selectedSize, selectedColor })
+    await client.post('/api/v1/cart/', {
+      product_id: product.id,
+      quantity,
+      ...(selectedSize ? { size: selectedSize } : {}),
+      ...(selectedColor ? { color: selectedColor } : {}),
+    }).catch(() => {})
     navigate('/checkout')
   }
 

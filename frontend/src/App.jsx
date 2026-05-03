@@ -56,6 +56,8 @@ const AdminSellersPage      = lazy(() => import('@/pages/admin/AdminSellersPage'
 const AdminProductsPage     = lazy(() => import('@/pages/admin/AdminProductsPage'))
 const AdminSettingsPage     = lazy(() => import('@/pages/admin/AdminSettingsPage'))
 const AdminChatPage         = lazy(() => import('@/pages/admin/AdminChatPage'))
+const AdminFraudPage        = lazy(() => import('@/pages/admin/AdminFraudPage'))
+const AdminMonitoringPage   = lazy(() => import('@/pages/admin/AdminMonitoringPage'))
 
 function PageLoader() {
   return (
@@ -197,6 +199,8 @@ export default function App() {
             <Route path="/admin/products"      element={<A><AdminProductsPage /></A>} />
             <Route path="/admin/settings"      element={<A><AdminSettingsPage /></A>} />
             <Route path="/admin/chat"          element={<A><AdminChatPage /></A>} />
+            <Route path="/admin/fraud"         element={<A><AdminFraudPage /></A>} />
+            <Route path="/admin/monitoring"    element={<A><AdminMonitoringPage /></A>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

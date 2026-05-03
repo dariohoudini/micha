@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
+import { toast } from '@/components/ui/Toast'
 
 // Onboarding
 const SplashPage         = lazy(() => import('@/pages/SplashPage'))
@@ -120,7 +121,13 @@ const A = ({ children }) => <AdminRoute>{children}</AdminRoute>
 
 function GlobalSetup() {
   const setOnline = useUIStore(s => s.setOnline)
-  usePushNotifications()
+  usePushNotifications({
+    onNotification: (notification) => {
+      const title = notification.title || 'MICHA'
+      const body = notification.body || ''
+      toast.success(body ? `${title}: ${body}` : title, { duration: 5000 })
+    },
+  })
 
   useEffect(() => {
     const on = () => setOnline(true)

@@ -37,11 +37,15 @@ export function usePushNotifications({ onNotification } = {}) {
       const actionListener = PN.addListener('pushNotificationActionPerformed', (action) => {
         const data = action.notification?.data || {}
         if (data.type === 'order' && data.order_id) {
-          window.location.hash = `/orders/${data.order_id}`
+          window.location.pathname = `/orders/${data.order_id}`
         } else if (data.type === 'chat' && data.conversation_id) {
-          window.location.hash = `/chat/${data.conversation_id}`
+          window.location.pathname = `/chat/${data.conversation_id}`
         } else if (data.type === 'product' && data.product_id) {
-          window.location.hash = `/product/${data.product_id}`
+          window.location.pathname = `/product/${data.product_id}`
+        } else if (data.type === 'seller') {
+          window.location.pathname = '/seller'
+        } else if (data.url) {
+          window.location.pathname = data.url
         }
       })
 

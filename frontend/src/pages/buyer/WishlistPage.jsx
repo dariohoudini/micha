@@ -39,11 +39,13 @@ export default function WishlistPage() {
     } catch {}
   }
 
-  const removeFromWishlist = async (productId) => {
+  const removeFromWishlist = async (item) => {
+    const itemId = item.id
+    const productId = item.product?.id || item.id
     try {
-      await client.delete(`/api/wishlist/${productId}/`)
-      await unwatchPrice(productId)
-      setItems(prev => prev.filter(i => (i.product?.id || i.id) !== productId))
+      await client.delete(`/api/v1/wishlist/items/${itemId}/`)
+      await unwatchPrice(productId).catch(() => {})
+      setItems(prev => prev.filter(i => i.id !== itemId))
     } catch {}
   }
 
@@ -133,7 +135,7 @@ export default function WishlistPage() {
                         style={{ flex: 1, padding: '8px 0', borderRadius: 10, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#0A0A0A', cursor: 'pointer' }}>
                         Adicionar ao carrinho
                       </button>
-                      <button onClick={() => removeFromWishlist(pid)}
+                      <button onClick={() => removeFromWishlist(item)}
                         style={{ width: 36, borderRadius: 10, border: '1px solid rgba(220,38,38,0.2)', background: 'rgba(220,38,38,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />

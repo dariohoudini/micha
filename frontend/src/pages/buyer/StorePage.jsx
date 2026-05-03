@@ -201,7 +201,16 @@ export default function StorePage() {
             </div>
           )}
           {hasMore && !productsLoading && (
-            <button onClick={() => {/* load more */}} style={{ width: '100%', marginTop: 16, padding: '12px 0', borderRadius: 12, border: '1px solid #2A2A2A', background: 'transparent', ...S, fontSize: 14, color: '#9A9A9A', cursor: 'pointer' }}>
+            <button onClick={() => {
+              const nextPage = page + 1
+              setPage(nextPage)
+              client.get(`/api/v1/products/`, { params: { store: id, ordering: sort === 'popular' ? '-sold_count' : sort === 'price_asc' ? 'price' : sort === 'price_desc' ? '-price' : '-created_at', limit: 20, page: nextPage } })
+                .then(r => {
+                  const data = r.data
+                  setProducts(prev => [...prev, ...(data.results || [])])
+                  setHasMore(!!data.next)
+                }).catch(() => {})
+            }} style={{ width: '100%', marginTop: 16, padding: '12px 0', borderRadius: 12, border: '1px solid #2A2A2A', background: 'transparent', ...S, fontSize: 14, color: '#9A9A9A', cursor: 'pointer' }}>
               Ver mais produtos
             </button>
           )}

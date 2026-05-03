@@ -1,110 +1,241 @@
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
-import OrderTimeline from '@/components/buyer/OrderTimeline'
-import { formatPrice } from '@/components/buyer/mockData'
-import { BuyerProtectionButton } from '@/components/shared/UserActions'
+import { useOrder } from '@/hooks/useQueries'
 
-// Mock order for demo
-const MOCK_ORDER = {
-  id: 'ORD-DEMO01',
-  status: 'shipped',
-  date: '12 Abr 2026',
-  total: 193500,
-  delivery: 0,
-  items: [
-    { id: '1', name: 'Vestido Capulana Premium', price: 8500, quantity: 1, seller: 'Moda Luanda', image_color: '#8B4513' },
-    { id: '2', name: 'Smartphone Samsung A55', price: 185000, quantity: 1, seller: 'TechShop Angola', image_color: '#1a1a2e' },
-  ],
-  address: { name: 'João Silva', phone: '+244 912 345 678', address: 'Rua da Missão, 45, Luanda', province: 'Luanda' },
-  payment: 'Multicaixa Express',
-  timestamps: {
-    pending: '12 Abr 2026, 09:15',
-    confirmed: '12 Abr 2026, 09:45',
-    shipped: '12 Abr 2026, 14:30',
-  },
+const fmt = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
+
+const STATUS_STEPS = [
+  { key: 'pending',   label: 'Pedido recebido',     icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2' },
+  { key: 'confirmed', label: 'Confirmado',           icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
+  { key: 'shipped',   label: 'Em trânsito',          icon: 'M5 8h14M5 8a2 2 0 1 0 0-4h14a2 2 0 1 0 0 4M5 8l1 12h12L19 8' },
+  { key: 'delivered', label: 'Entregue',             icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 0 0 1 1h3m10-11l2 2m-2-2v10a1 1 0 0 0-1 1h-3m-6 0a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h4' },
+]
+const CANCELLED_STEPS = ['pending', 'cancelled']
+const ORDER_IDX = { pending: 0, confirmed: 1, shipped: 2, delivered: 3, cancelled: -1 }
+
+function OrderTimeline({ status, timestamps = {} }) {
+  const isCancelled = status === 'cancelled'
+  const steps = isCancelled ? CANCELLED_STEPS : STATUS_STEPS.map(s => s.key)
+  const currentIdx = isCancelled ? 1 : (ORDER_IDX[status] ?? 0)
+
+  if (isCancelled) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {['pending', 'cancelled'].map((s, i) => (
+          <div key={s} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+              <div style={{ width: 32, height: 32, borderRadius: '50%', background: i === 1 ? 'rgba(239,68,68,0.15)' : 'rgba(201,168,76,0.15)', border: `2px solid ${i === 1 ? '#ef4444' : '#C9A84C'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={i === 1 ? '#ef4444' : '#C9A84C'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {i === 1 ? <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></> : <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />}
+                </svg>
+              </div>
+              {i === 0 && <div style={{ width: 2, height: 28, background: '#2A2A2A', margin: '3px 0' }} />}
+            </div>
+            <div style={{ paddingTop: 6 }}>
+              <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: i === 1 ? '#ef4444' : '#FFF' }}>{i === 0 ? 'Pedido recebido' : 'Cancelado'}</p>
+              {timestamps[s] && <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>{timestamps[s]}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {STATUS_STEPS.map((step, i) => {
+        const done = i <= currentIdx
+        const active = i === currentIdx
+        return (
+          <div key={step.key} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div style={{ width: 34, height: 34, borderRadius: '50%', background: done ? 'rgba(201,168,76,0.15)' : '#1E1E1E', border: `2px solid ${done ? '#C9A84C' : '#2A2A2A'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.4s', boxShadow: active ? '0 0 0 4px rgba(201,168,76,0.15)' : 'none' }}>
+                {done
+                  ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                  : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9A9A9A" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={step.icon} /></svg>
+                }
+              </div>
+              {i < STATUS_STEPS.length - 1 && (
+                <div style={{ width: 2, height: 32, background: done && i < currentIdx ? '#C9A84C' : '#2A2A2A', margin: '4px 0', transition: 'background 0.4s' }} />
+              )}
+            </div>
+            <div style={{ paddingTop: 7, paddingBottom: i < STATUS_STEPS.length - 1 ? 0 : 0 }}>
+              <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: active ? 700 : done ? 500 : 400, color: done ? '#FFF' : '#9A9A9A' }}>{step.label}</p>
+              {timestamps[step.key] && <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: '#C9A84C', marginTop: 2 }}>{timestamps[step.key]}</p>}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
+
+const LIVE_STATUSES = ['pending', 'confirmed', 'shipped']
 
 export default function OrderDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const order = MOCK_ORDER // Replace with useOrder(id) when backend ready
+  const { data: order, isLoading, refetch } = useOrder(id)
+
+  // Live polling while order is in-progress
+  useEffect(() => {
+    if (!order?.status || !LIVE_STATUSES.includes(order.status)) return
+    const interval = setInterval(() => refetch(), 30_000)
+    return () => clearInterval(interval)
+  }, [order?.status, refetch])
+
+  const S = { fontFamily: "'DM Sans',sans-serif" }
+
+  if (isLoading) {
+    return (
+      <BuyerLayout>
+        <div style={{ padding: '52px 16px 0', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexShrink: 0 }}>
+          <div className="skeleton" style={{ width: 28, height: 28, borderRadius: 8 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="skeleton" style={{ width: 160, height: 18, borderRadius: 8 }} />
+            <div className="skeleton" style={{ width: 90, height: 12, borderRadius: 6 }} />
+          </div>
+        </div>
+        <div className="screen" style={{ flex: 1 }}>
+          <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {[120, 180, 100, 100].map((h, i) => (
+              <div key={i} className="skeleton" style={{ height: h, borderRadius: 16 }} />
+            ))}
+          </div>
+        </div>
+      </BuyerLayout>
+    )
+  }
+
+  if (!order) {
+    return (
+      <BuyerLayout>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '70%', gap: 16, padding: '0 32px', textAlign: 'center' }}>
+          <p style={{ ...S, fontSize: 16, color: '#9A9A9A' }}>Pedido não encontrado.</p>
+          <button onClick={() => navigate('/orders')} style={{ padding: '10px 24px', borderRadius: 12, border: 'none', background: '#C9A84C', ...S, fontSize: 14, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>Ver pedidos</button>
+        </div>
+      </BuyerLayout>
+    )
+  }
+
+  const items = order.items || order.order_items || []
+  const delivery = order.delivery_fee || order.shipping_cost || 0
+  const total = order.total || order.total_amount || 0
+  const addr = order.delivery_address_obj || order.shipping_address || {}
+  const timestamps = {
+    pending:   order.created_at   ? new Date(order.created_at).toLocaleString('pt-AO') : null,
+    confirmed: order.confirmed_at ? new Date(order.confirmed_at).toLocaleString('pt-AO') : null,
+    shipped:   order.shipped_at   ? new Date(order.shipped_at).toLocaleString('pt-AO') : null,
+    delivered: order.delivered_at ? new Date(order.delivered_at).toLocaleString('pt-AO') : null,
+    cancelled: order.cancelled_at ? new Date(order.cancelled_at).toLocaleString('pt-AO') : null,
+  }
 
   return (
     <BuyerLayout>
-      <div style={{ padding: '52px 16px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <div style={{ padding: 'max(52px,env(safe-area-inset-top)) 16px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <button onClick={() => navigate('/orders')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 5l-7 7 7 7" /></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 5l-7 7 7 7" /></svg>
         </button>
         <div>
-          <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: '#FFFFFF' }}>Detalhe do pedido</h1>
-          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#C9A84C', marginTop: 2 }}>{order.id}</p>
+          <h1 style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 700, color: '#FFF' }}>Detalhe do pedido</h1>
+          <p style={{ ...S, fontSize: 12, color: '#C9A84C', marginTop: 2 }}>{order.order_number || order.id}</p>
         </div>
+        {LIVE_STATUSES.includes(order.status) && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#059669', animation: 'pulseDot 2s infinite' }} />
+            <span style={{ ...S, fontSize: 11, color: '#059669' }}>A actualizar</span>
+          </div>
+        )}
       </div>
 
       <div className="screen" style={{ flex: 1 }}>
         <div style={{ padding: '0 16px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          {/* Tracking timeline */}
+          {/* Timeline */}
           <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 20 }}>
-            <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: '#FFFFFF', marginBottom: 20 }}>Rastreio do pedido</h3>
-            <OrderTimeline status={order.status} timestamps={order.timestamps} />
+            <h3 style={{ ...S, fontSize: 14, fontWeight: 600, color: '#FFF', marginBottom: 20 }}>Rastreio do pedido</h3>
+            <OrderTimeline status={order.status} timestamps={timestamps} />
           </div>
 
           {/* Items */}
           <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', overflow: 'hidden' }}>
             <div style={{ padding: '14px 16px', borderBottom: '1px solid #1E1E1E' }}>
-              <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: '#FFFFFF' }}>Produtos ({order.items.length})</h3>
+              <h3 style={{ ...S, fontSize: 14, fontWeight: 600, color: '#FFF' }}>Produtos ({items.length})</h3>
             </div>
-            {order.items.map((item, i) => (
-              <div key={item.id} style={{ display: 'flex', gap: 12, padding: 14, borderBottom: i < order.items.length - 1 ? '1px solid #1E1E1E' : 'none' }}>
-                <div style={{ width: 56, height: 56, borderRadius: 10, background: item.image_color, flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 500, color: '#FFFFFF', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</p>
-                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A', marginBottom: 4 }}>{item.seller}</p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A' }}>×{item.quantity}</span>
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#C9A84C' }}>{formatPrice(item.price * item.quantity)}</span>
+            {items.map((item, i) => {
+              const prod = item.product || item
+              const price = Number(item.unit_price || item.price || prod.price || 0)
+              const qty = item.quantity || 1
+              return (
+                <div key={item.id} style={{ display: 'flex', gap: 12, padding: 14, borderBottom: i < items.length - 1 ? '1px solid #1E1E1E' : 'none' }}>
+                  <div style={{ width: 56, height: 56, borderRadius: 10, background: prod.image_color || '#1E1E1E', flexShrink: 0, overflow: 'hidden' }}>
+                    {prod.image_url && <img src={prod.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ ...S, fontSize: 13, fontWeight: 500, color: '#FFF', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prod.name}</p>
+                    <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginBottom: 4 }}>{prod.store_name || prod.seller}</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ ...S, fontSize: 12, color: '#9A9A9A' }}>×{qty}</span>
+                      <span style={{ ...S, fontSize: 13, fontWeight: 600, color: '#C9A84C' }}>{fmt(price * qty)}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Delivery address */}
-          <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 16 }}>
-            <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#9A9A9A', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Endereço de entrega</h3>
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500, color: '#FFFFFF' }}>{order.address.name}</p>
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A', marginTop: 2 }}>{order.address.phone}</p>
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A', marginTop: 2 }}>{order.address.address}, {order.address.province}</p>
-          </div>
+          {(addr.full_name || order.delivery_address) && (
+            <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 16 }}>
+              <h3 style={{ ...S, fontSize: 12, fontWeight: 600, color: '#9A9A9A', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Endereço de entrega</h3>
+              <p style={{ ...S, fontSize: 14, fontWeight: 500, color: '#FFF' }}>{addr.full_name}</p>
+              {addr.phone && <p style={{ ...S, fontSize: 13, color: '#9A9A9A', marginTop: 2 }}>{addr.phone}</p>}
+              <p style={{ ...S, fontSize: 13, color: '#9A9A9A', marginTop: 2 }}>
+                {[addr.street, addr.neighbourhood, addr.municipality, addr.province || order.delivery_province].filter(Boolean).join(', ')
+                  || order.delivery_address}
+              </p>
+            </div>
+          )}
 
           {/* Payment summary */}
           <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 16 }}>
-            <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#9A9A9A', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Resumo de pagamento</h3>
+            <h3 style={{ ...S, fontSize: 12, fontWeight: 600, color: '#9A9A9A', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Resumo</h3>
             {[
-              { label: 'Subtotal', value: formatPrice(order.total) },
-              { label: 'Entrega', value: order.delivery === 0 ? 'Grátis' : formatPrice(order.delivery), green: true },
-              { label: 'Método', value: order.payment },
+              { label: 'Subtotal', value: fmt(total - delivery) },
+              { label: 'Entrega', value: delivery === 0 ? 'Grátis' : fmt(delivery), green: delivery === 0 },
+              { label: 'Método', value: order.payment_method === 'multicaixa' ? 'Multicaixa Express' : order.payment_method || '—' },
             ].map(row => (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A' }}>{row.label}</span>
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: row.green ? '#059669' : '#FFFFFF' }}>{row.value}</span>
+                <span style={{ ...S, fontSize: 13, color: '#9A9A9A' }}>{row.label}</span>
+                <span style={{ ...S, fontSize: 13, color: row.green ? '#059669' : '#FFF' }}>{row.value}</span>
               </div>
             ))}
             <div style={{ height: 1, background: '#2A2A2A', margin: '10px 0' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: '#FFFFFF' }}>Total pago</span>
-              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: '#C9A84C' }}>{formatPrice(order.total)}</span>
+              <span style={{ ...S, fontSize: 14, fontWeight: 700, color: '#FFF' }}>Total pago</span>
+              <span style={{ ...S, fontSize: 14, fontWeight: 700, color: '#C9A84C' }}>{fmt(total)}</span>
             </div>
           </div>
 
           {/* Actions */}
-          {order.status !== 'delivered' && (
-            <button className="btn-secondary">Contactar suporte</button>
-          )}
-          {order.status === 'delivered' && (
-            <button className="btn-primary">Avaliar produtos</button>
-          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            {order.status !== 'delivered' && order.status !== 'cancelled' && (
+              <button onClick={() => navigate('/chat')} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid #2A2A2A', background: '#141414', ...S, fontSize: 14, fontWeight: 600, color: '#FFF', cursor: 'pointer' }}>
+                Suporte
+              </button>
+            )}
+            {order.status === 'delivered' && (
+              <button onClick={() => navigate(`/product/${items[0]?.product?.id || items[0]?.id}`)} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: 'none', background: '#C9A84C', ...S, fontSize: 14, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
+                Avaliar produtos
+              </button>
+            )}
+            {order.status === 'pending' && (
+              <button style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', ...S, fontSize: 14, fontWeight: 600, color: '#ef4444', cursor: 'pointer' }}>
+                Cancelar pedido
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </BuyerLayout>

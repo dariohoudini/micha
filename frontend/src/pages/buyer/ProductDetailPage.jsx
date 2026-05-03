@@ -14,6 +14,8 @@ import HelperBot from '@/components/shared/HelperBot'
 import trackInteraction, { INTERACTION_TYPES } from '@/api/tracking'
 import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
 import { ReportButton, BlockUserButton } from '@/components/shared/UserActions'
+import ReviewsSection from '@/components/buyer/ReviewsSection'
+import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 
 // Stock urgency hook
 function useStockUrgency(productId) {
@@ -379,16 +381,7 @@ export default function ProductDetailPage() {
                   )}
                 </div>
               )}
-              {product.avg_rating > 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 48, fontWeight: 700, color: '#C9A84C' }}>{product.avg_rating?.toFixed(1)}</p>
-                  <StarRating rating={product.avg_rating} count={product.review_count} />
-                </div>
-              ) : (
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: '#9A9A9A', textAlign: 'center', padding: '20px 0' }}>
-                  Ainda sem avaliações.
-                </p>
-              )}
+              <ReviewsSection productId={id} />
             </div>
           )}
 
@@ -410,28 +403,13 @@ export default function ProductDetailPage() {
             </div>
           )}
 
-          {/* Similar products */}
-          {similarProducts.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, fontWeight: 700, color: '#FFFFFF', marginBottom: 12 }}>
-                Produtos semelhantes
-              </h2>
-              <div style={{ display: 'flex', gap: 12, overflowX: 'auto', scrollbarWidth: 'none' }}>
-                {similarProducts.slice(0, 6).map(p => (
-                  <button key={p.id} onClick={() => navigate(`/product/${p.id}`)}
-                    style={{ width: 130, flexShrink: 0, background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', overflow: 'hidden', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
-                    <div style={{ height: 100, background: '#1E1E1E', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {p.image_url && <img src={p.image_url} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-                    </div>
-                    <div style={{ padding: '8px 8px 10px' }}>
-                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#FFFFFF', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</p>
-                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: '#C9A84C' }}>{Number(p.price).toLocaleString()} Kz</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Similar + recommended products */}
+          <div style={{ margin: '8px -16px 8px' }}>
+            <RecommendationCarousel title="Produtos semelhantes" type="similar" productId={id} />
+          </div>
+          <div style={{ margin: '8px -16px 8px' }}>
+            <RecommendationCarousel title="Vistos recentemente" type="recently_viewed" />
+          </div>
 
           {/* Bottom padding for sticky buttons */}
           <div style={{ height: 100 }} />

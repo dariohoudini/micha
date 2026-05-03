@@ -64,6 +64,7 @@ export default function CheckoutPage() {
         ...(couponResult?.valid ? { coupon_code: couponCode.trim() } : {}),
       })
       useCartStore.getState().clearCart()
+      client.delete('/api/v1/cart/clear/').catch(() => {})
       const orderId = res.data?.id || res.data?.order_id || res.data?.orders?.[0] || null
       navigate('/order-confirmed', { state: { orderId, total: finalTotal } })
     } catch (err) {

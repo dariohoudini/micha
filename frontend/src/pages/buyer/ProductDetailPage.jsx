@@ -157,7 +157,7 @@ export default function ProductDetailPage() {
     trackCartAdd(product)
     setAddedToCart(true)
     setTimeout(() => setAddedToCart(false), 2000)
-    client.post('/api/v1/cart/', {
+    client.post('/api/v1/cart/add/', {
       product_id: product.id,
       quantity,
       ...(selectedSize ? { size: selectedSize } : {}),

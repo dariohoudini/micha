@@ -40,14 +40,14 @@ export function CartPage() {
     if (qty < 1) return remove(itemId)
     setUpdating(itemId)
     try {
-      await client.patch(`/api/v1/cart/${itemId}/`, { quantity: qty })
+      await client.patch(`/api/v1/cart/items/${itemId}/`, { quantity: qty })
       setItems(prev => prev.map(i => i.id === itemId ? { ...i, quantity: qty } : i))
     } catch {} finally { setUpdating(null) }
   }
 
   const remove = async (itemId) => {
     try {
-      await client.delete(`/api/v1/cart/${itemId}/`)
+      await client.delete(`/api/v1/cart/items/${itemId}/remove/`)
       setItems(prev => prev.filter(i => i.id !== itemId))
     } catch { setItems(prev => prev.filter(i => i.id !== itemId)) }
   }

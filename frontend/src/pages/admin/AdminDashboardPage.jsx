@@ -68,7 +68,7 @@ export default function AdminDashboardPage() {
 
   const loadStats = async () => {
     try {
-      const res = await client.get('/api/admin/stats/')
+      const res = await client.get('/api/v1/admin-api/stats/')
       setStats(res.data)
     } catch {}
     finally { setLoading(false) }
@@ -76,14 +76,14 @@ export default function AdminDashboardPage() {
 
   const loadRevenue = async () => {
     try {
-      const res = await client.get(`/api/admin/revenue/?period=${period}`)
+      const res = await client.get(`/api/v1/admin-api/revenue/?period=${period}`)
       setRevenue(res.data.data || [])
     } catch {}
   }
 
   const loadFraudAlerts = async () => {
     try {
-      const res = await client.get('/api/v1/admin/fraud-alerts/?limit=5')
+      const res = await client.get('/api/v1/security/fraud-alerts/?limit=5')
       setFraudAlerts(res.data.results || res.data || [])
     } catch {}
   }

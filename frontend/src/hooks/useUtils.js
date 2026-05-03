@@ -146,18 +146,12 @@ export function usePageTitle(title) {
   }, [title])
 }
 
-/**
- * usePrevious — returns the previous value of a variable
- */
 export function usePrevious(value) {
   const ref = useRef()
   useEffect(() => { ref.current = value })
   return ref.current
 }
 
-/**
- * useLocalStorage — useState but persisted to localStorage
- */
 export function useLocalStorage(key, defaultValue) {
   const [value, setValue] = useState(() => {
     try {
@@ -172,4 +166,101 @@ export function useLocalStorage(key, defaultValue) {
   }, [key])
 
   return [value, set]
+}
+
+export function useCopyToClipboard() {
+  const [copied, setCopied] = useState(false)
+
+  const copy = useCallback(async (text) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const el = document.createElement('textarea')
+      el.value = text
+      el.style.cssText = 'position:fixed;left:-9999px'
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [])
+
+  return { copy, copied }
+}
+
+export function useWebShare() {
+  const canShare = typeof navigator !== 'undefined' && !!navigator.share
+
+  const share = useCallback(async ({ title, text, url }) => {
+    if (!canShare) {
+      await navigator.clipboard.writeText(url || text || title || '')
+      return 'copied'
+    }
+    try {
+      await navigator.share({ title, text, url })
+      return 'shared'
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err
+      return 'cancelled'
+    }
+  }, [canShare])
+
+  return { share, canShare }
+}
+
+export function useScrollRestoration(key) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const saved = sessionStorage.getItem(`scroll:${key}`)
+    if (saved) el.scrollTop = parseInt(saved, 10)
+    const save = () => sessionStorage.setItem(`scroll:${key}`, el.scrollTop)
+    el.addEventListener('scroll', save, { passive: true })
+    return () => el.removeEventListener('scroll', save)
+  }, [key])
+
+  return ref
+}
+
+export function useIntersection(options = {}) {
+  const [inView, setInView] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !('IntersectionObserver' in window)) return
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { threshold: 0.1, ...options }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  return { ref, inView }
+}
+
+export function useCountdown(targetDate) {
+  const [timeLeft, setTimeLeft] = useState(null)
+
+  useEffect(() => {
+    if (!targetDate) return
+    const calc = () => {
+      const diff = new Date(targetDate) - Date.now()
+      if (diff <= 0) { setTimeLeft(null); return }
+      const h = Math.floor(diff / 3600000)
+      const m = Math.floor((diff % 3600000) / 60000)
+      const s = Math.floor((diff % 60000) / 1000)
+      setTimeLeft({ h, m, s, formatted: `${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s` })
+    }
+    calc()
+    const id = setInterval(calc, 1000)
+    return () => clearInterval(id)
+  }, [targetDate])
+
+  return timeLeft
 }

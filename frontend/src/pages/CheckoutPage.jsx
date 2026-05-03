@@ -1,7 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { useCartStore as useCart } from '@/stores/cartStore'
-import { formatPrice } from '@/components/buyer/mockData'
+import { useCheckout, useShippingAddresses } from '@/hooks/useQueries'
+import { toast } from '@/components/ui/Toast'
+import Input from '@/components/ui/Input'
+import Button from '@/components/ui/Button'
 
 const PROVINCES = [
   'Luanda', 'Benguela', 'Huambo', 'Bié', 'Malanje',
@@ -18,8 +24,7 @@ const PAYMENT_METHODS = [
     icon: (
       <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
         <rect width="40" height="40" rx="8" fill="#E30613" />
-        <text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle"
-          fill="white" fontSize="11" fontWeight="700" fontFamily="DM Sans">MCX</text>
+        <text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle" fill="white" fontSize="11" fontWeight="700" fontFamily="DM Sans">MCX</text>
       </svg>
     ),
   },
@@ -37,130 +42,241 @@ const PAYMENT_METHODS = [
   },
 ]
 
+const addressSchema = z.object({
+  full_name: z.string().min(2, 'Insira o seu nome'),
+  phone: z.string().min(9, 'Número inválido'),
+  province: z.string().min(1),
+  address: z.string().min(5, 'Insira o seu endereço'),
+  reference: z.string().optional(),
+})
+
+function fmt(v) {
+  return `${Number(v || 0).toLocaleString('pt-AO')} Kz`
+}
+
+function StepBar({ step }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 24 }} role="progressbar" aria-valuenow={step} aria-valuemin={1} aria-valuemax={3} aria-label={`Passo ${step} de 3`}>
+      {[1, 2, 3].map(i => (
+        <div key={i} style={{
+          flex: 1, height: 3, borderRadius: 2,
+          background: i <= step ? '#C9A84C' : '#1E1E1E',
+          transition: 'background 0.3s ease',
+        }} />
+      ))}
+    </div>
+  )
+}
+
 export default function CheckoutPage() {
   const navigate = useNavigate()
-  const items = useCart(s => s.items); const totalPrice = useCart(s => s.totalPrice); const clearCart = useCart(s => s.clearCart)
-  const [step, setStep] = useState(1) // 1: address, 2: payment, 3: confirm
-  const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({
-    full_name: '', phone: '', province: 'Luanda',
-    address: '', reference: '', payment_method: 'multicaixa',
-  })
+  const items = useCart(s => s.items)
+  const totalPrice = useCart(s => s.totalPrice)
+  const clearCart = useCart(s => s.clearCart)
+  const [step, setStep] = useState(1)
+  const [paymentMethod, setPaymentMethod] = useState('multicaixa')
+  const [selectedAddressId, setSelectedAddressId] = useState(null)
 
-  const delivery = items.some(i => i.express) ? 0 : 1500
+  const { data: savedAddresses = [] } = useShippingAddresses()
+  const checkout = useCheckout()
+
+  const delivery = 1500
   const total = totalPrice + delivery
 
-  const handleChange = (e) => setForm(f => ({ ...f, [e.target.name]: e.target.value }))
+  const { register, handleSubmit, reset, formState: { errors } } = useForm({
+    resolver: zodResolver(addressSchema),
+    defaultValues: { province: 'Luanda' },
+  })
 
-  const validateStep1 = () => {
-    if (!form.full_name.trim()) return 'Insira o seu nome completo.'
-    if (!form.phone.trim()) return 'Insira o seu número de telefone.'
-    if (!form.address.trim()) return 'Insira o seu endereço.'
-    return null
-  }
+  // Pre-fill from default saved address
+  useEffect(() => {
+    const defaultAddr = savedAddresses.find(a => a.is_default) || savedAddresses[0]
+    if (defaultAddr && !selectedAddressId) {
+      setSelectedAddressId(defaultAddr.id)
+      reset({
+        full_name: defaultAddr.full_name || '',
+        phone: defaultAddr.phone || '',
+        province: defaultAddr.province || 'Luanda',
+        address: defaultAddr.address || '',
+        reference: defaultAddr.reference || '',
+      })
+    }
+  }, [savedAddresses])
+
+  const onAddressSubmit = () => setStep(2)
 
   const handlePlaceOrder = async () => {
-    setLoading(true)
-    // TODO: call ordersAPI.checkout(form) when backend is ready
-    await new Promise(r => setTimeout(r, 1500))
-    clearCart()
-    navigate('/order-confirmed', { state: { orderId: 'ORD-' + Math.random().toString(36).slice(2, 8).toUpperCase() } })
+    checkout.mutate(
+      {
+        items: items.map(i => ({ product: i.id, quantity: i.quantity })),
+        payment_method: paymentMethod,
+        delivery_province: 'Luanda',
+      },
+      {
+        onSuccess: (res) => {
+          clearCart()
+          navigate('/order-confirmed', {
+            state: { orderId: res.data?.id || res.data?.order_id },
+          })
+        },
+        onError: (err) => {
+          toast.error(err.response?.data?.detail || 'Erro ao processar pedido. Tente novamente.')
+        },
+      }
+    )
   }
 
-  const Label = ({ children }) => (
-    <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 500, color: '#9A9A9A', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-      {children}
-    </label>
-  )
+  const stepTitles = ['Entrega', 'Pagamento', 'Confirmação']
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0A0A0A' }}>
       {/* Header */}
-      <div style={{ padding: '52px 16px 0', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <button onClick={() => step > 1 ? setStep(s => s - 1) : navigate('/cart')}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <header style={{ padding: '52px 16px 0', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <button
+            onClick={() => step > 1 ? setStep(s => s - 1) : navigate('/cart')}
+            aria-label="Voltar"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: '#FFFFFF' }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M19 12H5M12 5l-7 7 7 7" />
             </svg>
           </button>
           <div>
             <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: '#FFFFFF' }}>
-              {step === 1 ? 'Entrega' : step === 2 ? 'Pagamento' : 'Confirmação'}
+              {stepTitles[step - 1]}
             </h1>
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>Passo {step} de 3</p>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>
+              Passo {step} de 3
+            </p>
           </div>
         </div>
+        <StepBar step={step} />
+      </header>
 
-        {/* Progress */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 24 }}>
-          {[1, 2, 3].map(i => (
-            <div key={i} style={{
-              flex: 1, height: 3, borderRadius: 2,
-              background: i <= step ? '#C9A84C' : '#1E1E1E',
-              transition: 'background 0.3s ease',
-            }} />
-          ))}
-        </div>
-      </div>
+      <main id="main-content" className="screen" style={{ flex: 1 }}>
+        <div style={{ padding: '0 16px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-      <div className="screen" style={{ flex: 1 }}>
-        <div style={{ padding: '0 16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-          {/* Step 1 — Delivery address */}
+          {/* Step 1 — Delivery */}
           {step === 1 && (
-            <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Label>Nome completo</Label>
-                <input className="input-base" name="full_name" placeholder="João Silva"
-                  value={form.full_name} onChange={handleChange} />
-              </div>
+            <form onSubmit={handleSubmit(onAddressSubmit)} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Saved addresses selector */}
+              {savedAddresses.length > 0 && (
+                <div>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#9A9A9A', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 10 }}>
+                    Endereços guardados
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                    {savedAddresses.map(addr => (
+                      <button
+                        key={addr.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedAddressId(addr.id)
+                          reset({
+                            full_name: addr.full_name || '',
+                            phone: addr.phone || '',
+                            province: addr.province || 'Luanda',
+                            address: addr.address || '',
+                            reference: addr.reference || '',
+                          })
+                        }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 12,
+                          padding: '12px 14px', borderRadius: 12, textAlign: 'left',
+                          background: selectedAddressId === addr.id ? 'rgba(201,168,76,0.08)' : '#141414',
+                          border: `1.5px solid ${selectedAddressId === addr.id ? '#C9A84C' : '#1E1E1E'}`,
+                          cursor: 'pointer', transition: 'all 0.15s',
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#FFFFFF' }}>
+                            {addr.full_name || addr.address}
+                          </p>
+                          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>
+                            {addr.address}, {addr.province}
+                          </p>
+                        </div>
+                        <div style={{
+                          width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                          border: `2px solid ${selectedAddressId === addr.id ? '#C9A84C' : '#2A2A2A'}`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {selectedAddressId === addr.id && (
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#C9A84C' }} />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ height: 1, background: '#1E1E1E', marginBottom: 16 }} />
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 12 }}>
+                    Ou insira um novo endereço:
+                  </p>
+                </div>
+              )}
+
+              <Input
+                label="Nome completo"
+                required
+                placeholder="João Silva"
+                error={errors.full_name?.message}
+                {...register('full_name')}
+              />
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Label>Telefone</Label>
+                <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#9A9A9A', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                  Telefone <span style={{ color: '#ef4444' }}>*</span>
+                </label>
                 <div style={{ display: 'flex' }}>
                   <div style={{
                     display: 'flex', alignItems: 'center', padding: '0 14px',
                     background: '#1E1E1E', border: '1px solid #2A2A2A',
                     borderRight: 'none', borderRadius: '12px 0 0 12px',
-                    fontFamily: "'DM Sans', sans-serif", fontSize: 14,
-                    color: '#C9A84C', fontWeight: 600, whiteSpace: 'nowrap',
-                  }}>🇦🇴 +244</div>
-                  <input className="input-base" name="phone" type="tel"
-                    placeholder="9xx xxx xxx" value={form.phone} onChange={handleChange}
-                    style={{ borderRadius: '0 12px 12px 0', flex: 1 }} />
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: '#C9A84C', fontWeight: 600, whiteSpace: 'nowrap',
+                  }}>
+                    🇦🇴 +244
+                  </div>
+                  <input
+                    className="input-base"
+                    type="tel"
+                    placeholder="9xx xxx xxx"
+                    style={{ borderRadius: '0 12px 12px 0', flex: 1 }}
+                    {...register('phone')}
+                  />
                 </div>
+                {errors.phone && <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#ef4444' }} role="alert">{errors.phone.message}</p>}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Label>Província</Label>
-                <select className="input-base" name="province" value={form.province} onChange={handleChange}
-                  style={{ appearance: 'none', cursor: 'pointer' }}>
+                <label style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#9A9A9A', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                  Província
+                </label>
+                <select className="input-base" {...register('province')}>
                   {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Label>Endereço completo</Label>
-                <input className="input-base" name="address"
-                  placeholder="Rua, bairro, número..." value={form.address} onChange={handleChange} />
-              </div>
+              <Input
+                label="Endereço completo"
+                required
+                placeholder="Rua, bairro, número…"
+                error={errors.address?.message}
+                {...register('address')}
+              />
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Label>Ponto de referência <span style={{ color: '#555' }}>(opcional)</span></Label>
-                <input className="input-base" name="reference"
-                  placeholder="Ex: Próximo ao Belas Shopping" value={form.reference} onChange={handleChange} />
-              </div>
+              <Input
+                label="Ponto de referência"
+                optional
+                placeholder="Ex: Próximo ao Belas Shopping"
+                error={errors.reference?.message}
+                {...register('reference')}
+              />
 
-              <button className="btn-primary" style={{ marginTop: 8 }}
-                onClick={() => {
-                  const err = validateStep1()
-                  if (err) { alert(err); return }
-                  setStep(2)
-                }}>
+              <Button type="submit" variant="primary" size="full" style={{ marginTop: 8 }}>
                 Continuar
-              </button>
-            </>
+              </Button>
+            </form>
           )}
 
           {/* Step 2 — Payment */}
@@ -171,18 +287,21 @@ export default function CheckoutPage() {
               </p>
 
               {PAYMENT_METHODS.map(method => (
-                <button key={method.id}
-                  onClick={() => setForm(f => ({ ...f, payment_method: method.id }))}
+                <button
+                  key={method.id}
+                  onClick={() => setPaymentMethod(method.id)}
+                  aria-pressed={paymentMethod === method.id}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 16,
-                    padding: '16px 16px', borderRadius: 16, cursor: 'pointer', textAlign: 'left',
-                    background: form.payment_method === method.id ? 'rgba(201,168,76,0.08)' : '#141414',
-                    border: `1.5px solid ${form.payment_method === method.id ? '#C9A84C' : '#2A2A2A'}`,
+                    display: 'flex', alignItems: 'center', gap: 16, padding: '16px',
+                    borderRadius: 16, cursor: 'pointer', textAlign: 'left', width: '100%',
+                    background: paymentMethod === method.id ? 'rgba(201,168,76,0.08)' : '#141414',
+                    border: `1.5px solid ${paymentMethod === method.id ? '#C9A84C' : '#2A2A2A'}`,
                     transition: 'all 0.2s',
-                  }}>
+                  }}
+                >
                   {method.icon}
                   <div style={{ flex: 1 }}>
-                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: form.payment_method === method.id ? '#C9A84C' : '#FFFFFF' }}>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: paymentMethod === method.id ? '#C9A84C' : '#FFFFFF' }}>
                       {method.label}
                     </p>
                     <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>
@@ -191,74 +310,74 @@ export default function CheckoutPage() {
                   </div>
                   <div style={{
                     width: 20, height: 20, borderRadius: '50%',
-                    border: `2px solid ${form.payment_method === method.id ? '#C9A84C' : '#2A2A2A'}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: `2px solid ${paymentMethod === method.id ? '#C9A84C' : '#2A2A2A'}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                   }}>
-                    {form.payment_method === method.id && (
+                    {paymentMethod === method.id && (
                       <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#C9A84C' }} />
                     )}
                   </div>
                 </button>
               ))}
 
-              {/* Order summary mini */}
+              {/* Order summary */}
               <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #2A2A2A', padding: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A' }}>Subtotal</span>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF' }}>{formatPrice(totalPrice)}</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF' }}>{fmt(totalPrice)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A' }}>Entrega</span>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: delivery === 0 ? '#059669' : '#FFFFFF' }}>{delivery === 0 ? 'Grátis' : formatPrice(delivery)}</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF' }}>{fmt(delivery)}</span>
                 </div>
                 <div style={{ height: 1, background: '#2A2A2A', marginBottom: 12 }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#FFFFFF' }}>Total</span>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#C9A84C' }}>{formatPrice(total)}</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#C9A84C' }}>{fmt(total)}</span>
                 </div>
               </div>
 
-              <button className="btn-primary" onClick={() => setStep(3)}>
+              <Button variant="primary" size="full" onClick={() => setStep(3)}>
                 Continuar
-              </button>
+              </Button>
             </>
           )}
 
           {/* Step 3 — Confirm */}
           {step === 3 && (
             <>
-              {/* Delivery summary */}
               <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #2A2A2A', padding: 16 }}>
-                <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#9A9A9A', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Entrega</h3>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: '#FFFFFF', fontWeight: 500 }}>{form.full_name}</p>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A', marginTop: 4 }}>+244 {form.phone}</p>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A', marginTop: 2 }}>{form.address}, {form.province}</p>
-                {form.reference && <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>{form.reference}</p>}
-              </div>
-
-              {/* Items summary */}
-              <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #2A2A2A', padding: 16 }}>
-                <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#9A9A9A', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Produtos ({items.length})</h3>
+                <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#9A9A9A', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Produtos ({items.length})
+                </h3>
                 {items.map(item => (
                   <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF', flex: 1, marginRight: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{
+                      fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF',
+                      flex: 1, marginRight: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
                       {item.name} ×{item.quantity}
                     </span>
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#C9A84C', flexShrink: 0 }}>{formatPrice(item.price * item.quantity)}</span>
+                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#C9A84C', flexShrink: 0 }}>
+                      {fmt(item.price * item.quantity)}
+                    </span>
                   </div>
                 ))}
                 <div style={{ height: 1, background: '#2A2A2A', margin: '12px 0' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#FFFFFF' }}>Total</span>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#C9A84C' }}>{formatPrice(total)}</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#C9A84C' }}>{fmt(total)}</span>
                 </div>
               </div>
 
-              <button className="btn-primary"
-                onClick={handlePlaceOrder} disabled={loading}
-                style={{ opacity: loading ? 0.7 : 1 }}>
-                {loading ? 'A processar...' : `Confirmar Pedido · ${formatPrice(total)}`}
-              </button>
+              <Button
+                variant="primary"
+                size="full"
+                loading={checkout.isPending}
+                onClick={handlePlaceOrder}
+              >
+                Confirmar Pedido · {fmt(total)}
+              </Button>
 
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A', textAlign: 'center', lineHeight: 1.5 }}>
                 Ao confirmar aceita os nossos Termos de Uso e Política de Devoluções
@@ -266,7 +385,7 @@ export default function CheckoutPage() {
             </>
           )}
         </div>
-      </div>
+      </main>
     </div>
   )
 }

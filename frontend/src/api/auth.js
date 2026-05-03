@@ -30,4 +30,12 @@ export const authAPI = {
     api.post('/auth/logout/', {
       refresh: localStorage.getItem('refresh_token'),
     }),
+
+  getProfile: () => api.get('/auth/profile/'),
+
+  updateProfile: (data) => api.patch('/auth/profile/', data),
+
+  changePassword: (data) => api.post('/auth/change-password/', data),
+
+  getReferral: () => api.get('/auth/referral/'),
 }

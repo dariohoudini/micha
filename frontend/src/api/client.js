@@ -7,13 +7,16 @@ const api = axios.create({
   timeout: 12000,
 })
 
-// ── Request: attach access token from memory ───────────────────────────────
+// ── Request: attach access token + request ID ─────────────────────────────
 api.interceptors.request.use(
   (config) => {
     const token = tokenStorage.getAccessToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+    // Correlate requests in server logs
+    config.headers['X-Request-ID'] = crypto.randomUUID?.() || Math.random().toString(36).slice(2)
+    config.headers['X-App-Version'] = import.meta.env.VITE_APP_VERSION || '1.0.0'
     // Strip any accidentally included sensitive fields
     if (config.data) {
       const { password, ...rest } = config.data

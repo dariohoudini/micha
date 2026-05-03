@@ -1,7 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import ErrorBoundary from '@/components/shared/ErrorBoundary'
 import { useAuthStore } from '@/stores/authStore'
+import { useUIStore } from '@/stores/uiStore'
+import OfflineBanner from '@/components/ui/OfflineBanner'
 
 // Onboarding
 const SplashPage         = lazy(() => import('@/pages/SplashPage'))
@@ -10,7 +12,9 @@ const WelcomePage        = lazy(() => import('@/pages/WelcomePage'))
 const LoginPage          = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage       = lazy(() => import('@/pages/RegisterPage'))
 const OTPPage            = lazy(() => import('@/pages/OTPPage'))
-const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
+const ForgotPasswordPage    = lazy(() => import('@/pages/ForgotPasswordPage'))
+const ResetPasswordPage     = lazy(() => import('@/pages/ResetPasswordPage'))
+const OnboardingQuizPage    = lazy(() => import('@/pages/OnboardingQuizPage'))
 
 // Buyer
 const HomePage              = lazy(() => import('@/pages/buyer/HomePage'))
@@ -50,12 +54,18 @@ const AdminChatPage         = lazy(() => import('@/pages/admin/AdminChatPage'))
 
 function PageLoader() {
   return (
-    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0A0A0A' }}>
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <circle cx="12" cy="12" r="10" stroke="#C9A84C" strokeWidth="2" strokeOpacity="0.2" />
+    <div
+      role="status"
+      aria-label="A carregar"
+      style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0A0A0A', gap: 16 }}
+    >
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
+        <circle cx="12" cy="12" r="10" stroke="#C9A84C" strokeWidth="2" strokeOpacity="0.15" />
         <path d="M12 2a10 10 0 0 1 10 10" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
       </svg>
+      <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#555' }}>
+        A carregar…
+      </span>
     </div>
   )
 }
@@ -94,10 +104,40 @@ const P = ({ children }) => <ProtectedRoute>{children}</ProtectedRoute>
 const S = ({ children }) => <SellerRoute>{children}</SellerRoute>
 const A = ({ children }) => <AdminRoute>{children}</AdminRoute>
 
+function GlobalSetup() {
+  const setOnline = useUIStore(s => s.setOnline)
+
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+
+    const onUnhandled = (e) => {
+      e.preventDefault()
+      console.error('[MICHA] Unhandled rejection:', e.reason)
+    }
+    window.addEventListener('unhandledrejection', onUnhandled)
+
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+      window.removeEventListener('unhandledrejection', onUnhandled)
+    }
+  }, [setOnline])
+
+  return null
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <GlobalSetup />
+        <a href="#main-content" className="skip-link">
+          Saltar para o conteúdo principal
+        </a>
+        <OfflineBanner />
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Onboarding */}
@@ -108,6 +148,7 @@ export default function App() {
             <Route path="/register"        element={<RegisterPage />} />
             <Route path="/otp"             element={<OTPPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password"  element={<ResetPasswordPage />} />
             <Route path="/onboarding/quiz" element={<P><OnboardingQuizPage /></P>} />
             <Route path="/dashboard"       element={<RoleRedirect />} />
 

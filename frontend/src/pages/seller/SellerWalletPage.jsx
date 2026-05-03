@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import SellerLayout from '@/layouts/SellerLayout'
 import { formatPrice } from '@/components/buyer/mockData'
+import { useWallet, useWalletTransactions, useRequestPayout } from '@/hooks/useQueries'
 
 const TRANSACTIONS = [
   { id: 't1', type: 'sale',        label: 'Venda — Vestido Capulana ×2',    amount: 17000,  fee: -850,   date: '13 Abr 09:32', status: 'completed', orderId: 'ORD-001' },
@@ -18,6 +19,9 @@ export default function SellerWalletPage() {
   const [withdrawStep, setWithdrawStep] = useState(1) // 1: amount, 2: confirm, 3: success
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [phone, setPhone] = useState('')
+  const { data: wallet } = useWallet()
+  const { data: txData } = useWalletTransactions()
+  const requestPayout = useRequestPayout()
   const [phoneError, setPhoneError] = useState('')
   const [amountError, setAmountError] = useState('')
   const [loading, setLoading] = useState(false)

@@ -19,20 +19,21 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query'],
-          'vendor-forms': ['react-hook-form', 'zod', '@hookform/resolvers'],
-          'vendor-motion': ['framer-motion'],
-          'vendor-i18n': ['react-i18next', 'i18next'],
-          'vendor-axios': ['axios'],
-          'vendor-zustand': ['zustand'],
+        // Vite 8 (rolldown) requires manualChunks as a function
+        manualChunks: (id) => {
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router-dom')) return 'vendor-react'
+          if (id.includes('@tanstack/react-query')) return 'vendor-query'
+          if (id.includes('react-hook-form') || id.includes('zod') || id.includes('@hookform')) return 'vendor-forms'
+          if (id.includes('framer-motion')) return 'vendor-motion'
+          if (id.includes('react-i18next') || id.includes('i18next')) return 'vendor-i18n'
+          if (id.includes('node_modules/axios')) return 'vendor-axios'
+          if (id.includes('node_modules/zustand')) return 'vendor-zustand'
         },
       },
     },
-    chunkSizeWarningLimit: 500,
-    minify: 'esbuild',
-    target: 'es2015',
+    chunkSizeWarningLimit: 600,
+    minify: 'oxc',
+    target: 'es2020',
   },
 
   optimizeDeps: {

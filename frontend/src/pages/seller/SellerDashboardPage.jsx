@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import { useAuthStore } from '@/stores/authStore'
 import { formatPrice } from '@/components/buyer/mockData'
+import { useSellerDashboard, useSellerOrders } from '@/hooks/useQueries'
 
 const INITIAL_ORDERS = [
   { id: 'ORD-001', buyer: 'João Silva', product: 'Vestido Capulana Premium', qty: 2, total: 17000, time: '5 min atrás', province: 'Luanda', urgent: true },
@@ -22,6 +23,8 @@ export default function SellerDashboardPage() {
   const user = useAuthStore(s => s.user)
   const [orders, setOrders] = useState(INITIAL_ORDERS)
   const [toast, setToast] = useState(null)
+  const { data: dash } = useSellerDashboard()
+  const { data: liveOrders } = useSellerOrders({ status: 'pending', limit: 10 })
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })

@@ -97,7 +97,7 @@ export default function CartPage() {
       </div>
 
       <div style={{ padding: '12px 16px 32px', background: '#0A0A0A', borderTop: '1px solid #1E1E1E', flexShrink: 0 }}>
-        <button className="btn-primary" onClick={() => navigate('/checkout')}>Finalizar Compra · {formatPrice(total)}</button>
+        <button className="btn-primary" onClick={() => navigate('/checkout', { state: { cartItems: items, total } })}>Finalizar Compra · {formatPrice(total)}</button>
       </div>
       <BottomNav />
     </div>

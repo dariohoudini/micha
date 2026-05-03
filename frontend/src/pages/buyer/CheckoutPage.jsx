@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
+import { useCartStore } from '@/stores/cartStore'
 import { DeliverySlotPicker, GuestCheckoutOption, SplitPaymentUI } from '@/components/shared/MichaUXComponents'
 import { CheckoutProgressBar, MulticaixaPaymentUI, OrderSummary, SavedAddresses, PromoCodeInput } from '@/components/buyer/CheckoutUX'
 import { haptic } from '@/hooks/useUX'
@@ -15,7 +16,10 @@ export default function CheckoutPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const user = useAuthStore(s => s.user)
-  const { cartItems = [], total = 0 } = location.state || {}
+  const storeItems = useCartStore(s => s.items)
+  const storeTotalPrice = useCartStore(s => s.totalPrice)
+  const storeDelivery = storeItems.length > 0 && storeItems.every(i => i.express) ? 0 : storeItems.length > 0 ? 1500 : 0
+  const { cartItems = storeItems, total = storeTotalPrice + storeDelivery } = location.state || {}
 
   const [address, setAddress] = useState({ province: user?.province || 'Luanda', municipality: '', neighbourhood: '', street: '', notes: '' })
   const [payment, setPayment] = useState('multicaixa')
@@ -59,6 +63,7 @@ export default function CheckoutPage() {
         items: cartItems.map(i => ({ product: i.product?.id || i.id, quantity: i.quantity || 1 })),
         ...(couponResult?.valid ? { coupon_code: couponCode.trim() } : {}),
       })
+      useCartStore.getState().clearCart()
       navigate('/order-confirmed', { state: { orderId: res.data?.id || res.data?.order_id, total: finalTotal } })
     } catch (err) {
       setError(err.response?.data?.detail || err.response?.data?.error || 'Erro ao processar pedido.')

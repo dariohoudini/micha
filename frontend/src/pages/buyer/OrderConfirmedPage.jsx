@@ -46,7 +46,7 @@ export default function OrderConfirmedPage() {
         })
         .catch(() => {})
     }
-    client.get('/api/v1/loyalty/balance/')
+    client.get('/api/v1/auth/loyalty/')
       .then(r => setLoyaltyPoints(r.data?.points || r.data?.balance || null))
       .catch(() => {})
 

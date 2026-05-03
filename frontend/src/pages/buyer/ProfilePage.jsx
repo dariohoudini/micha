@@ -42,7 +42,7 @@ export default function ProfilePage() {
   useEffect(() => {
     Promise.allSettled([
       client.get('/api/v1/orders/').then(r => r.data.count || r.data.results?.length || 0),
-      client.get('/api/v1/loyalty/balance/').then(r => r.data?.points || r.data?.balance || 0),
+      client.get('/api/v1/auth/loyalty/').then(r => r.data?.points || r.data?.balance || 0),
       client.get('/api/v1/reviews/my-reviews/').then(r => r.data.count || r.data.results?.length || 0),
     ]).then(([orders, points, reviews]) => {
       setProfileStats({

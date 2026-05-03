@@ -439,11 +439,18 @@ class AdminRevenueChartView(APIView):
 
                 orders = Order.objects.filter(created_at__date=day).count()
 
+                try:
+                    from apps.users.models import User
+                    users = User.objects.filter(date_joined__date=day).count()
+                except Exception:
+                    users = 0
+
                 data.append({
                     'date': day.isoformat(),
                     'day': day.strftime('%a'),
                     'gmv': float(gmv),
                     'orders': orders,
+                    'users': users,
                 })
         except Exception:
             pass

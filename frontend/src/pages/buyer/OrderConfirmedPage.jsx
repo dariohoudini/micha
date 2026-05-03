@@ -44,6 +44,8 @@ export default function OrderConfirmedPage() {
 
   const displayId = orderId ? String(orderId).slice(0, 8).toUpperCase() : 'MC-XXXXXX'
   const earnedPoints = total ? Math.floor(Number(total) / 1000) : null
+  const paymentMethod = orderDetails?.payment_method
+  const paymentRef = orderDetails?.payment_reference || orderDetails?.multicaixa_reference || orderDetails?.bank_reference
 
   return (
     <BuyerLayout title="Pedido confirmado">
@@ -60,6 +62,38 @@ export default function OrderConfirmedPage() {
             <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: TEXT, margin: '8px 0 0' }}>{fmt(total)}</p>
           )}
         </div>
+
+        {/* Payment reference (Multicaixa / bank transfer) */}
+        {paymentRef && (
+          <div style={{ width: '100%', marginBottom: 20, background: paymentMethod === 'multicaixa' ? 'rgba(201,168,76,0.08)' : 'rgba(59,130,246,0.08)', border: `1px solid ${paymentMethod === 'multicaixa' ? 'rgba(201,168,76,0.3)' : 'rgba(59,130,246,0.3)'}`, borderRadius: 16, padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <span style={{ fontSize: 20 }}>{paymentMethod === 'multicaixa' ? '📱' : '🏦'}</span>
+              <p style={{ ...S, fontSize: 13, fontWeight: 700, color: paymentMethod === 'multicaixa' ? GOLD : '#3b82f6', margin: 0 }}>
+                {paymentMethod === 'multicaixa' ? 'Pague agora com Multicaixa Express' : 'Referência para transferência'}
+              </p>
+            </div>
+            <div style={{ background: BG, borderRadius: 10, padding: '14px 16px', marginBottom: 12 }}>
+              <p style={{ ...S, fontSize: 11, color: MUTED, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Referência de pagamento</p>
+              <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 24, fontWeight: 700, color: TEXT, margin: 0, letterSpacing: 3 }}>{paymentRef}</p>
+            </div>
+            {orderDetails?.bank_name && (
+              <p style={{ ...S, fontSize: 12, color: MUTED, margin: '0 0 8px' }}>
+                Banco: <strong style={{ color: TEXT }}>{orderDetails.bank_name}</strong>
+                {orderDetails.iban && <> · IBAN: <strong style={{ color: TEXT }}>{orderDetails.iban}</strong></>}
+              </p>
+            )}
+            <p style={{ ...S, fontSize: 12, color: MUTED, margin: '0 0 12px', lineHeight: 1.6 }}>
+              {paymentMethod === 'multicaixa'
+                ? 'Abra a app Multicaixa Express, selecione "Compras" e insira esta referência. O seu pedido será confirmado automaticamente após o pagamento.'
+                : 'Efectue a transferência usando a referência acima. O seu pedido será activado após confirmação do pagamento.'}
+            </p>
+            <button
+              onClick={() => { navigator.clipboard?.writeText(paymentRef); haptic.success?.() }}
+              style={{ width: '100%', padding: '11px 0', borderRadius: 10, border: `1px solid ${paymentMethod === 'multicaixa' ? 'rgba(201,168,76,0.4)' : 'rgba(59,130,246,0.4)'}`, background: 'none', ...S, fontSize: 13, fontWeight: 600, color: paymentMethod === 'multicaixa' ? GOLD : '#3b82f6', cursor: 'pointer' }}>
+              Copiar referência
+            </button>
+          </div>
+        )}
 
         {/* Loyalty points earned */}
         {earnedPoints > 0 && (

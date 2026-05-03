@@ -42,10 +42,13 @@ export default function CartPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '0 16px' }}>
           {items.map(item => (
             <div key={item.id} style={{ display: 'flex', gap: 14, alignItems: 'center', background: '#1E1E1E', borderRadius: 16, border: '1px solid #2A2A2A', padding: 14 }}>
-              <div style={{ width: 72, height: 72, borderRadius: 12, flexShrink: 0, background: item.image_color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
-                </svg>
+              <div style={{ width: 72, height: 72, borderRadius: 12, flexShrink: 0, background: item.image_color || '#1E1E1E', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                {item.image_url
+                  ? <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
+                  : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+                    </svg>
+                }
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 500, color: '#FFFFFF', lineHeight: 1.3, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</p>

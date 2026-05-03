@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { BANNERS } from './mockData'
+
+const BANNERS = [
+  { id: '1', title: 'Entrega Express\nem Luanda', subtitle: 'Receba hoje mesmo', bg: 'linear-gradient(135deg, #C9A84C 0%, #A67C35 100%)', textColor: '#0A0A0A' },
+  { id: '2', title: 'Moda Angolana\nPremium', subtitle: 'Capulanas e muito mais', bg: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)', textColor: '#C9A84C' },
+  { id: '3', title: 'Tech ao Melhor\nPreço', subtitle: 'Smartphones e acessórios', bg: 'linear-gradient(135deg, #0f2027 0%, #203a43 100%)', textColor: '#FFFFFF' },
+]
 
 export default function PromoBanner() {
   const [current, setCurrent] = useState(0)

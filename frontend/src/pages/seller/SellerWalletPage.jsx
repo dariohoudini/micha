@@ -1,19 +1,9 @@
 import { useState } from 'react'
 import SellerLayout from '@/layouts/SellerLayout'
-import { formatPrice } from '@/components/buyer/mockData'
 import { PayoutScheduleCalendar } from '@/components/shared/MichaUXComponents'
 import { useWallet, useWalletTransactions, useRequestPayout } from '@/hooks/useQueries'
 
-const TRANSACTIONS = [
-  { id: 't1', type: 'sale',        label: 'Venda — Vestido Capulana ×2',    amount: 17000,  fee: -850,   date: '13 Abr 09:32', status: 'completed', orderId: 'ORD-001' },
-  { id: 't2', type: 'sale',        label: 'Venda — Colar de Missangas',     amount: 4500,   fee: -225,   date: '12 Abr 14:15', status: 'completed', orderId: 'ORD-002' },
-  { id: 't3', type: 'withdrawal',  label: 'Levantamento — Multicaixa',      amount: -15000, fee: 0,      date: '10 Abr 11:00', status: 'completed', orderId: null },
-  { id: 't4', type: 'sale',        label: 'Venda — Bolsa de Couro',         amount: 28000,  fee: -1400,  date: '09 Abr 16:20', status: 'completed', orderId: 'ORD-004' },
-  { id: 't5', type: 'pending',     label: 'Venda pendente — Vestido ×1',   amount: 8500,   fee: -425,   date: '13 Abr 16:00', status: 'pending',   orderId: 'ORD-005' },
-  { id: 't6', type: 'refund',      label: 'Reembolso — Pedido cancelado',  amount: -4500,  fee: 225,    date: '08 Abr 09:15', status: 'completed', orderId: null },
-]
-
-const COMMISSION_RATE = 0.05 // 5%
+const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
 export default function SellerWalletPage() {
   const [showWithdraw, setShowWithdraw] = useState(false)
@@ -25,11 +15,16 @@ export default function SellerWalletPage() {
   const [loading, setLoading] = useState(false)
   const [showBalance, setShowBalance] = useState(true)
 
-  const available = 34025
-  const pending = 8075 // after commission
-  const totalEarned = 49025
-  const totalWithdrawn = 15000
-  const totalCommissions = 2900
+  const { data: walletData, isLoading: walletLoading } = useWallet()
+  const { data: txData, isLoading: txLoading } = useWalletTransactions()
+  const { mutateAsync: requestPayout, isPending: payoutPending } = useRequestPayout()
+
+  const available = walletData?.available_balance || walletData?.balance || 0
+  const pending = walletData?.pending_balance || 0
+  const totalEarned = walletData?.total_earned || 0
+  const totalWithdrawn = walletData?.total_withdrawn || 0
+  const totalCommissions = walletData?.total_commissions || 0
+  const transactions = txData?.results || txData || []
 
   const validateWithdraw = () => {
     let valid = true
@@ -57,9 +52,12 @@ export default function SellerWalletPage() {
   const handleWithdraw = async () => {
     if (!validateWithdraw()) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1500))
-    setLoading(false)
-    setWithdrawStep(3)
+    try {
+      await requestPayout({ amount: Number(withdrawAmount), phone: `+244${phone.replace(/\s/g, '')}`, method: 'multicaixa' })
+      setWithdrawStep(3)
+    } catch (err) {
+      setAmountError(err.response?.data?.detail || err.response?.data?.error || 'Erro ao processar levantamento.')
+    } finally { setLoading(false) }
   }
 
   const resetWithdraw = () => {
@@ -219,7 +217,7 @@ export default function SellerWalletPage() {
             </div>
 
             <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 34, fontWeight: 700, color: '#0A0A0A', marginBottom: 4 }}>
-              {showBalance ? formatPrice(available) : '••••••• Kz'}
+              {walletLoading ? '—' : showBalance ? formatPrice(available) : '••••••• Kz'}
             </p>
 
             {pending > 0 && (
@@ -285,32 +283,56 @@ export default function SellerWalletPage() {
             <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#9A9A9A', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
               Histórico de transações
             </h3>
-            <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', overflow: 'hidden' }}>
-              {TRANSACTIONS.map((tx, i) => {
-                const netAmount = tx.amount + (tx.fee || 0)
-                const isPositive = netAmount > 0
-                return (
-                  <div key={tx.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderBottom: i < TRANSACTIONS.length - 1 ? '1px solid #1E1E1E' : 'none' }}>
-                    <TypeIcon type={tx.type} amount={tx.amount} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tx.label}</p>
-                      <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
-                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A' }}>{tx.date}</p>
-                        {tx.fee < 0 && <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#555' }}>Comissão: {formatPrice(Math.abs(tx.fee))}</p>}
+            {txLoading ? (
+              <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', overflow: 'hidden' }}>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 12, padding: '14px 16px', borderBottom: i < 3 ? '1px solid #1E1E1E' : 'none', alignItems: 'center' }}>
+                    <div className="skeleton" style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0 }} />
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div className="skeleton" style={{ height: 12, width: '70%', borderRadius: 5 }} />
+                      <div className="skeleton" style={{ height: 10, width: '40%', borderRadius: 5 }} />
+                    </div>
+                    <div className="skeleton" style={{ width: 60, height: 14, borderRadius: 5 }} />
+                  </div>
+                ))}
+              </div>
+            ) : transactions.length === 0 ? (
+              <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: '32px 0', textAlign: 'center' }}>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A' }}>Sem transações ainda.</p>
+              </div>
+            ) : (
+              <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', overflow: 'hidden' }}>
+                {transactions.map((tx, i) => {
+                  const amount = tx.amount || tx.net_amount || 0
+                  const fee = tx.fee || tx.commission || 0
+                  const netAmount = amount + fee
+                  const isPositive = netAmount > 0
+                  const txType = tx.type || (netAmount > 0 ? 'sale' : 'withdrawal')
+                  const label = tx.description || tx.label || (txType === 'sale' ? 'Venda' : txType === 'withdrawal' ? 'Levantamento' : 'Transação')
+                  const dateStr = tx.created_at ? new Date(tx.created_at).toLocaleDateString('pt-AO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : tx.date || ''
+                  return (
+                    <div key={tx.id || i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderBottom: i < transactions.length - 1 ? '1px solid #1E1E1E' : 'none' }}>
+                      <TypeIcon type={txType} amount={amount} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</p>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A' }}>{dateStr}</p>
+                          {fee < 0 && <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#555' }}>Comissão: {formatPrice(Math.abs(fee))}</p>}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: isPositive ? '#059669' : '#dc2626' }}>
+                          {showBalance ? `${isPositive ? '+' : ''}${formatPrice(Math.abs(netAmount))}` : '•••'}
+                        </p>
+                        {(tx.status === 'pending' || tx.status === 'processing') && (
+                          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#f59e0b', marginTop: 2 }}>Pendente</p>
+                        )}
                       </div>
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: isPositive ? '#059669' : '#dc2626' }}>
-                        {showBalance ? `${isPositive ? '+' : ''}${formatPrice(Math.abs(netAmount))}` : '•••'}
-                      </p>
-                      {tx.status === 'pending' && (
-                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#f59e0b', marginTop: 2 }}>Pendente</p>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
         </div>

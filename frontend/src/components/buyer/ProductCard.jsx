@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { formatPrice } from './mockData'
+
+const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
 export default function ProductCard({ product, onPress, size = 'normal' }) {
   const [wishlist, setWishlist] = useState(false)

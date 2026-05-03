@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useCartStore as useCart } from '@/stores/cartStore'
 import BottomNav from '@/components/shared/BottomNav'
-import { formatPrice } from '@/components/buyer/mockData'
+const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
 export default function CartPage() {
   const navigate = useNavigate()

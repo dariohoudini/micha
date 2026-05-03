@@ -48,6 +48,12 @@ export default function OTPPage() {
     }
   }
 
+  useEffect(() => {
+    if (digits.join('').length === 6 && !loading) {
+      handleVerify()
+    }
+  }, [digits])
+
   const handleVerify = async () => {
     const otp = digits.join('')
     if (otp.length < 6) { setError('Insira o código completo de 6 dígitos.'); return }

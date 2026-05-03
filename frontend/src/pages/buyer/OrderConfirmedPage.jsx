@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import OrderSuccessAnimation from '@/components/shared/OrderSuccessAnimation'
@@ -26,6 +26,8 @@ export default function OrderConfirmedPage() {
   const [showShare, setShowShare] = useState(false)
   const [loyaltyPoints, setLoyaltyPoints] = useState(null)
   const [orderDetails, setOrderDetails] = useState(null)
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false)
+  const pollRef = useRef(null)
 
   useEffect(() => {
     haptic.success?.()
@@ -34,13 +36,40 @@ export default function OrderConfirmedPage() {
 
     if (orderId) {
       client.get(`/api/v1/orders/${orderId}/`)
-        .then(r => setOrderDetails(r.data))
+        .then(r => {
+          setOrderDetails(r.data)
+          const method = r.data?.payment_method
+          const status = r.data?.status || r.data?.payment_status
+          if ((method === 'multicaixa' || method === 'bank_transfer') && status !== 'paid' && status !== 'confirmed') {
+            startPolling()
+          }
+        })
         .catch(() => {})
     }
     client.get('/api/v1/loyalty/balance/')
       .then(r => setLoyaltyPoints(r.data?.points || r.data?.balance || null))
       .catch(() => {})
+
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [])
+
+  const startPolling = () => {
+    let attempts = 0
+    pollRef.current = setInterval(async () => {
+      attempts++
+      if (attempts > 36) { clearInterval(pollRef.current); return }
+      try {
+        const r = await client.get(`/api/v1/orders/${orderId}/`)
+        const status = r.data?.status || r.data?.payment_status
+        if (status === 'paid' || status === 'confirmed' || status === 'processing') {
+          setOrderDetails(r.data)
+          setPaymentConfirmed(true)
+          haptic.success?.()
+          clearInterval(pollRef.current)
+        }
+      } catch {}
+    }, 5000)
+  }
 
   const displayId = orderId ? String(orderId).slice(0, 8).toUpperCase() : 'MC-XXXXXX'
   const earnedPoints = total ? Math.floor(Number(total) / 1000) : null
@@ -52,6 +81,30 @@ export default function OrderConfirmedPage() {
       <div style={{ flex: 1, overflowY: 'auto', background: BG, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 24px 80px', textAlign: 'center' }}>
 
         <OrderSuccessAnimation onDone={() => {}} />
+
+        {/* Payment confirmed banner */}
+        {paymentConfirmed && (
+          <div style={{ width: '100%', marginBottom: 16, background: 'rgba(5,150,105,0.12)', border: '1px solid rgba(5,150,105,0.3)', borderRadius: 14, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(5,150,105,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            </div>
+            <div style={{ textAlign: 'left' }}>
+              <p style={{ ...S, fontSize: 14, fontWeight: 700, color: GREEN, margin: '0 0 2px' }}>Pagamento confirmado!</p>
+              <p style={{ ...S, fontSize: 12, color: MUTED, margin: 0 }}>O seu pedido foi activado e está a ser preparado.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Polling indicator */}
+        {!paymentConfirmed && paymentMethod && paymentMethod !== 'cod' && (orderDetails?.status === 'pending_payment' || orderDetails?.payment_status === 'pending') && (
+          <div style={{ width: '100%', marginBottom: 16, background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="10" stroke="#C9A84C" strokeWidth="2" strokeOpacity="0.2" />
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <p style={{ ...S, fontSize: 12, color: GOLD }}>A aguardar confirmação do pagamento…</p>
+          </div>
+        )}
 
         {/* Order ID + total */}
         <div style={{ marginTop: 8, marginBottom: 24 }}>

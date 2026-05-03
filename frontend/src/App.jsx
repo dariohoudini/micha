@@ -48,6 +48,13 @@ const SellerSetupPage       = lazy(() => import('@/pages/seller/SellerSetupPage'
 const SellerAnalyticsPage   = lazy(() => import('@/pages/seller/SellerAnalyticsPage'))
 const SellerChatPage        = lazy(() => import('@/pages/seller/SellerChatPage'))
 
+// Rentals
+const RentalsPage           = lazy(() => import('@/pages/buyer/rentals/RentalsPage'))
+const RentalDetailPage      = lazy(() => import('@/pages/buyer/rentals/RentalDetailPage'))
+const CreateRentalPage      = lazy(() => import('@/pages/rentals/CreateListingPage'))
+const VerificationGatePage  = lazy(() => import('@/pages/verification/VerificationGatePage'))
+const MonthlySelfieGatePage = lazy(() => import('@/pages/verification/MonthlySelfieGatePage'))
+
 // Admin
 const AdminDashboardPage    = lazy(() => import('@/pages/admin/AdminDashboardPage'))
 const AdminUsersPage        = lazy(() => import('@/pages/admin/AdminUsersPage'))
@@ -179,6 +186,13 @@ export default function App() {
             <Route path="/store/:id"           element={<P><StorePage /></P>} />
             <Route path="/orders/:id"          element={<P><OrderDetailPage /></P>} />
             <Route path="/dispute/:orderId"    element={<P><DisputeFilingPage /></P>} />
+
+            {/* ── Rentals ── */}
+            <Route path="/rentals"             element={<P><RentalsPage /></P>} />
+            <Route path="/rentals/:id"         element={<P><RentalDetailPage /></P>} />
+            <Route path="/rentals/new"         element={<P><CreateRentalPage /></P>} />
+            <Route path="/verify/kyc"          element={<P><VerificationGatePage /></P>} />
+            <Route path="/verify/selfie"       element={<P><MonthlySelfieGatePage /></P>} />
 
             {/* ── Seller ── */}
             <Route path="/seller"              element={<S><SellerDashboardPage /></S>} />

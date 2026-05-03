@@ -1,9 +1,8 @@
-from rest_framework import generics, permissions, filters, status
+from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import serializers
-from django.shortcuts import get_object_or_404
-from django.db.models import Sum, Avg, F, FloatField
+from django.db.models import Sum, Avg, FloatField
 from django.db.models.functions import Coalesce
 from .models import SellerProfile, SellerFAQ, SellerAnnouncement, SellerOnboardingChecklist
 from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser
@@ -34,13 +33,13 @@ class OnboardingChecklistSerializer(serializers.ModelSerializer):
 
 class SellerProfileView(generics.RetrieveUpdateAPIView):
     serializer_class=SellerProfileSerializer
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def get_object(self):
         profile,_=SellerProfile.objects.get_or_create(seller=self.request.user)
         return profile
 
 class SellerDashboardView(APIView):
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def get(self,request):
         from apps.orders.models import Order
         user=request.user
@@ -76,24 +75,26 @@ class SellerDashboardView(APIView):
         })
 
 class SellerFAQView(generics.ListCreateAPIView):
+    pagination_class = None  # FAQs are short lists, no pagination needed
     serializer_class=SellerFAQSerializer
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def get_queryset(self): return SellerFAQ.objects.filter(seller=self.request.user)
     def perform_create(self,s): s.save(seller=self.request.user)
 
 class SellerFAQDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class=SellerFAQSerializer
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def get_queryset(self): return SellerFAQ.objects.filter(seller=self.request.user)
 
 class SellerAnnouncementView(generics.ListCreateAPIView):
+    pagination_class = None  # Announcements are short lists
     serializer_class=SellerAnnouncementSerializer
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def get_queryset(self): return SellerAnnouncement.objects.filter(seller=self.request.user)
     def perform_create(self,s): s.save(seller=self.request.user)
 
 class ToggleHolidayModeView(APIView):
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def post(self,request):
         profile,_=SellerProfile.objects.get_or_create(seller=request.user)
         profile.is_on_holiday=not profile.is_on_holiday
@@ -103,7 +104,7 @@ class ToggleHolidayModeView(APIView):
         return Response({"is_on_holiday":profile.is_on_holiday,"detail":f"Holiday mode {'enabled' if profile.is_on_holiday else 'disabled'}."})
 
 class OnboardingView(APIView):
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser]
     def get(self,request):
         checklist,_=SellerOnboardingChecklist.objects.get_or_create(seller=request.user)
         return Response(OnboardingChecklistSerializer(checklist).data)

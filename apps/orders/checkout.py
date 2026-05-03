@@ -11,11 +11,9 @@ import uuid
 import logging
 from decimal import Decimal
 from django.db import transaction
-from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem, Payment
 from apps.cart.models import Cart, CartItem
-from apps.inventory.models import StockReservation
 from apps.products.models import Product
 
 logger = logging.getLogger('micha')
@@ -23,7 +21,6 @@ logger = logging.getLogger('micha')
 
 class CheckoutError(Exception):
     """Raised when checkout cannot proceed. Safe to show to user."""
-    pass
 
 
 class CheckoutService:
@@ -72,7 +69,7 @@ class CheckoutService:
             cart=cart
         ).select_related(
             'product', 'product__store', 'product__store__owner', 'product__category'
-        ).select_for_update()  # Lock cart items during checkout
+        ).select_for_update(of=("self",))  # Lock only cart items, not joined tables
 
         if not cart_items.exists():
             raise CheckoutError("Your cart is empty.")
@@ -110,7 +107,7 @@ class CheckoutService:
 
         # 7. Deduct stock atomically (with row locks)
         for item in validated_items:
-            product = Product.objects.select_for_update().get(pk=item.product.pk)
+            product = Product.objects.select_for_update(of=("self",)).get(pk=item.product.pk)
             if product.quantity < item.quantity:
                 raise CheckoutError(f"Stock changed for '{product.title}'. Please refresh your cart.")
             product.quantity -= item.quantity
@@ -134,6 +131,38 @@ class CheckoutService:
             raise CheckoutError("Shipping address not found.")
 
     def _apply_coupon(self, cart_items):
+        """Apply coupon with usage limit enforcement."""
+        if not self.coupon_code:
+            return 0
+        from apps.promotions.models import Coupon
+        from django.db import transaction
+        try:
+            with transaction.atomic():
+                coupon = Coupon.objects.select_for_update().get(
+                    code=self.coupon_code,
+                    is_active=True,
+                )
+                # Check usage limit
+                if coupon.usage_limit and coupon.used_count >= coupon.usage_limit:
+                    raise CheckoutError('Cupão esgotado')
+                # Check per-user limit
+                if coupon.usage_limit_per_user:
+                    from apps.orders.models import Order
+                    user_uses = Order.objects.filter(
+                        buyer=self.user,
+                        coupon_code=self.coupon_code,
+                        status__in=['confirmed', 'shipped', 'delivered', 'completed'],
+                    ).count()
+                    if user_uses >= coupon.usage_limit_per_user:
+                        raise CheckoutError('Já usaste este cupão o número máximo de vezes')
+                # Increment usage count atomically
+                coupon.used_count = (coupon.used_count or 0) + 1
+                coupon.save(update_fields=['used_count'])
+                return coupon
+        except Coupon.DoesNotExist:
+            raise CheckoutError('Cupão inválido ou expirado')
+
+    def _apply_coupon_legacy(self, cart_items):
         discount = Decimal('0.00')
         if not self.coupon_code:
             return discount

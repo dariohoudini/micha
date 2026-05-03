@@ -102,3 +102,75 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.type}: {self.title} → {self.user.email}"
+
+
+class NotificationManager:
+    """Helper to create personalised notifications with user name + product."""
+
+    @staticmethod
+    def order_confirmed(user, order):
+        from apps.notifications.models import Notification
+        Notification.objects.create(
+            recipient=user,
+            notification_type='order_update',
+            title=f'Pedido confirmado!',
+            message=f'Olá {user.profile.full_name or user.email.split("@")[0]}! O teu pedido #{str(order.id)[:8].upper()} foi confirmado pelo vendedor.',
+            data={'order_id': str(order.id)},
+        )
+
+    @staticmethod
+    def order_shipped(user, order):
+        from apps.notifications.models import Notification
+        Notification.objects.create(
+            recipient=user,
+            notification_type='order_update',
+            title='O teu pedido está a caminho!',
+            message=f'O teu pedido #{str(order.id)[:8].upper()} foi enviado. {f"Rastreamento: {order.tracking_number}" if order.tracking_number else "Entrega prevista em breve."}',
+            data={'order_id': str(order.id)},
+        )
+
+    @staticmethod
+    def order_delivered(user, order):
+        from apps.notifications.models import Notification
+        Notification.objects.create(
+            recipient=user,
+            notification_type='order_update',
+            title='Pedido entregue!',
+            message=f'O teu pedido chegou! Partilha a tua experiência e avalia o vendedor.',
+            data={'order_id': str(order.id)},
+        )
+
+    @staticmethod
+    def price_drop(user, product, old_price, new_price):
+        from apps.notifications.models import Notification
+        saving = old_price - new_price
+        Notification.objects.create(
+            recipient=user,
+            notification_type='price_drop',
+            title=f'Preço desceu! -{int((saving/old_price)*100)}%',
+            message=f'"{product.title}" baixou de {int(old_price):,} Kz para {int(new_price):,} Kz. Poupa {int(saving):,} Kz!',
+            data={'product_id': product.id, 'product_slug': product.slug},
+        )
+
+    @staticmethod
+    def back_in_stock(user, product):
+        from apps.notifications.models import Notification
+        Notification.objects.create(
+            recipient=user,
+            notification_type='back_in_stock',
+            title='Produto disponível!',
+            message=f'"{product.title}" está de volta ao stock. Compra agora antes que esgote!',
+            data={'product_id': product.id, 'product_slug': product.slug},
+        )
+
+    @staticmethod
+    def cart_abandonment(user, item_count):
+        from apps.notifications.models import Notification
+        name = user.profile.full_name.split()[0] if hasattr(user, 'profile') and user.profile.full_name else ''
+        greeting = f'{name}, tens' if name else 'Tens'
+        Notification.objects.create(
+            recipient=user,
+            notification_type='cart_abandonment',
+            title='Ainda tens produtos no carrinho',
+            message=f'{greeting} {item_count} produto{"s" if item_count > 1 else ""} à espera. Completa a compra antes que esgotem!',
+        )

@@ -8,7 +8,6 @@ def send_selfie_reminders():
         from django.core.mail import send_mail
         from django.conf import settings
         from django.utils import timezone
-        from datetime import timedelta
         User = get_user_model()
         sellers = User.objects.filter(is_seller=True, is_verified_seller=True, is_active=True)
         count = 0
@@ -36,3 +35,33 @@ def send_selfie_reminders():
         return f"Sent selfie reminders to {count} sellers"
     except Exception as e:
         return f"Error: {e}"
+
+from celery import shared_task
+from django.utils import timezone
+
+@shared_task(name='verification.suspend_expired_kyc')
+def suspend_expired_kyc():
+    """
+    T&C §3.4 — suspend sellers whose KYC document has expired.
+    Runs daily. Sets verification status to expired and suspends seller.
+    """
+    from apps.verification.models import SellerVerification
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    today = timezone.now().date()
+    expired = SellerVerification.objects.filter(
+        status='approved',
+        id_expiry_date__lt=today,
+    )
+    suspended_count = 0
+    for verification in expired:
+        verification.status = 'expired'
+        verification.save(update_fields=['status'])
+        user = verification.seller
+        user.is_verified_seller = False
+        user.status = 'suspended'
+        user.save(update_fields=['is_verified_seller', 'status'])
+        suspended_count += 1
+
+    return f'Suspended {suspended_count} sellers with expired KYC'

@@ -4,7 +4,6 @@ All IDOR protection maintained from previous fix
 """
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from django.http import HttpResponse
 from rest_framework import generics, permissions, serializers
 from rest_framework.views import APIView
@@ -13,7 +12,7 @@ from rest_framework.throttling import UserRateThrottle
 
 from apps.users.permissions import IsNotSuspended, IsBuyerOfOrder, IsSellerOrSuperuser
 from middleware.security import log_security_event
-from .models import Order, OrderItem, OrderStatusLog, Payment, Refund
+from .models import Order, OrderItem, Refund
 
 
 class CheckoutThrottle(UserRateThrottle):
@@ -66,10 +65,10 @@ class CheckoutView(APIView):
             orders = service.execute()
             return Response({"detail": "Order placed.", "orders": [str(o.id) for o in orders]}, status=201)
         except CheckoutError as e:
-            return Response({"error": "checkout_failed", "detail": str(e)}, status=400)
+            return Response({'error': 'checkout_failed', "detail": str(e)}, status=400)
         except Exception as e:
             log_security_event("checkout_error", request=request, details={"error": str(e)[:200]})
-            return Response({"error": "server_error", "detail": "Checkout failed."}, status=500)
+            return Response({'error': 'server_error', "detail": "Checkout failed."}, status=500)
 
 
 class MyOrderListView(generics.ListAPIView):
@@ -102,7 +101,7 @@ class CancelOrderView(APIView):
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ("pending", "confirmed"):
-            return Response({"error": "cannot_cancel", "detail": f"Cannot cancel a {order.status} order."}, status=400)
+            return Response({'error': 'cannot_cancel', "detail": f"Cannot cancel a {order.status} order."}, status=400)
         with transaction.atomic():
             order.update_status("cancelled", changed_by=request.user, note="Cancelled by buyer")
             for item in order.items.all():
@@ -118,7 +117,7 @@ class ConfirmDeliveryView(APIView):
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status != "shipped":
-            return Response({"error": "invalid_status", "detail": "Order must be shipped first."}, status=400)
+            return Response({'error': 'invalid_status', "detail": "Order must be shipped first."}, status=400)
         with transaction.atomic():
             order.update_status("delivered", changed_by=request.user, note="Confirmed by buyer")
             from apps.orders.tasks import release_order_escrow
@@ -147,7 +146,7 @@ class UpdateOrderStatusView(APIView):
         new_status = request.data.get("status")
         allowed = self.VALID_TRANSITIONS.get(order.status, [])
         if new_status not in allowed:
-            return Response({"error": "invalid_transition",
+            return Response({'error': 'invalid_transition',
                              "detail": f"Cannot go from {order.status} to {new_status}."}, status=400)
         with transaction.atomic():
             tracking = request.data.get("tracking_number", "")
@@ -167,12 +166,12 @@ class RequestRefundView(APIView):
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ("delivered", "completed"):
-            return Response({"error": "refund_not_available", "detail": "Refunds only after delivery."}, status=400)
+            return Response({'error': 'refund_not_available', "detail": "Refunds only after delivery."}, status=400)
         if Refund.objects.filter(order=order, status__in=["pending", "approved"]).exists():
-            return Response({"error": "refund_exists", "detail": "Refund already requested."}, status=409)
+            return Response({'error': 'refund_exists', "detail": "Refund already requested."}, status=409)
         reason = request.data.get("reason", "").strip()
         if not reason:
-            return Response({"error": "validation_error", "detail": "Reason required."}, status=400)
+            return Response({'error': 'validation_error', "detail": "Reason required."}, status=400)
         refund = Refund.objects.create(order=order, requested_by=request.user, amount=order.total, reason=reason)
         return Response(RefundSerializer(refund).data, status=201)
 
@@ -187,8 +186,6 @@ class InvoiceView(APIView):
 
         try:
             from weasyprint import HTML
-            from django.template.loader import render_to_string
-            from django.conf import settings
 
             items = order.items.all()
             html_content = f"""
@@ -267,4 +264,39 @@ class PackingSlipView(APIView):
             response["Content-Disposition"] = f'attachment; filename="packing-slip-{order.id}.pdf"'
             return response
         except ImportError:
-            return Response({"error": "pdf_unavailable", "detail": "Install weasyprint for PDF generation."})
+            return Response({'error': 'pdf_unavailable', "detail": "Install weasyprint for PDF generation."})
+
+
+class ReturnRequestCreateView(APIView):
+    """POST /api/v1/orders/<uuid>/return/ — Submit a return request."""
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, buyer=request.user)
+        if order.status not in ('delivered', 'completed'):
+            return Response({'error': 'Can only return delivered orders.'}, status=400)
+        from apps.orders.return_models import ReturnRequest
+        if ReturnRequest.objects.filter(order=order, buyer=request.user).exists():
+            return Response({'error': 'Return request already submitted.'}, status=400)
+        ret = ReturnRequest.objects.create(
+            order=order,
+            buyer=request.user,
+            reason=request.data.get('reason', 'other'),
+            description=request.data.get('description', ''),
+            pickup_method=request.data.get('pickup_method', 'pickup'),
+        )
+        return Response({
+            'id': ret.id,
+            'status': ret.status,
+            'reason': ret.reason,
+            'detail': 'Return request submitted. We will contact you within 24 hours.'
+        }, status=201)
+
+    def get(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, buyer=request.user)
+        from apps.orders.return_models import ReturnRequest
+        try:
+            ret = ReturnRequest.objects.get(order=order, buyer=request.user)
+            return Response({'id': ret.id, 'status': ret.status, 'reason': ret.reason, 'created_at': ret.created_at})
+        except ReturnRequest.DoesNotExist:
+            return Response({'error': 'No return request found.'}, status=404)

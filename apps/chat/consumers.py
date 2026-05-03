@@ -17,9 +17,15 @@ MAX_MESSAGE_LENGTH = 5000   # 5,000 characters max per message
 MAX_MESSAGES_PER_MINUTE = 30  # Rate limit: 30 messages/minute per connection
 
 
+MAX_WS_MESSAGE_SIZE = 10_000   # 10KB max per message
+MAX_WS_MESSAGES_PER_MINUTE = 30  # rate limit
+
 class ChatConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
+        self._message_count = 0
+        self._window_start = None
+
         self.conversation_id = self.scope['url_route']['kwargs']['conversation_id']
         self.room_group = f'chat_{self.conversation_id}'
         self.user = self.scope['user']

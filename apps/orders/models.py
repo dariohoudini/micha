@@ -5,6 +5,7 @@ FIX: Orders are financial records and must NEVER be hard deleted.
      Use is_deleted flag for soft delete instead.
 """
 from django.db import models, transaction
+from apps.payments.models import EncryptedCharField
 from django.conf import settings
 import uuid
 
@@ -30,13 +31,13 @@ class Order(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    buyer = models.ForeignKey(User, on_delete=models.PROTECT, related_name="orders")
+    buyer = models.ForeignKey(User, on_delete=models.PROTECT, related_name="orders", db_index=True)
     seller = models.ForeignKey(User, on_delete=models.PROTECT, related_name="seller_orders")
     idempotency_key = models.CharField(max_length=100, unique=True, blank=True)
 
     shipping_name = models.CharField(max_length=200, blank=True)
-    shipping_phone = models.CharField(max_length=20, blank=True)
-    shipping_address = models.TextField(blank=True)
+    shipping_phone = EncryptedCharField(max_length=500, blank=True)
+    shipping_address = EncryptedCharField(max_length=2000, blank=True)
     shipping_city = models.CharField(max_length=100, blank=True)
     shipping_province = models.CharField(max_length=100, blank=True)
     shipping_country = models.CharField(max_length=100, default="Angola")
@@ -55,6 +56,11 @@ class Order(models.Model):
     estimated_delivery = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
     gift_wrap = models.BooleanField(default=False)
+    delivery_slot = models.CharField(
+        max_length=20,
+        choices=[('morning','Morning 8h-12h'),('afternoon','Afternoon 12h-17h'),('evening','Evening 17h-21h')],
+        blank=True
+    )
 
     # FIX: Soft delete — never hard delete a financial record
     is_deleted = models.BooleanField(default=False)
@@ -69,6 +75,10 @@ class Order(models.Model):
 
     objects = OrderManager()  # excludes soft-deleted
     all_objects = models.Manager()  # includes everything
+
+    # Fraud detection
+    fraud_score = models.IntegerField(default=0, help_text='0-100 fraud risk score from FraudEngine')
+    fraud_action = models.CharField(max_length=20, default='allow', help_text='allow/flag/hold/block')
 
     class Meta:
         ordering = ["-created_at"]
@@ -120,12 +130,16 @@ class Order(models.Model):
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
-    product = models.ForeignKey("products.Product", on_delete=models.PROTECT, related_name="order_items")
+    product = models.ForeignKey("products.Product", on_delete=models.PROTECT, related_name="order_items", db_index=True)
     product_title = models.CharField(max_length=200)
     product_sku = models.CharField(max_length=100, blank=True)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.PositiveIntegerField()
     total_price = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # Fraud detection
+    fraud_score = models.IntegerField(default=0, help_text='0-100 fraud risk score from FraudEngine')
+    fraud_action = models.CharField(max_length=20, default='allow', help_text='allow/flag/hold/block')
 
     class Meta:
         indexes = [models.Index(fields=["order", "product"])]
@@ -143,6 +157,10 @@ class OrderStatusLog(models.Model):
     note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Fraud detection
+    fraud_score = models.IntegerField(default=0, help_text='0-100 fraud risk score from FraudEngine')
+    fraud_action = models.CharField(max_length=20, default='allow', help_text='allow/flag/hold/block')
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["order", "-created_at"])]
@@ -158,6 +176,10 @@ class Payment(models.Model):
     currency = models.CharField(max_length=5, default="AOA")
     paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Fraud detection
+    fraud_score = models.IntegerField(default=0, help_text='0-100 fraud risk score from FraudEngine')
+    fraud_action = models.CharField(max_length=20, default='allow', help_text='allow/flag/hold/block')
 
     class Meta:
         indexes = [models.Index(fields=["gateway_reference"])]

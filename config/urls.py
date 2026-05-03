@@ -38,6 +38,8 @@ urlpatterns = [
     path("api/v1/admin-actions/",   include("apps.admin_actions.urls")),
     path("api/v1/trust/",           include("apps.trust.urls")),
     path("api/v1/ai/",              include("apps.ai_engine.urls")),
+    path("api/v1/disputes/", include("apps.disputes.urls")),
+    path("api/v1/security/", include("apps.security.urls")),
     path("api/v1/admin-api/",       include("apps.admin_api.urls")),
 
     # Legacy /api/ aliases — same includes, no duplicate namespace issue

@@ -1,9 +1,9 @@
-from rest_framework import generics, permissions, status
+from rest_framework.permissions import AllowAny
+from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import serializers
 from django.utils import timezone
-from django.shortcuts import get_object_or_404
 from .models import Coupon, FlashSale
 from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser
 
@@ -54,10 +54,10 @@ class ValidateCouponView(APIView):
         try:
             coupon = Coupon.objects.get(code=code, is_active=True)
         except Coupon.DoesNotExist:
-            return Response({"detail": "Invalid coupon code."}, status=400)
+            return Response({'error': 'Invalid coupon code.'}, status=400)
 
         if not coupon.is_valid():
-            return Response({"detail": "Coupon is expired or has reached its usage limit."}, status=400)
+            return Response({'error': 'Coupon is expired or has reached its usage limit.'}, status=400)
 
         if subtotal < float(coupon.min_order_amount):
             return Response({
@@ -101,7 +101,7 @@ class SellerCouponListCreateView(generics.ListCreateAPIView):
 class LiveFlashSalesView(generics.ListAPIView):
     """GET /api/promotions/flash-sales/ — All currently live flash sales."""
     serializer_class = FlashSaleSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get_queryset(self):
         now = timezone.now()

@@ -38,14 +38,19 @@ def release_order_escrow(order_id):
     """Release escrow for a completed order and credit seller wallet."""
     try:
         from apps.trust.models import Escrow
-        from apps.payments.models import SellerWallet, WalletTransaction, EarningsHold
+        from apps.payments.models import SellerWallet, WalletTransaction
         try:
             escrow = Escrow.objects.get(order_id=order_id, status='holding')
             escrow.status = 'released'
             escrow.released_at = timezone.now()
             escrow.save()
             wallet, _ = SellerWallet.objects.get_or_create(seller=escrow.order.seller)
-            wallet.balance += escrow.amount
+            # Use select_for_update to prevent race condition
+            from apps.payments.models import SellerWallet
+            locked_wallet = SellerWallet.objects.select_for_update(of=('self',)).get(pk=wallet.pk)
+            locked_wallet.balance += escrow.amount
+            locked_wallet.save(update_fields=['balance', 'updated_at'])
+            wallet = locked_wallet
             wallet.pending_balance = max(0, wallet.pending_balance - escrow.amount)
             wallet.save()
             WalletTransaction.objects.create(

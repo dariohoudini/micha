@@ -1,170 +1,156 @@
-import { useState } from 'react'
-import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
-import { formatPrice } from '@/components/buyer/mockData'
+import { useState, useEffect } from 'react'
+import AdminLayout from '@/layouts/AdminLayout'
+import client from '@/api/client'
 
-const MOCK_ORDERS = [
-  { id: 'ORD-2847', buyer: 'João Silva', seller: 'Moda Luanda', product: 'Vestido Capulana ×2', total: 17000, commission: 850, status: 'delivered', date: '13 Abr 09:32', province: 'Luanda', dispute: false },
-  { id: 'ORD-2801', buyer: 'Maria Santos', seller: 'Beauty Angola', product: 'Kit Skincare Natural', total: 18500, commission: 925, status: 'dispute', date: '12 Abr 11:15', province: 'Benguela', dispute: true, disputeReason: 'Produto não corresponde à descrição' },
-  { id: 'ORD-2798', buyer: 'Pedro Neto', seller: 'TechShop Angola', product: 'Auriculares Bluetooth', total: 22000, commission: 1100, status: 'shipped', date: '12 Abr 08:00', province: 'Luanda', dispute: false },
-  { id: 'ORD-2756', buyer: 'Ana Costa', seller: 'SportZone AO', product: 'Ténis Nike Air Max', total: 52000, commission: 2600, status: 'dispute', date: '10 Abr 14:20', province: 'Huambo', dispute: true, disputeReason: 'Produto chegou danificado' },
-  { id: 'ORD-2701', buyer: 'Carlos Mendes', seller: 'Casa & Lar AO', product: 'Conjunto Panelas', total: 32000, commission: 1600, status: 'cancelled', date: '08 Abr 16:45', province: 'Luanda', dispute: false },
-  { id: 'ORD-2689', buyer: 'Lucia Ferreira', seller: 'Moda Luanda', product: 'Bolsa de Couro', total: 28000, commission: 1400, status: 'delivered', date: '07 Abr 10:30', province: 'Luanda', dispute: false },
-]
-
-const STATUS_CONFIG = {
-  pending:   { label: 'Pendente',   color: '#f59e0b' },
-  confirmed: { label: 'Confirmado', color: '#3b82f6' },
-  shipped:   { label: 'Enviado',   color: '#8b5cf6' },
-  delivered: { label: 'Entregue',  color: '#10b981' },
-  cancelled: { label: 'Cancelado', color: '#6b7280' },
-  dispute:   { label: 'Disputa',   color: '#ef4444' },
-}
+const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E', TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444', BLUE = '#3B82F6'
+const fmt = (n) => Number(n||0).toLocaleString('pt-AO') + ' Kz'
+const STATUS_COLORS = { pending: G, confirmed: BLUE, processing: BLUE, shipped: BLUE, delivered: GREEN, completed: GREEN, cancelled: RED, refunded: RED }
 
 export default function AdminOrdersPage() {
-  const [orders, setOrders] = useState(MOCK_ORDERS)
-  const [filter, setFilter] = useState('all')
-  const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState(null)
+  const [orders, setOrders] = useState([])
+  const [disputes, setDisputes] = useState([])
+  const [payouts, setPayouts] = useState([])
+  const [tab, setTab] = useState('disputes')
+  const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState(null)
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 2500)
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000) }
+
+  useEffect(() => {
+    setLoading(true)
+    Promise.allSettled([
+      client.get('/api/v1/admin-api/orders/'),
+      client.get('/api/v1/disputes/admin/'),
+      client.get('/api/v1/payments/payout/admin/'),
+    ]).then(([ordersRes, disputesRes, payoutsRes]) => {
+      if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value.data.results || ordersRes.value.data || [])
+      if (disputesRes.status === 'fulfilled') setDisputes(disputesRes.value.data.results || disputesRes.value.data || [])
+      if (payoutsRes.status === 'fulfilled') setPayouts(payoutsRes.value.data.results || payoutsRes.value.data || [])
+    }).finally(() => setLoading(false))
+  }, [])
+
+  const resolveDispute = async (id, resolution) => {
+    try {
+      await client.post(`/api/v1/disputes/admin/${id}/resolve/`, { resolution })
+      setDisputes(prev => prev.map(d => d.id === id ? { ...d, status: 'resolved', resolution } : d))
+      showToast('Disputa resolvida')
+    } catch { showToast('Erro ao resolver', 'error') }
   }
 
-  const resolveDispute = (id, favour) => {
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, status: favour === 'buyer' ? 'cancelled' : 'delivered', dispute: false } : o))
-    showToast(`Disputa resolvida a favor do ${favour === 'buyer' ? 'comprador' : 'vendedor'}.`)
-    setSelected(null)
+  const approvePayout = async (id) => {
+    try {
+      await client.post(`/api/v1/payments/payout/admin/${id}/`, { action: 'approve' })
+      setPayouts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved' } : p))
+      showToast('Pagamento aprovado')
+    } catch { showToast('Erro ao aprovar', 'error') }
   }
 
-  const filtered = orders.filter(o => {
-    const matchFilter = filter === 'all' || o.status === filter
-    const matchSearch = !search || o.id.toLowerCase().includes(search.toLowerCase()) || o.buyer.toLowerCase().includes(search.toLowerCase()) || o.seller.toLowerCase().includes(search.toLowerCase())
-    return matchFilter && matchSearch
-  })
-
-  const totalRevenue = orders.filter(o => o.status === 'delivered').reduce((a, o) => a + o.total, 0)
-  const totalCommission = orders.filter(o => o.status === 'delivered').reduce((a, o) => a + o.commission, 0)
-  const disputeCount = orders.filter(o => o.dispute).length
+  const pendingDisputes = disputes.filter(d => d.status === 'open' || d.status === 'investigating')
+  const pendingPayouts = payouts.filter(p => p.status === 'pending')
 
   return (
     <AdminLayout title="Pedidos">
-      {toast && (
-        <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', zIndex: 999, background: '#059669', color: '#FFFFFF', padding: '10px 20px', borderRadius: 12, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.4)', whiteSpace: 'nowrap' }}>{toast.msg}</div>
-      )}
+      <div style={{ flex: 1, overflowY: 'auto', background: BG, padding: '16px 16px 80px' }}>
+        {toast && <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', background: toast.type === 'error' ? RED : GREEN, color: '#fff', padding: '10px 20px', borderRadius: 10, zIndex: 999, fontFamily: "'DM Sans'", fontSize: 13 }}>{toast.msg}</div>}
 
-      {/* Dispute resolution modal */}
-      {selected?.dispute && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'flex-end' }}
-          onClick={e => { if (e.target === e.currentTarget) setSelected(null) }}>
-          <div style={{ background: ADMIN_COLORS.card, borderRadius: '20px 20px 0 0', border: `1px solid ${ADMIN_COLORS.border}`, padding: '20px 20px 40px', width: '100%', maxWidth: 430, margin: '0 auto' }}>
-            <div style={{ width: 36, height: 4, borderRadius: 2, background: ADMIN_COLORS.border, margin: '0 auto 20px' }} />
-            <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 12, padding: '12px 14px', marginBottom: 16 }}>
-              <p style={{ fontSize: 12, fontWeight: 600, color: '#ef4444', marginBottom: 4 }}>⚠️ Disputa aberta</p>
-              <p style={{ fontSize: 13, color: ADMIN_COLORS.text, marginBottom: 2 }}>{selected.id} · {formatPrice(selected.total)}</p>
-              <p style={{ fontSize: 12, color: ADMIN_COLORS.muted }}>Motivo: {selected.disputeReason}</p>
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              <div style={{ flex: 1, background: ADMIN_COLORS.surface, borderRadius: 10, padding: 10 }}>
-                <p style={{ fontSize: 11, color: ADMIN_COLORS.muted, marginBottom: 2 }}>Comprador</p>
-                <p style={{ fontSize: 13, color: ADMIN_COLORS.text, fontWeight: 500 }}>{selected.buyer}</p>
-              </div>
-              <div style={{ flex: 1, background: ADMIN_COLORS.surface, borderRadius: 10, padding: 10 }}>
-                <p style={{ fontSize: 11, color: ADMIN_COLORS.muted, marginBottom: 2 }}>Vendedor</p>
-                <p style={{ fontSize: 13, color: ADMIN_COLORS.text, fontWeight: 500 }}>{selected.seller}</p>
-              </div>
-            </div>
-            <p style={{ fontSize: 12, color: ADMIN_COLORS.muted, marginBottom: 14, textAlign: 'center' }}>Resolver a favor de:</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <button onClick={() => resolveDispute(selected.id, 'buyer')}
-                style={{ padding: '14px', borderRadius: 12, border: 'none', background: '#6366f1', fontSize: 14, fontWeight: 600, color: '#FFFFFF', cursor: 'pointer' }}>
-                🛒 Comprador — Reembolso total
-              </button>
-              <button onClick={() => resolveDispute(selected.id, 'seller')}
-                style={{ padding: '14px', borderRadius: 12, border: '1px solid rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)', fontSize: 14, fontWeight: 600, color: '#10b981', cursor: 'pointer' }}>
-                🏪 Vendedor — Manter pagamento
-              </button>
-              <button onClick={() => setSelected(null)}
-                style={{ padding: '14px', borderRadius: 12, border: `1px solid ${ADMIN_COLORS.border}`, background: 'transparent', fontSize: 14, color: ADMIN_COLORS.muted, cursor: 'pointer' }}>
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        <h1 style={{ fontFamily: "'Playfair Display'", fontSize: 24, fontWeight: 700, color: TEXT, margin: '0 0 16px' }}>Pedidos & Disputas</h1>
 
-      <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
-        {/* Revenue stats */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, overflowX: 'auto' }}>
           {[
-            { l: 'GMV total', v: formatPrice(totalRevenue), c: '#818cf8' },
-            { l: 'Comissões', v: formatPrice(totalCommission), c: '#10b981' },
-            { l: 'Disputas', v: disputeCount, c: '#ef4444' },
-          ].map(s => (
-            <div key={s.l} style={{ flex: 1, background: ADMIN_COLORS.card, borderRadius: 10, border: `1px solid ${ADMIN_COLORS.border}`, padding: '10px 8px', textAlign: 'center' }}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: s.c }}>{s.v}</p>
-              <p style={{ fontSize: 9, color: ADMIN_COLORS.muted, marginTop: 1 }}>{s.l}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Search */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: ADMIN_COLORS.card, border: `1px solid ${ADMIN_COLORS.border}`, borderRadius: 12, padding: '10px 14px', marginBottom: 10 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={ADMIN_COLORS.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Pesquisar por ID, comprador ou vendedor..."
-            style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 13, color: ADMIN_COLORS.text }} />
-        </div>
-
-        {/* Filters */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', scrollbarWidth: 'none' }}>
-          {[{ v: 'all', l: 'Todos' }, { v: 'dispute', l: `Disputas (${disputeCount})` }, { v: 'delivered', l: 'Entregues' }, { v: 'shipped', l: 'Enviados' }, { v: 'cancelled', l: 'Cancelados' }].map(f => (
-            <button key={f.v} onClick={() => setFilter(f.v)}
-              style={{ padding: '5px 12px', borderRadius: 50, flexShrink: 0, border: `1px solid ${filter === f.v ? '#6366f1' : ADMIN_COLORS.border}`, background: filter === f.v ? 'rgba(99,102,241,0.1)' : 'transparent', fontSize: 11, color: filter === f.v ? '#818cf8' : ADMIN_COLORS.muted, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              {f.l}
+            { key: 'disputes', label: `Disputas (${pendingDisputes.length})` },
+            { key: 'payouts', label: `Pagamentos (${pendingPayouts.length})` },
+            { key: 'orders', label: `Todos os pedidos` },
+          ].map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{ padding: '8px 14px', borderRadius: 10, border: `1.5px solid ${tab === t.key ? G : BORDER}`, background: tab === t.key ? 'rgba(201,168,76,0.1)' : 'none', color: tab === t.key ? G : MUTED, fontFamily: "'DM Sans'", fontSize: 12, fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {t.label}
             </button>
           ))}
         </div>
-      </div>
 
-      <div className="screen" style={{ flex: 1 }}>
-        <div style={{ padding: '0 16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {filtered.map(order => {
-            const status = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending
-            return (
-              <div key={order.id} style={{ background: ADMIN_COLORS.card, borderRadius: 14, border: `1px solid ${order.dispute ? 'rgba(239,68,68,0.3)' : ADMIN_COLORS.border}`, padding: 14 }}>
-                {order.dispute && <div style={{ height: 2, background: '#ef4444', borderRadius: '14px 14px 0 0', margin: '-14px -14px 14px' }} />}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: '#818cf8' }}>{order.id}</span>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: status.color, background: `${status.color}18`, padding: '3px 8px', borderRadius: 20 }}>{status.label}</span>
-                </div>
-                <p style={{ fontSize: 13, color: ADMIN_COLORS.text, marginBottom: 6 }}>{order.product}</p>
-                <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 11, color: ADMIN_COLORS.muted }}>🛒 {order.buyer}</span>
-                  <span style={{ fontSize: 11, color: ADMIN_COLORS.muted }}>🏪 {order.seller}</span>
-                  <span style={{ fontSize: 11, color: ADMIN_COLORS.muted }}>📅 {order.date}</span>
-                </div>
-                {order.dispute && (
-                  <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>
-                    <p style={{ fontSize: 12, color: '#ef4444' }}>⚠️ {order.disputeReason}</p>
+        {/* Disputes */}
+        {tab === 'disputes' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {loading ? <p style={{ fontFamily: "'DM Sans'", color: MUTED }}>A carregar...</p> :
+              disputes.length === 0 ? <p style={{ fontFamily: "'DM Sans'", color: GREEN, fontSize: 14, textAlign: 'center', padding: 40 }}>✅ Sem disputas abertas</p> :
+              disputes.map(d => (
+                <div key={d.id} style={{ background: CARD, borderRadius: 14, border: `1.5px solid ${d.status === 'open' ? 'rgba(239,68,68,0.3)' : BORDER}`, padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div>
+                      <p style={{ fontFamily: "'DM Sans'", fontSize: 13, fontWeight: 600, color: TEXT, margin: '0 0 2px' }}>Disputa #{String(d.id).slice(0,8)}</p>
+                      <p style={{ fontFamily: "'DM Sans'", fontSize: 12, color: MUTED, margin: 0 }}>{d.buyer_email} vs {d.seller_email}</p>
+                    </div>
+                    <span style={{ padding: '3px 10px', borderRadius: 6, background: d.status === 'open' ? 'rgba(239,68,68,0.15)' : 'rgba(5,150,105,0.15)', color: d.status === 'open' ? RED : GREEN, fontFamily: "'DM Sans'", fontSize: 11, fontWeight: 600 }}>
+                      {d.status}
+                    </span>
                   </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTop: `1px solid ${ADMIN_COLORS.border}` }}>
-                  <div>
-                    <span style={{ fontSize: 15, fontWeight: 700, color: ADMIN_COLORS.text }}>{formatPrice(order.total)}</span>
-                    <span style={{ fontSize: 11, color: '#10b981', marginLeft: 8 }}>+{formatPrice(order.commission)} comissão</span>
-                  </div>
-                  {order.dispute && (
-                    <button onClick={() => setSelected(order)}
-                      style={{ padding: '7px 14px', borderRadius: 10, border: 'none', background: '#ef4444', fontSize: 12, fontWeight: 600, color: '#FFFFFF', cursor: 'pointer' }}>
-                      Resolver disputa
-                    </button>
+                  <p style={{ fontFamily: "'DM Sans'", fontSize: 13, color: MUTED, margin: '0 0 12px', lineHeight: 1.5 }}>{d.reason || d.description}</p>
+                  <p style={{ fontFamily: "'DM Sans'", fontSize: 12, color: MUTED, margin: '0 0 12px' }}>Valor em disputa: <strong style={{ color: G }}>{fmt(d.order_total)}</strong></p>
+                  {(d.status === 'open' || d.status === 'investigating') && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => resolveDispute(d.id, 'buyer_wins')} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: BLUE, color: '#fff', fontFamily: "'DM Sans'", fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        🏆 Reembolsar comprador
+                      </button>
+                      <button onClick={() => resolveDispute(d.id, 'seller_wins')} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: G, color: '#000', fontFamily: "'DM Sans'", fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        💰 Pagar vendedor
+                      </button>
+                    </div>
                   )}
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* Payouts */}
+        {tab === 'payouts' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {loading ? <p style={{ fontFamily: "'DM Sans'", color: MUTED }}>A carregar...</p> :
+              payouts.length === 0 ? <p style={{ fontFamily: "'DM Sans'", color: GREEN, fontSize: 14, textAlign: 'center', padding: 40 }}>✅ Sem pagamentos pendentes</p> :
+              payouts.map(p => (
+                <div key={p.id} style={{ background: CARD, borderRadius: 14, border: `1px solid ${BORDER}`, padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div>
+                      <p style={{ fontFamily: "'DM Sans'", fontSize: 13, fontWeight: 600, color: TEXT, margin: '0 0 2px' }}>{p.seller_email}</p>
+                      <p style={{ fontFamily: "'DM Sans'", fontSize: 12, color: MUTED, margin: 0 }}>{p.bank_name} · {p.account_number}</p>
+                    </div>
+                    <p style={{ fontFamily: "'Playfair Display'", fontSize: 18, fontWeight: 700, color: G, margin: 0 }}>{fmt(p.amount)}</p>
+                  </div>
+                  {p.status === 'pending' && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => approvePayout(p.id)} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: GREEN, color: '#fff', fontFamily: "'DM Sans'", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                        ✅ Aprovar pagamento
+                      </button>
+                      <button onClick={() => { client.post(`/api/v1/payments/payout/admin/${p.id}/`, { action: 'reject' }).then(() => { setPayouts(prev => prev.filter(x => x.id !== p.id)); showToast('Pagamento rejeitado') }).catch(() => showToast('Erro', 'error')) }} style={{ padding: '10px 14px', borderRadius: 10, border: `1px solid ${BORDER}`, background: 'none', color: RED, fontFamily: "'DM Sans'", fontSize: 13, cursor: 'pointer' }}>
+                        ❌
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* All orders */}
+        {tab === 'orders' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {loading ? <p style={{ fontFamily: "'DM Sans'", color: MUTED }}>A carregar...</p> :
+              orders.map(o => (
+                <div key={o.id} style={{ background: CARD, borderRadius: 12, border: `1px solid ${BORDER}`, padding: '13px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontFamily: "'DM Sans'", fontSize: 13, fontWeight: 500, color: TEXT, margin: '0 0 2px' }}>#{String(o.id).slice(0,8).toUpperCase()}</p>
+                    <p style={{ fontFamily: "'DM Sans'", fontSize: 11, color: MUTED, margin: 0 }}>{o.buyer_email} · {new Date(o.created_at).toLocaleDateString('pt-AO')}</p>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ fontFamily: "'Playfair Display'", fontSize: 14, fontWeight: 700, color: G, margin: '0 0 2px' }}>{fmt(o.total)}</p>
+                    <span style={{ padding: '2px 8px', borderRadius: 4, background: `${STATUS_COLORS[o.status] || MUTED}20`, color: STATUS_COLORS[o.status] || MUTED, fontFamily: "'DM Sans'", fontSize: 10, fontWeight: 600 }}>{o.status}</span>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        )}
       </div>
     </AdminLayout>
   )

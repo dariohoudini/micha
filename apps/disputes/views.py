@@ -1,5 +1,5 @@
 
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import serializers as drf_serializers
@@ -29,8 +29,8 @@ class OpenDisputeView(APIView):
     def post(self, request):
         from apps.orders.models import Order
         order = get_object_or_404(Order, pk=request.data.get("order_id"), buyer=request.user)
-        if hasattr(order,"dispute"): return Response({"detail":"Dispute already open."},status=400)
-        if order.status not in ("delivered","shipped"): return Response({"detail":"Can only dispute shipped or delivered orders."},status=400)
+        if hasattr(order,"dispute"): return Response({'error': 'Dispute already open.'}, status=400)
+        if order.status not in ("delivered","shipped"): return Response({'error': 'Can only dispute shipped or delivered orders.'}, status=400)
         dispute = Dispute.objects.create(order=order,buyer=request.user,seller=order.seller,
             reason=request.data.get("reason","other"),description=request.data.get("description",""))
         return Response(DisputeSerializer(dispute).data, status=201)
@@ -49,8 +49,8 @@ class DisputeMessageView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     def post(self, request, pk):
         d = get_object_or_404(Dispute, pk=pk)
-        if d.buyer != request.user and d.seller != request.user: return Response({"detail":"Not a participant."},status=403)
-        if d.status in ("resolved","closed"): return Response({"detail":"Dispute closed."},status=400)
+        if d.buyer != request.user and d.seller != request.user: return Response({'error': 'Not a participant.'}, status=403)
+        if d.status in ("resolved","closed"): return Response({'error': 'Dispute closed.'}, status=400)
         msg = DisputeMessage.objects.create(dispute=d,sender=request.user,message=request.data.get("message",""),attachment=request.FILES.get("attachment"))
         return Response(MsgSerializer(msg).data, status=201)
 
@@ -73,7 +73,7 @@ class AdminResolveDisputeView(APIView):
     def patch(self, request, pk):
         d = get_object_or_404(Dispute, pk=pk)
         res = request.data.get("resolution")
-        if res not in ("refund_buyer","pay_seller","partial_refund","dismissed"): return Response({"detail":"Invalid."},status=400)
+        if res not in ("refund_buyer","pay_seller","partial_refund","dismissed"): return Response({'error': 'Invalid.'}, status=400)
         d.resolution=res; d.status="resolved"; d.admin_note=request.data.get("note",""); d.resolved_at=timezone.now(); d.save()
         if res == "refund_buyer":
             from apps.orders.models import Refund

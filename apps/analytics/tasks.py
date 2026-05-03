@@ -11,30 +11,15 @@ logger = logging.getLogger("micha")
 
 @shared_task(name="analytics.update_seller_performance_scores")
 def update_seller_performance_scores():
-    """Recalculate seller scores every 6 hours."""
+    """
+    Recalculate all seller performance scores using the validated engine.
+    Runs every 6 hours. Computes 5 dimensions: delivery speed, completion
+    rate, response rate, review quality, dispute rate.
+    """
     try:
-        from apps.analytics.models import SellerPerformance
-        from django.contrib.auth import get_user_model
-        from apps.orders.models import Order
-        from decimal import Decimal
-
-        User = get_user_model()
-        sellers = User.objects.filter(is_seller=True, is_active=True)
-        updated = 0
-        for seller in sellers:
-            orders = Order.objects.filter(seller=seller)
-            total = orders.count()
-            if total == 0:
-                continue
-            delivered = orders.filter(status__in=["delivered","completed"]).count()
-            cancelled = orders.filter(status="cancelled").count()
-            perf, _ = SellerPerformance.objects.get_or_create(seller=seller)
-            perf.completion_rate = Decimal(str(round(delivered / total, 4)))
-            perf.on_time_delivery_rate = Decimal(str(round(delivered / total, 4)))
-            perf.return_rate = Decimal(str(round(cancelled / total, 4)))
-            perf.recalculate()
-            updated += 1
-        return f"Updated {updated} seller scores"
+        from apps.analytics.performance_engine import update_all_seller_scores
+        result = update_all_seller_scores()
+        return f"Updated {result['updated']} sellers. Errors: {result['errors']}. Tiers: {result['tiers']}"
     except Exception as e:
         logger.exception(f"Seller performance update failed: {e}")
         return f"Error: {e}"

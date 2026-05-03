@@ -20,14 +20,14 @@ class SellerProfile(models.Model):
 class SellerFAQ(models.Model):
     seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='faqs')
     question = models.CharField(max_length=300)
-    answer = models.TextField()
+    answer = models.TextField(max_length=5000)
     ordering = models.PositiveIntegerField(default=0)
     class Meta: ordering = ['ordering']
 
 class SellerAnnouncement(models.Model):
     seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='announcements')
     title = models.CharField(max_length=200)
-    message = models.TextField()
+    message = models.TextField(max_length=2000)
     created_at = models.DateTimeField(auto_now_add=True)
     class Meta: ordering = ['-created_at']
 

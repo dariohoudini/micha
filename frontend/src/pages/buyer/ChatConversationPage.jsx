@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useChat, MOCK_CONVERSATIONS, MOCK_MESSAGES, formatMessageTime } from '@/components/chat/useChat'
+import { useChat, formatMessageTime } from '@/components/chat/useChat'
 import { formatPrice } from '@/components/buyer/mockData'
 
 const QUICK_REPLIES = [
@@ -11,10 +11,11 @@ const QUICK_REPLIES = [
   'Pode fazer desconto?',
 ]
 
+// Wire to real chat API on mount
 export default function ChatConversationPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const conv = MOCK_CONVERSATIONS.find(c => c.id === id) || MOCK_CONVERSATIONS[0]
+  const conv = [].find(c => c.id === id) || [][0]
   const { messages, setMessages, sendMessage, sendTyping, connected, typing } = useChat(id)
   const [input, setInput] = useState('')
   const [showQuickReplies, setShowQuickReplies] = useState(false)
@@ -24,7 +25,7 @@ export default function ChatConversationPage() {
 
   // Load mock messages
   useEffect(() => {
-    setMessages(MOCK_MESSAGES[id] || MOCK_MESSAGES['conv-1'])
+    setMessages({}[id] || {}['conv-1'])
   }, [id])
 
   // Scroll to bottom

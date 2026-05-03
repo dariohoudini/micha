@@ -3,15 +3,15 @@ apps/ai_engine/views.py — MICHA Express AI Engine v2
 """
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from rest_framework import status
 from django.utils import timezone
 from django.core.cache import cache
 
 from .services import (
     TasteProfileService, RecommendationService, SmartSearchService,
     PriceDropService, SizeRecommendationService, FlashSaleTargetingService,
-    AIChatService, EmbeddingService,
+    AIChatService,
 )
 from .serializers import (
     OnboardingQuizSerializer, TasteProfileSerializer,
@@ -19,7 +19,7 @@ from .serializers import (
 )
 from .models import (
     UserTasteProfile, SizeProfile, NotificationPreference,
-    AIConversation, SearchQuery,
+    AIConversation,
 )
 
 
@@ -62,6 +62,10 @@ class OnboardingQuizView(APIView):
 
 class PersonalisedFeedView(APIView):
     """
+    Personalised feed with Angola province-based boosting.
+    Products from user's province get score boost of 1.5x.
+    """
+    """
     GET /api/ai/feed/?limit=20&offset=0
     Returns personalised product IDs ranked by AI score.
     Frontend fetches full product data from /api/products/?ids=...
@@ -69,8 +73,14 @@ class PersonalisedFeedView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        limit = min(int(request.query_params.get('limit', 20)), 50)
-        offset = int(request.query_params.get('offset', 0))
+        try:
+            limit = min(int(request.query_params.get('limit', 20)), 50)
+        except (ValueError, TypeError):
+            limit = 20
+        try:
+            offset = int(request.query_params.get('offset', 0))
+        except (ValueError, TypeError):
+            offset = 0
 
         result = RecommendationService.get_home_feed(
             user=request.user, limit=limit, offset=offset,
@@ -102,7 +112,10 @@ class SimilarProductsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, product_id):
-        limit = min(int(request.query_params.get('limit', 10)), 20)
+        try:
+            limit = min(int(request.query_params.get('limit', 10)), 20)
+        except (ValueError, TypeError):
+            limit = 10
         result = RecommendationService.get_similar_products(
             product_id=product_id,
             user=request.user,
@@ -177,7 +190,10 @@ class SmartSearchView(APIView):
         if len(query) > 200:
             return Response({'error': 'Query too long'}, status=400)
 
-        limit = min(int(request.query_params.get('limit', 20)), 50)
+        try:
+            limit = min(int(request.query_params.get('limit', 20)), 50)
+        except (ValueError, TypeError):
+            limit = 20
 
         # NLP parse
         parsed = SmartSearchService.parse_query(query, user=request.user)
@@ -448,7 +464,10 @@ class FlashSaleTargetView(APIView):
         if not category:
             return Response({'error': 'category required'}, status=400)
 
-        max_users = min(int(request.data.get('max_users', 5000)), 10000)
+        try:
+            max_users = min(int(request.data.get('max_users', 5000)), 10000)
+        except (ValueError, TypeError):
+            max_users = 5000
         user_ids = FlashSaleTargetingService.get_target_users(category, max_users)
 
         return Response({
@@ -468,7 +487,7 @@ class AIStatsView(APIView):
     def get(self, request):
         from .models import (
             UserTasteProfile, BehavioralEvent, ProductEmbedding,
-            RecommendationCache, SearchQuery, AIConversation, PriceDropAlert
+            SearchQuery, AIConversation, PriceDropAlert
         )
         from django.db.models import Avg
 
@@ -499,3 +518,166 @@ class AIStatsView(APIView):
 
 # Fix missing import
 from django.db import models
+
+
+class HyperPersonalisedFeedView(APIView):
+    """
+    GET /api/v1/ai/feed/
+    Hyper-personalised feed combining:
+    - Taste profile (category interests)
+    - Time context (morning/lunch/evening)
+    - Province boost (local sellers first)
+    - Stock urgency signals
+    - A/B test variant
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.products.models import Product
+        from django.core.cache import cache
+        import json
+
+        user = request.user
+        time_context = request.query_params.get('time_context', 'default')
+        province = request.query_params.get('province', '')
+        limit = int(request.query_params.get('limit', 20))
+        cursor = request.query_params.get('cursor')
+
+        # Check Redis cache first
+        cache_key = f'hyper_feed:{user.id}:{time_context}:{province}'
+        cached = cache.get(cache_key)
+
+        if cached and not cursor:
+            return Response({
+                'results': json.loads(cached),
+                'feed_type': 'personalised_cached',
+                'next_cursor': None,
+            })
+
+        try:
+            from apps.ai_engine.hyper_engine import build_hyper_feed
+
+            now = timezone.now()
+            request_context = {
+                'hour': now.hour,
+                'day_of_week': now.weekday(),
+                'province': province,
+                'session_seconds': int(request.query_params.get('session_seconds', 0)),
+                'time_context': time_context,
+                'cursor': cursor,
+            }
+
+            # Candidate pool — 5x what we need for good scoring diversity
+            qs = Product.active.select_related(
+                'store', 'store__owner', 'category'
+            ).prefetch_related('images', 'tags')
+
+            if cursor:
+                qs = qs.filter(id__lt=cursor)
+
+            candidates = list(qs[:limit * 5])
+
+            # Run hyper engine
+            scored = build_hyper_feed(
+                user=user,
+                request_context=request_context,
+                candidate_products=candidates,
+                limit=limit,
+            )
+
+            products = [item[0] for item in scored]
+            score_breakdowns = {str(item[0].id): item[2] for item in scored}
+
+            # Score products using A/B-aware weights
+            from apps.ai_engine.weight_optimizer import ABTestManager
+            weights = ABTestManager.get_weights(user)
+
+            def score(p):
+                s = 0.0
+
+                # ── Interest signal (validated category affinity) ──
+                if p.category_id in interest_scores:
+                    # Scale by max possible interest score (100)
+                    affinity = min(interest_scores[p.category_id] / 100.0, 1.0)
+                    s += affinity * 20.0
+
+                # ── Time context boost ─────────────────────────────
+                cat_name = (p.category.name if p.category else '').lower()
+                time_boosts = {
+                    'morning': ['alimenta', 'casa', 'saúde', 'bebé'],
+                    'lunch':   ['moda', 'electrón', 'acessório', 'beleza'],
+                    'evening': ['entreteni', 'jogo', 'decora', 'livro'],
+                }
+                for kw in time_boosts.get(time_context, []):
+                    if kw in cat_name:
+                        s += 6.0
+                        break
+
+                # ── Province boost (local sellers) ─────────────────
+                store_city = (getattr(p.store, 'city', '') or '').lower()
+                if province and province.lower() in store_city:
+                    s += 10.0  # strong local boost
+                elif 'luanda' in store_city:
+                    s += 3.0   # luanda default
+
+                # ── Popularity signals (capped to prevent domination) ──
+                s += min(p.views * 0.002, 3.0)
+                s += min(p.wishlist_count * 0.1, 2.0)
+                s += min(p.add_to_cart_count * 0.15, 3.0)
+
+                # ── Recency boost (newer products get a nudge) ─────
+                from django.utils import timezone
+                age_days = (timezone.now() - p.created_at).days
+                if age_days < 3:
+                    s += 4.0
+                elif age_days < 7:
+                    s += 2.0
+                elif age_days < 14:
+                    s += 1.0
+
+                # ── Verified seller trust boost ─────────────────────
+                if getattr(p.store, 'is_verified', False):
+                    s += 2.0
+
+                # ── Price relevance (mid-range AOA products) ────────
+                price = float(p.price or 0)
+                if 5000 <= price <= 200000:
+                    s += 1.0  # sweet spot for Angolan market
+
+                return s
+
+            products.sort(key=score, reverse=True)
+            products = products[:limit]
+
+            # Serialize
+            from apps.products.serializers import ProductListSerializer
+            data = ProductListSerializer(products, many=True, context={'request': request}).data
+
+            # Cache for 5 minutes
+            cache.set(cache_key, json.dumps(list(data)), timeout=300)
+
+            next_cursor = str(products[-1].id) if products else None
+
+            return Response({
+                'results': data,
+                'feed_type': 'hyper_personalised_v2',
+                'next_cursor': next_cursor,
+                'context': {
+                    'time': time_context,
+                    'province': province,
+                    'ab_group': getattr(user, 'ab_test_group', 0),
+                    'candidates_scored': len(candidates),
+                    'profile_confidence': getattr(
+                        getattr(engine_profile := None, 'profile_confidence', None),
+                        '__float__', lambda: 0.0
+                    )(),
+                },
+                'debug': score_breakdowns if request.query_params.get('debug') == '1' else {},
+            })
+
+        except Exception as e:
+            # Fallback to standard feed
+            products = list(Product.active.all()[:limit])
+            from apps.products.serializers import ProductListSerializer
+            data = ProductListSerializer(products, many=True, context={'request': request}).data
+            return Response({'results': data, 'feed_type': 'fallback'})

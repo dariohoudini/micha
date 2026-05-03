@@ -16,26 +16,26 @@ class LanguageSerializer(serializers.ModelSerializer):
 
 class CurrencyListView(generics.ListAPIView):
     serializer_class=CurrencySerializer
-    permission_classes=[permissions.AllowAny]
+    permission_classes = [AllowAny]
     queryset=Currency.objects.filter(is_active=True)
 
 class LanguageListView(generics.ListAPIView):
     serializer_class=LanguageSerializer
-    permission_classes=[permissions.AllowAny]
+    permission_classes = [AllowAny]
     queryset=Language.objects.filter(is_active=True)
 
 class TranslationsView(APIView):
-    permission_classes=[permissions.AllowAny]
+    permission_classes = [AllowAny]
     def get(self,request,lang_code):
         try:
             lang=Language.objects.get(code=lang_code,is_active=True)
             translations={t.key:t.value for t in Translation.objects.filter(language=lang)}
             return Response({'language':lang_code,'translations':translations})
         except Language.DoesNotExist:
-            return Response({"detail":"Language not found."},status=404)
+            return Response({'error': 'Language not found.'}, status=404)
 
 class ConvertPriceView(APIView):
-    permission_classes=[permissions.AllowAny]
+    permission_classes = [AllowAny]
     def get(self,request):
         amount=float(request.query_params.get('amount',0))
         from_currency=request.query_params.get('from','AOA')
@@ -47,4 +47,4 @@ class ConvertPriceView(APIView):
             converted=amount_in_aoa*float(to_cur.exchange_rate_to_aoa)
             return Response({'from':from_currency,'to':to_currency,'amount':amount,'converted':round(converted,2),'rate':float(to_cur.exchange_rate_to_aoa)})
         except Currency.DoesNotExist:
-            return Response({"detail":"Currency not found."},status=404)
+            return Response({'error': 'Currency not found.'}, status=404)

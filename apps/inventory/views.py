@@ -45,7 +45,7 @@ class StockReservationView(APIView):
             reservation = StockReservation.reserve(product, request.user, quantity)
             return Response({"detail": "Reserved.", "expires_at": reservation.expires_at}, status=201)
         except ValueError as e:
-            return Response({"error": "insufficient_stock", "detail": str(e)}, status=400)
+            return Response({'error': 'insufficient_stock', "detail": str(e)}, status=400)
 
 
 class LowStockAlertView(generics.ListCreateAPIView):

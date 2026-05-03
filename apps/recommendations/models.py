@@ -3,13 +3,12 @@ Recommendation Engine Models — With DB Indexes
 """
 from django.db import models
 from django.conf import settings
-from django.utils import timezone
 
 User = settings.AUTH_USER_MODEL
 
 
 class UserInterest(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="interests")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="interests", db_index=True)
     category = models.ForeignKey("products.Category", on_delete=models.CASCADE, related_name="interested_users")
     score = models.FloatField(default=0.0)
     view_count = models.PositiveIntegerField(default=0)
@@ -57,8 +56,8 @@ class ProductInteraction(models.Model):
         ("view", "View"), ("wishlist", "Wishlist"), ("cart", "Cart"),
         ("purchase", "Purchase"), ("review", "Review"), ("share", "Share"),
     )
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="product_interactions")
-    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="interactions")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="product_interactions", db_index=True)
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="interactions", db_index=True)
     type = models.CharField(max_length=10, choices=TYPES)
     weight = models.FloatField(default=1.0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -98,8 +97,8 @@ class ProductSimilarity(models.Model):
 
 
 class PriceAlert(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="price_alerts")
-    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="price_alerts")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="price_alerts", db_index=True)
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="price_alerts", db_index=True)
     target_price = models.DecimalField(max_digits=10, decimal_places=2)
     original_price = models.DecimalField(max_digits=10, decimal_places=2)
     is_triggered = models.BooleanField(default=False)
@@ -112,8 +111,8 @@ class PriceAlert(models.Model):
 
 
 class BackInStockAlert(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="back_in_stock_alerts")
-    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="back_in_stock_alerts")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="back_in_stock_alerts", db_index=True)
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="back_in_stock_alerts", db_index=True)
     notified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -123,7 +122,7 @@ class BackInStockAlert(models.Model):
 
 
 class StockUrgencySignal(models.Model):
-    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="urgency_views")
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="urgency_views", db_index=True)
     session_key = models.CharField(max_length=100)
     last_seen = models.DateTimeField(auto_now=True)
 
@@ -133,7 +132,7 @@ class StockUrgencySignal(models.Model):
 
 
 class BrowsingSession(models.Model):
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="browsing_sessions")
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="browsing_sessions", db_index=True)
     session_key = models.CharField(max_length=100, blank=True)
     products_viewed = models.ManyToManyField("products.Product", blank=True, related_name="viewed_in_sessions")
     started_at = models.DateTimeField(auto_now_add=True)

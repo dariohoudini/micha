@@ -66,6 +66,13 @@ def search_products(query, filters=None):
 
 
 class SearchView(APIView):
+    """
+    Hyper-personalised search:
+    - Keyword matching
+    - Category interest boost from user profile
+    - Province-aware ranking
+    - Excludes recently purchased
+    """
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
@@ -83,7 +90,7 @@ class SearchView(APIView):
             "brand": request.query_params.get("brand"),
         }
 
-        cache_key = f"search:{query}:{str(sorted(filters.items()))}"
+        import hashlib; cache_key = "search:" + hashlib.sha256(f"{query}{sorted(filters.items())}".encode()).hexdigest()
         cached = cache.get(cache_key)
         if cached:
             return Response(cached)

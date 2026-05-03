@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import SellerLayout from '@/layouts/SellerLayout'
 import { formatPrice } from '@/components/buyer/mockData'
+import { PayoutScheduleCalendar } from '@/components/shared/MichaUXComponents'
 import { useWallet, useWalletTransactions, useRequestPayout } from '@/hooks/useQueries'
 
 const TRANSACTIONS = [
@@ -19,9 +20,6 @@ export default function SellerWalletPage() {
   const [withdrawStep, setWithdrawStep] = useState(1) // 1: amount, 2: confirm, 3: success
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [phone, setPhone] = useState('')
-  const { data: wallet } = useWallet()
-  const { data: txData } = useWalletTransactions()
-  const requestPayout = useRequestPayout()
   const [phoneError, setPhoneError] = useState('')
   const [amountError, setAmountError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -195,7 +193,10 @@ export default function SellerWalletPage() {
       )}
 
       <div className="screen" style={{ flex: 1 }}>
-        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: '0 16px 16px' }}>
+        <PayoutScheduleCalendar />
+      </div>
+      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
           {/* Balance card */}
           <div style={{ borderRadius: 20, padding: 24, background: 'linear-gradient(135deg, #C9A84C 0%, #A67C35 100%)', position: 'relative', overflow: 'hidden' }}>

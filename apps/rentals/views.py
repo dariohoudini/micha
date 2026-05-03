@@ -1,7 +1,8 @@
+from rest_framework.pagination import PageNumberPagination
 """
 apps/rentals/views.py
 """
-from rest_framework import generics, status
+from rest_framework import generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
@@ -11,17 +12,52 @@ from django.utils import timezone
 
 from .models import (
     Listing, ListingImage, ListingInquiry, RentalVerification,
-    SavedListing, PROPERTY_AMENITIES
+    SavedListing
 )
 from .serializers import (
     ListingListSerializer, ListingDetailSerializer, CreateListingSerializer,
-    ListingImageSerializer, ListingInquirySerializer, RentalVerificationSerializer
+    ListingImageSerializer, RentalVerificationSerializer
 )
 
 
 # ── Browse / Search ───────────────────────────────────────────────────────────
 
+
+def _validate_image(image_file):
+    """Validate uploaded image file for security."""
+    import os
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+    ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+
+    if not image_file:
+        return None, 'Ficheiro não fornecido'
+
+    if image_file.size > MAX_SIZE:
+        return None, 'Imagem muito grande. Máximo 10MB'
+
+    content_type = getattr(image_file, 'content_type', '')
+    if content_type and content_type not in ALLOWED_TYPES:
+        return None, f'Tipo de ficheiro não permitido: {content_type}'
+
+    _, ext = os.path.splitext(image_file.name.lower())
+    if ext not in ALLOWED_EXTS:
+        return None, f'Extensão não permitida: {ext}'
+
+    # Check for null bytes in filename
+    if '\x00' in image_file.name:
+        return None, 'Nome de ficheiro inválido'
+
+    return image_file, None
+
+
+class RentalsPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
 class ListingBrowseView(generics.ListAPIView):
+    pagination_class = RentalsPagination
     """
     GET /api/rentals/browse/
 
@@ -131,6 +167,7 @@ class ListingDetailView(generics.RetrieveAPIView):
 # ── Lister (Seller) Management ────────────────────────────────────────────────
 
 class MyListingsView(generics.ListAPIView):
+    pagination_class = RentalsPagination
     """GET /api/rentals/my/ — Lister's own listings."""
     permission_classes = [IsAuthenticated]
     serializer_class = ListingListSerializer
@@ -396,6 +433,7 @@ class SaveListingView(APIView):
 
 
 class SavedListingsView(generics.ListAPIView):
+    pagination_class = RentalsPagination
     """GET /api/rentals/saved/ — User's saved listings."""
     permission_classes = [IsAuthenticated]
     serializer_class = ListingListSerializer

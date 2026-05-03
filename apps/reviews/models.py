@@ -10,10 +10,10 @@ class Review(models.Model):
 
     reviewer = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="given_reviews"
-    )
+    , db_index=True)
     seller = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="received_reviews"
-    )
+    , db_index=True)
     rating = models.IntegerField(choices=RATING_CHOICES)
     comment = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -35,10 +35,10 @@ class ProductReview(models.Model):
 
     reviewer = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name='product_reviews_given'
-    )
+    , db_index=True)
     product = models.ForeignKey(
         'products.Product', on_delete=models.CASCADE, related_name='reviews'
-    )
+    , db_index=True)
     order_item = models.OneToOneField(
         'orders.OrderItem', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='review'

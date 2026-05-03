@@ -10,17 +10,29 @@ Fixes:
 7. Token revocation on password change
 """
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.db import models, transaction
+from django.db import models
+from apps.payments.models import EncryptedCharField, transaction
 from django.db.models import F
 from django.utils import timezone
 from datetime import timedelta
 import hashlib
 import hmac
 import secrets
+import hashlib
 import random
 import string
 import uuid
 
+
+
+import hashlib
+
+def hash_ip(ip):
+    """One-way hash of IP address for privacy compliance (Lei 22/11).
+    Cannot be reversed — only proves the IP was recorded."""
+    if not ip:
+        return None
+    return hashlib.sha256(ip.encode()).hexdigest()[:64]
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -56,7 +68,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     CUR = (('AOA', 'AOA'), ('USD', 'USD'), ('EUR', 'EUR'))
 
     email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=20, blank=True, null=True, unique=True)
+    phone = EncryptedCharField(max_length=500, blank=True, null=True)
     username = models.CharField(max_length=50, blank=True, null=True, unique=True)
 
     is_active = models.BooleanField(default=True)
@@ -82,7 +94,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     password_reset_token_hash = models.CharField(max_length=64, blank=True, null=True)
     password_reset_expires = models.DateTimeField(blank=True, null=True)
 
-    pending_email = models.EmailField(blank=True, null=True)
+    pending_email = EncryptedCharField(max_length=500, blank=True, null=True)
     email_change_token_hash = models.CharField(max_length=64, blank=True, null=True)
     email_change_expires = models.DateTimeField(blank=True, null=True)
 
@@ -96,6 +108,16 @@ class User(AbstractBaseUser, PermissionsMixin):
     language = models.CharField(max_length=5, choices=LANG, default='en')
     currency = models.CharField(max_length=5, choices=CUR, default='AOA')
     dark_mode = models.BooleanField(default=False)
+
+    # A/B testing — split by user_id for consistent group assignment
+    # Group A (0) = control, Group B (1) = experiment
+    @property
+    def ab_test_group(self):
+        return int(str(self.id).replace('-',''), 16) % 2 if self.id else 0
+
+    @property
+    def is_experiment_group(self):
+        return self.ab_test_group == 1
 
     email_notifications = models.BooleanField(default=True)
     push_notifications = models.BooleanField(default=True)
@@ -330,7 +352,7 @@ class UserProfile(models.Model):
     province = models.CharField(max_length=100, blank=True, null=True)
     bio = models.TextField(blank=True, null=True)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
-    date_of_birth = models.DateField(blank=True, null=True)
+    date_of_birth = EncryptedCharField(max_length=100, blank=True, null=True)
     gender = models.CharField(max_length=10, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -346,7 +368,7 @@ class UserSession(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_sessions')
     session_id = models.UUIDField(default=uuid.uuid4, unique=True)
-    device = models.CharField(max_length=200, blank=True)
+    device = EncryptedCharField(max_length=500, blank=True)
     ip_address = models.GenericIPAddressField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -445,3 +467,37 @@ class ConsentLog(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [models.Index(fields=['user', 'consent_type'])]
+
+
+class PasswordHistory(models.Model):
+    """
+    Stores hashes of last 5 passwords.
+    Prevents users from recycling recent passwords.
+    """
+    MAX_HISTORY = 5
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='password_history')
+    password_hash = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @classmethod
+    def is_reused(cls, user, raw_password):
+        from django.contrib.auth.hashers import check_password
+        recent = cls.objects.filter(user=user).order_by('-created_at')[:cls.MAX_HISTORY]
+        return any(check_password(raw_password, h.password_hash) for h in recent)
+
+    @classmethod
+    def record(cls, user, raw_password):
+        from django.contrib.auth.hashers import make_password
+        cls.objects.create(user=user, password_hash=make_password(raw_password))
+        # Keep only last MAX_HISTORY
+        old_ids = list(
+            cls.objects.filter(user=user)
+            .order_by('-created_at')
+            .values_list('id', flat=True)[cls.MAX_HISTORY:]
+        )
+        if old_ids:
+            cls.objects.filter(id__in=old_ids).delete()

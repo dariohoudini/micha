@@ -61,7 +61,7 @@ class FraudAssessmentView(APIView):
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
+            return Response({'error': 'Não encontrado'}, status=404)
 
         if assess_type == 'seller':
             result = FraudDetectionService.assess_seller_risk(user)

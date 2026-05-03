@@ -1,4 +1,5 @@
-from rest_framework import generics, permissions, status
+from rest_framework.permissions import AllowAny
+from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import serializers
@@ -62,18 +63,18 @@ class SetDefaultAddressView(APIView):
 class DeliveryZoneListView(generics.ListAPIView):
     """GET /api/shipping/zones/ — Public list of delivery zones and costs."""
     serializer_class = DeliveryZoneSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     queryset = DeliveryZone.objects.filter(is_active=True)
 
 
 class ShippingCostEstimateView(APIView):
     """GET /api/shipping/estimate/?city=Luanda — Get shipping cost for a city."""
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request):
         city = request.query_params.get('city', '').strip()
         if not city:
-            return Response({"detail": "City parameter is required."}, status=400)
+            return Response({'error': 'City parameter is required.'}, status=400)
         try:
             zone = DeliveryZone.objects.get(city__iexact=city, is_active=True)
             return Response(DeliveryZoneSerializer(zone).data)

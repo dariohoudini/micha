@@ -1,4 +1,4 @@
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import serializers
@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from .models import Chat, Message, MessageAttachment, QuickReplyTemplate
+from .models import Chat, Message, QuickReplyTemplate
 from apps.users.permissions import IsNotSuspended
 from apps.accounts.models import Block
 
@@ -51,22 +51,22 @@ class QuickReplySerializer(serializers.ModelSerializer):
     
 class ConversationListCreateView(generics.ListCreateAPIView):
     serializer_class=ChatSerializer
-    permission_classes=[permissions.IsAuthenticated,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     def get_queryset(self):
         user=self.request.user
         return Chat.objects.filter(Q(buyer=user)|Q(seller=user)).prefetch_related('messages').order_by('-last_message_at')
     def create(self,request,*args,**kwargs):
         seller_id=request.data.get('seller_id')
-        if not seller_id: return Response({"detail":"seller_id required."},status=400)
+        if not seller_id: return Response({'error': 'seller_id required.'}, status=400)
         seller=get_object_or_404(User,pk=seller_id,is_seller=True)
-        if request.user==seller: return Response({"detail":"Cannot chat with yourself."},status=400)
+        if request.user==seller: return Response({'error': 'Cannot chat with yourself.'}, status=400)
         check_block(request.user,seller)
         chat,created=Chat.objects.get_or_create(buyer=request.user,seller=seller)
         return Response(self.get_serializer(chat,context={'request':request}).data,status=201 if created else 200)
 
 class MessageListCreateView(generics.ListCreateAPIView):
     serializer_class=MessageSerializer
-    permission_classes=[permissions.IsAuthenticated,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     def _chat(self):
         chat=get_object_or_404(Chat,pk=self.kwargs['conversation_id'])
         if self.request.user not in(chat.buyer,chat.seller): raise PermissionDenied("Not a participant.")
@@ -85,38 +85,38 @@ class MessageListCreateView(generics.ListCreateAPIView):
         chat.last_message_at=timezone.now(); chat.save()
 
 class MarkReadView(APIView):
-    permission_classes=[permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
     def post(self,request,conversation_id):
         chat=get_object_or_404(Chat,pk=conversation_id)
-        if request.user not in(chat.buyer,chat.seller): return Response({"detail":"Not a participant."},status=403)
+        if request.user not in(chat.buyer,chat.seller): return Response({'error': 'Not a participant.'}, status=403)
         updated=Message.objects.filter(chat=chat,is_read=False).exclude(sender=request.user).update(is_read=True,read_at=timezone.now(),status='read')
         return Response({"marked_read":updated})
 
 class ArchiveChatView(APIView):
-    permission_classes=[permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
     def post(self,request,conversation_id):
         chat=get_object_or_404(Chat,pk=conversation_id)
         user=request.user
         if user==chat.buyer: chat.is_archived_by_buyer=True
         elif user==chat.seller: chat.is_archived_by_seller=True
-        else: return Response({"detail":"Not a participant."},status=403)
+        else: return Response({'error': 'Not a participant.'}, status=403)
         chat.save()
         return Response({"detail":"Chat archived."})
 
 class QuickReplyListCreateView(generics.ListCreateAPIView):
     serializer_class=QuickReplySerializer
-    permission_classes=[permissions.IsAuthenticated,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     def get_queryset(self): return QuickReplyTemplate.objects.filter(seller=self.request.user)
     def perform_create(self,s): s.save(seller=self.request.user)
 
 class ReportConversationView(APIView):
-    permission_classes=[permissions.IsAuthenticated,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     def post(self,request,conversation_id):
         chat=get_object_or_404(Chat,pk=conversation_id)
         user=request.user
-        if user not in(chat.buyer,chat.seller): return Response({"detail":"Not a participant."},status=403)
+        if user not in(chat.buyer,chat.seller): return Response({'error': 'Not a participant.'}, status=403)
         reason=request.data.get('reason','').strip()
-        if not reason: return Response({"detail":"Reason required."},status=400)
+        if not reason: return Response({'error': 'Reason required.'}, status=400)
         other=chat.seller if user==chat.buyer else chat.buyer
         from apps.reports.models import Report
         Report.objects.get_or_create(reporter=user,target_type='seller',target_id=other.id,defaults={'reason':reason})

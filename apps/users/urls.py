@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
+    AcceptTermsView,
     UserRegisterView, VerifyEmailView, ResendEmailOTPView,
     MyTokenObtainPairView, LogoutView, SocialAuthView,
     ForgotPasswordView, ResetPasswordView,
@@ -53,6 +54,8 @@ urlpatterns = [
     path('referral/', ReferralView.as_view(), name='referral'),
     path('loyalty/', LoyaltyView.as_view(), name='loyalty'),
     path('loyalty/redeem/', RedeemPointsView.as_view(), name='redeem-points'),
+
+    path('accept-terms/', AcceptTermsView.as_view(), name='accept-terms'),
 
     # Data export (GDPR / Lei 22/11)
     path('data-export/', DataExportView.as_view(), name='data-export'),

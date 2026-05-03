@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
+import HelperBot from '@/components/shared/HelperBot'
+import { OrderFilterTabs, OrdersEmptyState } from '@/components/buyer/OrderFilterTabs'
+import { haptic } from '@/hooks/useUX'
+
 
 const STATUS_CONFIG = {
   pending:   { label: 'Pendente',    color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  icon: '⏳' },
@@ -60,6 +64,7 @@ function TrackingTimeline({ currentStatus }) {
 }
 
 export default function OrdersPage() {
+  const [filteredOrders, setFilteredOrders] = useState([])
   const navigate = useNavigate()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -111,6 +116,7 @@ export default function OrdersPage() {
         </div>
       </div>
 
+      <OrderFilterTabs orders={orders || []} onFilter={setFilteredOrders} />
       <div className="screen" style={{ flex: 1 }}>
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
@@ -208,6 +214,8 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
-    </BuyerLayout>
+    
+      <HelperBot screen="orders" isSeller={false} />
+      </BuyerLayout>
   )
 }

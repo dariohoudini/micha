@@ -1,3 +1,4 @@
+import { useProductTracking, trackHighValueEvent } from '@/hooks/useIntentDetector'
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
@@ -9,6 +10,27 @@ import {
   watchPrice, getReviewsSummary,
 } from '@/api/ai'
 import { AIChatButton, TrustScoreBadge } from '@/components/ai/AIComponents'
+import HelperBot from '@/components/shared/HelperBot'
+import trackInteraction, { INTERACTION_TYPES } from '@/api/tracking'
+import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
+import { ReportButton, BlockUserButton } from '@/components/shared/UserActions'
+
+// Stock urgency hook
+function useStockUrgency(productId) {
+  const [urgency, setUrgency] = useState(null)
+  useEffect(() => {
+    if (!productId) return
+    client.get(`/api/v1/recommendations/stock-urgency/${productId}/`)
+      .then(r => setUrgency(r.data))
+      .catch(() => {})
+  }, [productId])
+  return urgency
+}
+import StickyAddToCart from '@/components/buyer/StickyAddToCart'
+import { CartFlyParticle, useCartFly } from '@/components/shared/CartFlyAnimation'
+import { haptic } from '@/hooks/useUX'
+import { WhatsAppShareButton, PriceDropAlertToggle, ProductQASection } from '@/components/shared/MichaUXComponents'
+
 
 function StarRating({ rating, count }) {
   return (
@@ -29,6 +51,17 @@ function StarRating({ rating, count }) {
   )
 }
 
+
+function usePriceHistory(productId) {
+  const [history, setHistory] = useState([])
+  useEffect(() => {
+    if (!productId) return
+    client.get(`/api/v1/collections/price-history/${productId}/`)
+      .then(r => setHistory(r.data.history || r.data || []))
+      .catch(() => {})
+  }, [productId])
+  return history
+}
 export default function ProductDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -51,6 +84,7 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     loadProduct()
+    if (id) trackInteraction(id, INTERACTION_TYPES.VIEW)
     startTime.current = Date.now()
 
     // Track dwell time on unmount
@@ -211,7 +245,8 @@ export default function ProductDetailPage() {
             <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 24, fontWeight: 700, color: '#C9A84C' }}>
               {Number(product.price).toLocaleString()} Kz
             </span>
-            {product.original_price && (
+            <PersonalisedPriceBadge productId={product?.id} currentPrice={Number(product?.price)} />
+        {product?.original_price && (
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: '#9A9A9A', textDecoration: 'line-through' }}>
                 {Number(product.original_price).toLocaleString()} Kz
               </span>
@@ -421,6 +456,14 @@ export default function ProductDetailPage() {
         productName={product?.name}
         language="pt"
       />
-    </BuyerLayout>
+    
+      {product && (
+        <div style={{ padding: '0 16px 8px', display: 'flex', gap: 8 }}>
+          <ReportButton targetType="product" targetId={product.id} targetName={product.title} />
+          <BlockUserButton userId={product.store?.owner} username={product.store?.name} />
+        </div>
+      )}
+      <HelperBot screen="product" isSeller={false} />
+      </BuyerLayout>
   )
 }

@@ -23,10 +23,11 @@ class ResolveContentFlagView(APIView):
 class IPBanView(APIView):
     permission_classes = [IsAdminOrSuperuser]
     def get(self, request):
-        return Response([{"ip":b.ip_address,"reason":b.reason,"at":b.created_at} for b in IPBan.objects.all()])
+        bans = bans[:100]  # Limit to prevent DoS
+        return Response([{"ip":b.ip_address,"reason":b.reason,"at":b.created_at} for b in IPBan.objects.all().order_by("-created_at")])
     def post(self, request):
         ip = request.data.get("ip_address")
-        if not ip: return Response({"detail":"IP required."},status=400)
+        if not ip: return Response({'error': 'IP required.'}, status=400)
         IPBan.objects.get_or_create(ip_address=ip,defaults={"reason":request.data.get("reason",""),"banned_by":request.user})
         return Response({"detail":f"IP {ip} banned."})
 
@@ -35,7 +36,7 @@ class BuyerProtectionView(APIView):
     def post(self, request):
         from apps.orders.models import Order
         order = get_object_or_404(Order, pk=request.data.get("order_id"), buyer=request.user)
-        if hasattr(order,"buyer_protection"): return Response({"detail":"Claim already submitted."},status=400)
+        if hasattr(order,"buyer_protection"): return Response({'error': 'Claim already submitted.'}, status=400)
         age_days = (timezone.now() - order.created_at).days
         auto = age_days > 30 and order.status not in ("delivered","cancelled")
         claim = BuyerProtectionClaim.objects.create(

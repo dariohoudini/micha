@@ -190,7 +190,7 @@ class Listing(models.Model):
 
     # ── Basic info ────────────────────────────────────────────────────────────
     title = models.CharField(max_length=200)
-    description = models.TextField()
+    description = models.TextField(max_length=10000)
     status = models.CharField(max_length=20, choices=LISTING_STATUS, default='draft', db_index=True)
 
     # ── Pricing ───────────────────────────────────────────────────────────────

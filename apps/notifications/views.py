@@ -61,3 +61,5 @@ class MarkAllReadView(APIView):
             user=request.user, is_read=False
         ).update(is_read=True, read_at=timezone.now())
         return Response({"detail": "All notifications marked as read."})
+
+

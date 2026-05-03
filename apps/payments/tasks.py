@@ -10,7 +10,12 @@ def release_held_earnings():
         released_count = 0
         for hold in holds:
             wallet, _ = SellerWallet.objects.get_or_create(seller=hold.seller)
-            wallet.balance += hold.amount
+            # Use select_for_update to prevent race condition
+            from apps.payments.models import SellerWallet
+            locked_wallet = SellerWallet.objects.select_for_update(of=('self',)).get(pk=wallet.pk)
+            locked_wallet.balance += hold.amount
+            locked_wallet.save(update_fields=['balance', 'updated_at'])
+            wallet = locked_wallet  # keep reference updated
             wallet.pending_balance = max(0, wallet.pending_balance - hold.amount)
             wallet.save(update_fields=['balance', 'pending_balance'])
             WalletTransaction.objects.create(
@@ -43,3 +48,107 @@ def auto_payout_sellers():
         return f"Triggered {count} automatic payouts"
     except Exception as e:
         return f"Error: {e}"
+
+
+@app.task(bind=True, max_retries=3, default_retry_delay=300)
+def retry_failed_payment(self, payment_id: str):
+    """
+    Retry a failed payment after 5 minutes.
+    Max 3 retries (15 minutes total).
+    After exhausting retries, marks as abandoned.
+    """
+    import logging
+    from apps.orders.models import Payment
+    from apps.payments.gateway import PaymentState
+
+    logger = logging.getLogger('micha.payments')
+
+    try:
+        payment = Payment.objects.get(id=payment_id)
+
+        if payment.status == PaymentState.CONFIRMED:
+            logger.info(f'Payment {payment_id} already confirmed — skipping retry')
+            return
+
+        if self.request.retries >= self.max_retries:
+            Payment.objects.filter(id=payment_id).update(
+                status=PaymentState.ABANDONED
+            )
+            logger.error(f'Payment {payment_id} abandoned after {self.max_retries} retries')
+            return
+
+        logger.info(f'Retrying payment {payment_id} (attempt {self.request.retries + 1})')
+
+    except Payment.DoesNotExist:
+        logger.error(f'Payment {payment_id} not found for retry')
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@app.task
+def run_payment_reconciliation():
+    """
+    Daily reconciliation — check all pending payments against gateway.
+    Catches any payments confirmed by gateway but missed by webhook.
+    Run: daily at 2am
+    """
+    import time
+    import logging
+    from apps.orders.models import Payment
+    from apps.payments.gateway import PaymentProcessor, PaymentState
+    from apps.payments.models import PaymentReconciliationLog
+
+    logger = logging.getLogger('micha.payments')
+    start = time.time()
+
+    pending_payments = Payment.objects.filter(
+        status=PaymentState.PENDING,
+        created_at__lte=timezone.now() - timedelta(minutes=30),
+    ).select_related('order')[:200]
+
+    checked = 0
+    discrepancies = 0
+    resolved = 0
+    errors = []
+
+    processor = PaymentProcessor()
+
+    for payment in pending_payments:
+        try:
+            result = processor.reconcile_order(payment.order)
+            checked += 1
+
+            if result['action'] == 'confirmed':
+                discrepancies += 1
+                resolved += 1
+                logger.warning('Reconciliation found missed payment', extra={
+                    'payment_id': str(payment.id),
+                    'reference': payment.gateway_reference,
+                })
+
+        except Exception as e:
+            errors.append({'payment_id': str(payment.id), 'error': str(e)})
+            logger.error(f'Reconciliation error for payment {payment.id}: {e}')
+
+    duration = time.time() - start
+
+    PaymentReconciliationLog.objects.create(
+        orders_checked=checked,
+        discrepancies_found=discrepancies,
+        discrepancies_resolved=resolved,
+        errors=errors,
+        duration_seconds=duration,
+    )
+
+    logger.info('Payment reconciliation complete', extra={
+        'checked': checked,
+        'discrepancies': discrepancies,
+        'resolved': resolved,
+        'duration_seconds': duration,
+    })
+
+    return {
+        'checked': checked,
+        'discrepancies': discrepancies,
+        'resolved': resolved,
+    }

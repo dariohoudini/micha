@@ -14,7 +14,6 @@ Usage in a view:
 """
 import io
 import logging
-from pathlib import Path
 
 logger = logging.getLogger('micha')
 
@@ -29,7 +28,7 @@ def process_image_upload(file_obj, upload_to='products/images/'):
     Returns dict of {size: file_path}
     """
     try:
-        from PIL import Image, ExifTags
+        from PIL import Image
         from django.core.files.base import ContentFile
         from django.core.files.storage import default_storage
         import uuid

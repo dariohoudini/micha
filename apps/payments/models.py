@@ -51,14 +51,20 @@ class EncryptedCharField(models.CharField):
             f = self._get_fernet()
             return f.encrypt(value.encode()).decode()
         except Exception:
-            return value  # fallback in dev without key set
+            import os
+            if os.environ.get('DEBUG', 'True') != 'True':
+                raise ValueError('Encryption failed — check FIELD_ENCRYPTION_KEY')
+            return value
 
     def _decrypt(self, value):
         try:
             f = self._get_fernet()
             return f.decrypt(value.encode()).decode()
-        except Exception:
-            return value  # already plain text or dev mode
+        except Exception as e:
+            import os
+            if os.environ.get('DEBUG', 'True') == 'False':
+                raise ValueError(f'Decryption failed — data may be corrupted: {e}')
+            return value
 
 
 class SellerWallet(models.Model):
@@ -162,6 +168,21 @@ class WalletTransaction(models.Model):
         ordering = ['-created_at']
         indexes = [models.Index(fields=['wallet', '-created_at'])]
 
+    def delete(self, *args, **kwargs):
+        raise ValueError(
+            "WalletTransaction records are immutable and cannot be deleted. "
+            "Financial audit trail must be preserved."
+        )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError(
+                "WalletTransaction records cannot be modified after creation. "
+                "Create a new correcting transaction instead."
+            )
+        super().save(*args, **kwargs)
+
+
 
 class SellerBankAccount(models.Model):
     """
@@ -261,3 +282,55 @@ class EarningsHold(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=['released', 'release_at'])]
+
+
+class PaymentEvent(models.Model):
+    """
+    Append-only audit log of every payment event.
+    NEVER delete records from this table — it is the financial audit trail.
+    """
+    payment = models.ForeignKey(
+        'orders.Payment',
+        on_delete=models.CASCADE,
+        related_name='events',
+    )
+    event_type = models.CharField(max_length=50, db_index=True)
+    details = models.JSONField(default=dict)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['payment', 'event_type']),
+        ]
+
+    def __str__(self):
+        return f'{self.event_type} @ {self.created_at:%Y-%m-%d %H:%M:%S}'
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('PaymentEvent records are immutable — financial audit trail must be preserved.')
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError('PaymentEvent records cannot be modified — append only.')
+        super().save(*args, **kwargs)
+
+
+class PaymentReconciliationLog(models.Model):
+    """
+    Tracks reconciliation runs — comparing our DB against gateway.
+    Run daily to catch any missed webhooks.
+    """
+    run_at = models.DateTimeField(auto_now_add=True)
+    orders_checked = models.IntegerField(default=0)
+    discrepancies_found = models.IntegerField(default=0)
+    discrepancies_resolved = models.IntegerField(default=0)
+    errors = models.JSONField(default=list)
+    duration_seconds = models.FloatField(default=0)
+
+    class Meta:
+        ordering = ['-run_at']
+
+    def __str__(self):
+        return f'Reconciliation {self.run_at:%Y-%m-%d}: {self.discrepancies_found} discrepancies'

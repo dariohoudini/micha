@@ -1,4 +1,4 @@
-from rest_framework import permissions, status
+from rest_framework import permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -37,8 +37,8 @@ class AddToWishlistView(APIView):
             wishlist=wishlist, product=product
         )
         if not created:
-            return Response({"detail": "Already in wishlist."}, status=200)
-        return Response({"detail": "Added to wishlist."}, status=201)
+            return Response({'error': 'Already in wishlist.'}, status=200)
+        return Response({'error': 'Added to wishlist.'}, status=201)
 
 
 class RemoveFromWishlistView(APIView):

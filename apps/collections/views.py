@@ -42,7 +42,7 @@ class CollectionDetailView(APIView):
         from apps.recommendations.views import SlimProductSerializer
         col = get_object_or_404(ProductCollection, slug=slug, is_active=True)
         if not col.is_live:
-            return Response({'detail': 'Collection not currently active.'}, status=404)
+            return Response({'error': 'Collection not currently active.'}, status=404)
         products = col.products.filter(is_active=True, is_archived=False)
         return Response({
             'id': col.id,
@@ -91,7 +91,7 @@ class ProductOfTheDayView(APIView):
                     'headline': 'Featured today',
                     'product': SlimProductSerializer(product, context={'request': request}).data,
                 })
-            return Response({'detail': 'No featured product for today.'}, status=404)
+            return Response({'error': 'No featured product for today.'}, status=404)
 
 
 class AdminSetProductOfDayView(APIView):
@@ -102,7 +102,7 @@ class AdminSetProductOfDayView(APIView):
         from apps.products.models import Product
         product_id = request.data.get('product_id')
         if not product_id:
-            return Response({'detail': 'product_id required.'}, status=400)
+            return Response({'error': 'product_id required.'}, status=400)
         product = get_object_or_404(Product, pk=product_id, is_active=True)
         date_str = request.data.get('date', str(timezone.now().date()))
         potd, created = ProductOfTheDay.objects.update_or_create(

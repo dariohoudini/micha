@@ -1,3 +1,4 @@
+import { useFeedTracking } from '@/hooks/useIntentDetector'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
@@ -8,6 +9,16 @@ import {
   trackEvent,
   trackRecommendationClick,
 } from '@/api/ai'
+import HelperBot from '@/components/shared/HelperBot'
+import usePersonalisedFeed from '@/hooks/usePersonalisedFeed'
+import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
+import RecentlyViewed from '@/components/buyer/RecentlyViewed'
+import { usePullToRefresh, useInfiniteScroll, useScrollRestore } from '@/hooks/useUX'
+import PullToRefreshIndicator from '@/components/shared/PullToRefresh'
+import LazyImage from '@/components/ui/LazyImage'
+import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
+import FlashSaleBanner from '@/components/buyer/FlashSaleBanner'
+
 
 // Skeleton loader for product cards
 function ProductSkeleton() {
@@ -67,6 +78,7 @@ function ProductCard({ product, onPress, source = 'home_feed' }) {
           <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>
             {Number(product.price).toLocaleString()} Kz
           </span>
+          <PersonalisedPriceBadge productId={product.id} currentPrice={Number(product.price)} />
           {product.original_price && (
             <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#9A9A9A', textDecoration: 'line-through' }}>
               {Number(product.original_price).toLocaleString()} Kz
@@ -128,14 +140,36 @@ function PersonalisationBadge({ algorithm, confidence }) {
   )
 }
 
+
+// Collections hooks for HomePage
+function useCollections() {
+  const [productOfDay, setProductOfDay] = useState(null)
+  const [spotlight, setSpotlight] = useState(null)
+  const [announcement, setAnnouncement] = useState(null)
+
+  useEffect(() => {
+    client.get('/api/v1/collections/product-of-day/').then(r => setProductOfDay(r.data)).catch(() => {})
+    client.get('/api/v1/collections/seller-spotlight/').then(r => setSpotlight(r.data)).catch(() => {})
+    client.get('/api/v1/collections/announcements/').then(r => {
+      const items = r.data.results || r.data || []
+      if (items.length > 0) setAnnouncement(items[0])
+    }).catch(() => {})
+  }, [])
+
+  return { productOfDay, spotlight, announcement }
+}
+
 export default function HomePage() {
+  const { products: feedProducts, loading: feedLoading, hasMore, loadMore, refresh } = usePersonalisedFeed()
+  const { pullY, refreshing } = usePullToRefresh(loadFeed)
+  const scrollRef = useScrollRestore('home_feed')
   const navigate = useNavigate()
+  const { trackFeedClick } = useFeedTracking()
   const user = useAuthStore(s => s.user)
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [offset, setOffset] = useState(0)
-  const [hasMore, setHasMore] = useState(true)
   const [algorithm, setAlgorithm] = useState(null)
   const [quizCompleted, setQuizCompleted] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -256,6 +290,7 @@ export default function HomePage() {
 
   return (
     <BuyerLayout>
+      <PullToRefreshIndicator pullY={pullY} refreshing={refreshing} />
       {/* Top bar */}
       <div style={{ padding: '52px 16px 12px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -345,6 +380,9 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Flash sales */}
+      <FlashSaleBanner />
+
       {/* Quiz banner */}
       {!quizCompleted && (
         <div style={{ marginBottom: 16 }}>
@@ -407,6 +445,11 @@ export default function HomePage() {
           )}
         </div>
       </div>
-    </BuyerLayout>
+    
+      <RecentlyViewed onPress={(p) => navigate(`/product/${p.slug || p.id}`)} />
+      <RecommendationCarousel title="Tendências em Angola" type="trending" />
+      <RecommendationCarousel title="Recomendado para si" type="personalised" />
+      <HelperBot screen="home" isSeller={false} />
+      </BuyerLayout>
   )
 }

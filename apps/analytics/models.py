@@ -25,8 +25,8 @@ class FunnelEvent(models.Model):
                                   help_text="Pseudonymous hash of user_id — not reversible")
     session_id = models.CharField(max_length=100, blank=True)
     event = models.CharField(max_length=20, choices=EVENT)
-    product = models.ForeignKey("products.Product", on_delete=models.SET_NULL, null=True, blank=True)
-    category = models.ForeignKey("products.Category", on_delete=models.SET_NULL, null=True, blank=True)
+    product = models.ForeignKey("products.Product", on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
+    category = models.ForeignKey("products.Category", on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

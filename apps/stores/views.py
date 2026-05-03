@@ -1,4 +1,5 @@
-from rest_framework import generics, filters, status
+from rest_framework import generics, filters, permissions
+from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from django.db.models import Avg
@@ -85,3 +86,21 @@ class StoreReviewListView(generics.ListAPIView):
     def get_queryset(self):
         store = get_object_or_404(Store, pk=self.kwargs['pk'])
         return StoreReview.objects.filter(store=store)
+
+
+class ToggleStoreOpenView(APIView):
+    """POST /api/v1/stores/toggle-open/ — Toggle store open/closed."""
+    permission_classes = [IsAuthenticated, IsNotSuspended]
+
+    def post(self, request):
+        try:
+            store = Store.objects.get(owner=request.user)
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found.'}, status=404)
+        store.is_open = not store.is_open
+        store.save(update_fields=['is_open'])
+        status_text = 'aberta' if store.is_open else 'fechada'
+        return Response({
+            'is_open': store.is_open,
+            'detail': f'Loja agora está {status_text}.'
+        })

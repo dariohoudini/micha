@@ -1,5 +1,13 @@
 from django.urls import path
-from .views import *
+from .views import (
+    SellerProfileView,
+    SellerDashboardView,
+    SellerFAQView,
+    SellerFAQDetailView,
+    SellerAnnouncementView,
+    ToggleHolidayModeView,
+    OnboardingView,
+)
 urlpatterns=[
     path('dashboard/',SellerDashboardView.as_view(),name='seller-dashboard'),
     path('profile/',SellerProfileView.as_view(),name='seller-profile'),

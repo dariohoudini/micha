@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import client from '@/api/client'
+import { useState, useEffect } from 'react'
 import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
 
 const MOCK_CHATS = [
@@ -84,8 +85,15 @@ const FLAG_REASONS = [
   'Assédio ou ameaças',
 ]
 
+function useChatsData(set) {
+  useEffect(() => {
+    client.get('/api/v1/chat/').then(r => set(r.data.results || r.data || [])).catch(() => {})
+  }, [])
+}
+
 export default function AdminChatPage() {
-  const [chats, setChats] = useState(MOCK_CHATS)
+  const [chats, setChats] = useState([])
+  useChatsData(setChats)
   const [filter, setFilter] = useState('all')
   const [selected, setSelected] = useState(null)
   const [showAction, setShowAction] = useState(false)

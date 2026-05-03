@@ -1,4 +1,16 @@
 
+import os
+from django.core.exceptions import ValidationError
+
+def validate_attachment(file):
+    allowed = ['.jpg', '.jpeg', '.png', '.pdf', '.mp4', '.mov']
+    ext = os.path.splitext(file.name)[1].lower()
+    if ext not in allowed:
+        raise ValidationError(f'File type not allowed. Allowed: {chr(44).join(allowed)}')
+    if file.size > 10 * 1024 * 1024:
+        raise ValidationError('File too large. Maximum 10MB.')
+
+
 from django.db import models
 from django.conf import settings
 import uuid

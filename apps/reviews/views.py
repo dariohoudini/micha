@@ -1,4 +1,5 @@
-from rest_framework import serializers, generics, permissions, status
+from rest_framework.permissions import AllowAny
+from rest_framework import serializers, generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db.models import Avg
@@ -116,14 +117,14 @@ class ReviewCreateView(generics.CreateAPIView):
 
 class SellerReviewListView(generics.ListAPIView):
     serializer_class = ReviewSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get_queryset(self):
         return Review.objects.filter(seller_id=self.kwargs['seller_id'])
 
 
 class SellerRatingView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request, seller_id):
         seller = get_object_or_404(User, pk=seller_id)
@@ -151,7 +152,7 @@ class ProductReviewCreateView(generics.CreateAPIView):
 
 class ProductReviewListView(generics.ListAPIView):
     serializer_class = ProductReviewSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get_queryset(self):
         return ProductReview.objects.filter(
@@ -160,7 +161,7 @@ class ProductReviewListView(generics.ListAPIView):
 
 
 class ProductRatingView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request, product_id):
         from apps.products.models import Product
@@ -180,12 +181,12 @@ class SellerReplyView(APIView):
     def post(self, request, review_id):
         review = get_object_or_404(ProductReview, pk=review_id)
         if review.product.store.owner != request.user:
-            return Response({"detail": "Not your product."}, status=403)
+            return Response({'error': 'Not your product.'}, status=403)
         if review.seller_reply:
-            return Response({"detail": "Already replied to this review."}, status=400)
+            return Response({'error': 'Already replied to this review.'}, status=400)
         reply = request.data.get('reply', '').strip()
         if not reply:
-            return Response({"detail": "Reply text is required."}, status=400)
+            return Response({'error': 'Reply text is required.'}, status=400)
         review.seller_reply = reply
         review.seller_replied_at = timezone.now()
         review.save()
@@ -198,7 +199,7 @@ class VoteReviewHelpfulView(APIView):
     def post(self, request, review_id):
         review = get_object_or_404(ProductReview, pk=review_id)
         if review.reviewer == request.user:
-            return Response({"detail": "Cannot vote on your own review."}, status=400)
+            return Response({'error': 'Cannot vote on your own review.'}, status=400)
         _, created = ReviewHelpfulVote.objects.get_or_create(
             review=review, user=request.user
         )
@@ -206,4 +207,23 @@ class VoteReviewHelpfulView(APIView):
             review.helpful_count += 1
             review.save(update_fields=['helpful_count'])
             return Response({"detail": "Marked as helpful."})
-        return Response({"detail": "Already voted."}, status=200)
+        return Response({'error': 'Already voted.'}, status=200)
+
+
+class ReviewFlagView(APIView):
+    """POST /api/v1/reviews/<pk>/flag/ — Flag a review."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        from apps.reviews.models import ProductReview
+        from apps.reviews.flag_models import ReviewFlag
+        review = get_object_or_404(ProductReview, pk=pk)
+        if ReviewFlag.objects.filter(review=review, flagged_by=request.user).exists():
+            return Response({'error': 'Already flagged.'}, status=400)
+        ReviewFlag.objects.create(
+            review=review,
+            flagged_by=request.user,
+            reason=request.data.get('reason', 'other'),
+            details=request.data.get('details', ''),
+        )
+        return Response({'error': 'Review flagged for moderation.'}, status=201)

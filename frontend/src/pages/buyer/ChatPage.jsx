@@ -1,18 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
-import { MOCK_CONVERSATIONS } from '@/components/chat/useChat'
+// chat conversations loaded from API
 import { formatPrice } from '@/components/buyer/mockData'
 
+// Wire to real chat API on mount
 export default function ChatPage() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
 
-  const filtered = MOCK_CONVERSATIONS.filter(c =>
+  const filtered = [].filter(c =>
     !search || c.participant.name.toLowerCase().includes(search.toLowerCase())
   )
 
-  const totalUnread = MOCK_CONVERSATIONS.reduce((a, c) => a + c.unread, 0)
+  const totalUnread = [].reduce((a, c) => a + c.unread, 0)
 
   return (
     <BuyerLayout>

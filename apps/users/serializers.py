@@ -9,12 +9,11 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.password_validation import validate_password
-from django.db.models import F
 from django.utils import timezone
 from datetime import timedelta
 import logging
 
-from .models import UserProfile, Role, RoleChangeLog, ConsentLog
+from .models import UserProfile, ConsentLog, PasswordHistory
 
 User = get_user_model()
 logger = logging.getLogger('micha')
@@ -113,7 +112,7 @@ class UserSerializer(serializers.ModelSerializer):
             'referral_code', 'profile', 'roles', 'badges',
             'privacy_consent', 'privacy_consent_at',
         ]
-        read_only_fields = [
+        read_only_fields = ['store_credit', 
             'id', 'is_verified_seller', 'is_email_verified', 'is_phone_verified',
             'is_staff', 'is_superuser', 'status', 'date_joined',
             'loyalty_points', 'store_credit', 'referral_code',
@@ -166,11 +165,16 @@ class ChangePasswordSerializer(serializers.Serializer):
     def validate_new_password(self, value):
         if self.initial_data.get('old_password') == value:
             raise serializers.ValidationError('New password must differ from current password.')
+        user = self.context['request'].user
+        if PasswordHistory.is_reused(user, value):
+            raise serializers.ValidationError('You cannot reuse any of your last 5 passwords.')
         return value
 
     def save(self, **kwargs):
         user = self.context['request'].user
-        user.set_password(self.validated_data['new_password'])
+        raw = self.validated_data['new_password']
+        PasswordHistory.record(user, raw)
+        user.set_password(raw)
         user.save()
         return user
 

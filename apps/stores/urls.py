@@ -5,12 +5,13 @@ from .views import (
     PublicStoreDetailView,
     StoreReviewCreateView,
     StoreReviewListView,
+    ToggleStoreOpenView,
 )
-
 
 urlpatterns = [
     path('', PublicStoreListView.as_view(), name='public-stores'),
     path('my/', MyStoreListView.as_view(), name='my-stores'),
+    path('toggle-open/', ToggleStoreOpenView.as_view(), name='toggle-store-open'),
     path('<int:pk>/', PublicStoreDetailView.as_view(), name='store-detail'),
     path('<int:pk>/review/', StoreReviewCreateView.as_view(), name='store-review-create'),
     path('<int:pk>/reviews/', StoreReviewListView.as_view(), name='store-reviews'),

@@ -1,4 +1,4 @@
-from rest_framework import permissions, status
+from rest_framework import permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -35,7 +35,6 @@ class AddToCartView(APIView):
             cart=cart, product=product,
             defaults={
                 'quantity': data['quantity'],
-                'variant_info': data.get('variant_info'),
             }
         )
 
@@ -63,9 +62,15 @@ class UpdateCartItemView(APIView):
         cart = get_object_or_404(Cart, user=request.user)
         item = get_object_or_404(CartItem, pk=item_id, cart=cart)
         quantity = request.data.get('quantity')
+        try:
+            quantity = int(quantity)
+            if quantity < 1 or quantity > 100:
+                return Response({'error': 'Quantidade inválida (1-100)'}, status=400)
+        except (TypeError, ValueError):
+            return Response({'error': 'Quantidade inválida'}, status=400)
 
         if not quantity or int(quantity) < 1:
-            return Response({"detail": "Quantity must be at least 1."}, status=400)
+            return Response({'error': 'Quantity must be at least 1.'}, status=400)
 
         quantity = int(quantity)
         if quantity > item.product.quantity:
@@ -112,7 +117,7 @@ class MoveWishlistToCartView(APIView):
         product = wishlist_item.product
 
         if not product.is_active or product.is_archived:
-            return Response({"detail": "Product is no longer available."}, status=400)
+            return Response({'error': 'Product is no longer available.'}, status=400)
 
         cart, _ = Cart.objects.get_or_create(user=request.user)
         cart_item, created = CartItem.objects.get_or_create(

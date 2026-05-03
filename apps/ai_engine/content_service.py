@@ -115,7 +115,7 @@ Província: {product_data.get('seller_province', 'Luanda')}"""
                 max_tokens=600,
                 response_format={'type': 'json_object'},
             )
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads((response.choices[0].message.content if response and response.choices else None))
             result['generated'] = True
             result['language'] = language
             cache.set(cache_key, result, timeout=86400)
@@ -169,7 +169,7 @@ Respond ONLY with valid JSON in the same structure as input."""
                 max_tokens=600,
                 response_format={'type': 'json_object'},
             )
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads((response.choices[0].message.content if response and response.choices else None))
             result['translated'] = True
             result['language'] = target_language
             cache.set(cache_key, result, timeout=86400)
@@ -215,7 +215,7 @@ Respond with JSON: {{"improved": "improved description", "changes": ["change1", 
                 max_tokens=400,
                 response_format={'type': 'json_object'},
             )
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads((response.choices[0].message.content if response and response.choices else None))
             result['was_improved'] = True
             return result
         except Exception as e:
@@ -275,7 +275,7 @@ Respond with JSON:
                 max_tokens=300,
                 response_format={'type': 'json_object'},
             )
-            return json.loads(response.choices[0].message.content)
+            return json.loads((response.choices[0].message.content if response and response.choices else None))
         except Exception as e:
             logger.error(f"Review summarisation failed: {e}")
             return {'summary': None, 'sentiment': 'neutral', 'highlights': []}

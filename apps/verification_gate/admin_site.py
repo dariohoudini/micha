@@ -6,7 +6,6 @@ Admins see: photos, typed info, approve/reject buttons.
 """
 from django.contrib import admin
 from django.utils.html import format_html
-from django.utils import timezone
 from .models import SellerVerification, MonthlySelfie, VerificationAuditLog
 
 

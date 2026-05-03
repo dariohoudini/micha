@@ -1,3 +1,4 @@
+from rest_framework.permissions import AllowAny
 """
 User Views — All Security Gaps Fixed
 1. Password reset now uses 6-digit OTP, not URL token
@@ -7,19 +8,18 @@ User Views — All Security Gaps Fixed
 5. 2FA enforced — login blocked if code omitted when 2FA enabled
 """
 import logging
-from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
-from django.core.cache import cache
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
-from .models import UserProfile, Role, UserSession, UserActivityLog, UserBadge, ReferralReward, ConsentLog
+from .models import UserProfile, Role, UserSession, UserActivityLog, UserBadge, ReferralReward
 from .serializers import (
     UserRegisterSerializer, UserSerializer, UpdateProfileSerializer,
     ChangePasswordSerializer, MyTokenObtainPairSerializer, SocialAuthSerializer,
@@ -73,7 +73,7 @@ def _log(user, action, request):
 class UserRegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegisterSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [AnonRateThrottle]
 
     def create(self, request, *args, **kwargs):
@@ -124,7 +124,7 @@ class UserRegisterView(generics.CreateAPIView):
 # ── Email verification ────────────────────────────────────────────────────────
 
 class VerifyEmailView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [OTPThrottle]
 
     def post(self, request):
@@ -150,7 +150,9 @@ class VerifyEmailView(APIView):
 
         # Award referral points after verification (not on registration — prevents gaming)
         if user.referred_by:
-            user.referred_by.add_loyalty_points(settings.LOYALTY_REFERRAL_REWARD)
+            # Only award referral bonus after first purchase — prevent farming
+                # Moved to order completion signal, not registration
+                # user.referred_by.add_loyalty_points(settings.LOYALTY_REFERRAL_REWARD)
             user.add_loyalty_points(settings.LOYALTY_REFERRED_REWARD)
             ReferralReward.objects.create(
                 referrer=user.referred_by,
@@ -163,7 +165,7 @@ class VerifyEmailView(APIView):
 
 
 class ResendEmailOTPView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [OTPThrottle]  # Per-email throttle
 
     def post(self, request):
@@ -230,7 +232,7 @@ class SocialAuthView(APIView):
     FIX: If linking to existing account, requires password confirmation.
     Prevents attacker from hijacking account by linking their social account.
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [LoginThrottle]
 
     def post(self, request):
@@ -305,7 +307,7 @@ class ForgotPasswordView(APIView):
     URL tokens appear in server logs, browser history, and Referer headers.
     OTP is hashed before storage — plain value never touches the DB.
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [OTPThrottle]
 
     def post(self, request):
@@ -335,7 +337,7 @@ class ResetPasswordView(APIView):
     FIX: Verify 6-digit OTP, not URL token.
     POST { email, otp, new_password }
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [OTPThrottle]
 
     def post(self, request):
@@ -623,3 +625,25 @@ class RedeemPointsView(APIView):
                              'detail': f'You only have {request.user.loyalty_points} points.'}, status=400)
         return Response({'detail': f'{points} points redeemed.',
                          'store_credit': str(request.user.store_credit)})
+
+
+class AcceptTermsView(APIView):
+    """POST /api/v1/auth/accept-terms/ — Re-accept updated T&C."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from django.conf import settings
+        from .models import ConsentLog
+        version = getattr(settings, 'CURRENT_TC_VERSION', '1.0')
+        xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
+        ip = xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+        ua = request.META.get('HTTP_USER_AGENT', '')[:200]
+        ConsentLog.objects.create(
+            user=request.user,
+            consent_type='terms_of_service',
+            version=version,
+            granted=True,
+            ip_address=ip,
+            user_agent=ua,
+        )
+        return Response({'detail': f'Terms version {version} accepted.'})

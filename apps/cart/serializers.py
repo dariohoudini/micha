@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from .models import Cart, CartItem
-from apps.products.serializers import PublicProductSerializer
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -15,7 +14,7 @@ class CartItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'product', 'product_title', 'product_price',
             'product_image', 'quantity', 'line_total',
-            'variant_info', 'in_stock', 'added_at',
+            'in_stock', 'added_at',
         ]
         read_only_fields = ['id', 'added_at']
 
@@ -38,8 +37,8 @@ class CartItemSerializer(serializers.ModelSerializer):
 
 class CartSerializer(serializers.ModelSerializer):
     items = CartItemSerializer(many=True, read_only=True)
-    total_items = serializers.ReadOnlyField()
-    subtotal = serializers.ReadOnlyField()
+    total_items = serializers.ReadOnlyField(source="item_count")
+    subtotal = serializers.ReadOnlyField(source="total")
 
     class Meta:
         model = Cart
@@ -49,7 +48,7 @@ class CartSerializer(serializers.ModelSerializer):
 class AddToCartSerializer(serializers.Serializer):
     product_id = serializers.IntegerField()
     quantity = serializers.IntegerField(min_value=1, default=1)
-    variant_info = serializers.JSONField(required=False)
+    
 
     def validate_product_id(self, value):
         from apps.products.models import Product

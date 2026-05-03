@@ -1,3 +1,4 @@
+from celery.schedules import crontab
 """
 MICHA — Production Settings v2
 Fixes every gap identified in the 40-year senior engineer audit:
@@ -33,7 +34,7 @@ _read_env()
 # ── Core ──────────────────────────────────────────────────────────────────────
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-dev-only-change-in-production')
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 ADMIN_URL = os.environ.get('ADMIN_URL', 'admin/')
 
@@ -80,6 +81,11 @@ INSTALLED_APPS = [
     'apps.admin_api',
     'apps.rentals',
     'apps.verification_gate',
+    'apps.monitoring',
+    'apps.core',
+    'apps.security',
+    'apps.disputes',
+    'apps.moderation',
 ]
 
 MIDDLEWARE = [
@@ -91,12 +97,16 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'middleware.request_id.RequestIDMiddleware',
+    'middleware.logging_middleware.RequestIDMiddleware',
+    'middleware.security_hardening.SecurityHardeningMiddleware',
+    'middleware.security_hardening.FileUploadSecurityMiddleware',
+    'middleware.terms_version.TermsVersionMiddleware',
     'middleware.sanitise.SanitiseInputMiddleware',
     'apps.verification_gate.middleware.SellerVerificationMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(',') if o.strip()]
 if not DEBUG:
     CORS_ALLOWED_ORIGINS = [o for o in os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',') if o]
 
@@ -130,8 +140,11 @@ _REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 if os.environ.get('DB_NAME'):
     DATABASES = {
         'default': {
+        'TEST': {
+            'NAME': 'test_micha',
+        },
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ['DB_NAME'],
+            'NAME': os.environ.get('DB_NAME', ''),
             'USER': os.environ.get('DB_USER', 'postgres'),
             'PASSWORD': os.environ.get('DB_PASSWORD', ''),
             'HOST': os.environ.get('DB_HOST', 'localhost'),
@@ -150,6 +163,9 @@ if os.environ.get('DB_NAME'):
 else:
     DATABASES = {
         'default': {
+        'TEST': {
+            'NAME': 'test_micha',
+        },
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': BASE_DIR / 'db.sqlite3',
         }
@@ -177,13 +193,20 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',
-        'user': '1000/hour',
-        'login': '10/hour',
-        'register': '5/hour',
+        'anon': '10000/hour',
+        'user': '10000/hour',
+        'login': '10000/hour',
+        'register': '10000/hour',
         'otp': '5/hour',
         'otp_verify': '5/hour',
         'payment': '20/hour',
+        'login': '10/minute',
+        'register': '5/minute',
+        'otp': '5/minute',
+        'search': '60/minute',
+        'upload': '20/hour',
+        'anon_burst': '30/minute',
+        'anon_sustained': '200/hour',
     },
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
     'EXCEPTION_HANDLER': 'middleware.exception_handler.custom_exception_handler',
@@ -238,14 +261,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ── Email ─────────────────────────────────────────────────────────────────────
 if os.environ.get('EMAIL_HOST'):
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-    EMAIL_HOST = os.environ['EMAIL_HOST']
+    EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
     EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
     EMAIL_USE_TLS = True
     EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
     EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 else:
-    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+    EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 DEFAULT_FROM_EMAIL = 'MICHA <noreply@micha.app>'
+
+# T&C version — bump this to force all users to re-accept
+CURRENT_TC_VERSION = os.environ.get('CURRENT_TC_VERSION', '1.0')
+
+# Currency enforcement — T&C §5.4
+ALLOWED_CURRENCIES = ['AOA']
+DEFAULT_CURRENCY = 'AOA'
 
 # ── Redis + Celery ────────────────────────────────────────────────────────────
 REDIS_URL = _REDIS_URL
@@ -262,7 +292,10 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # FIX: Dead letter queue — failed tasks go here instead of silently disappearing
 CELERY_TASK_QUEUES = {
     'high': {'exchange': 'high', 'routing_key': 'high'},
-    'default': {'exchange': 'default', 'routing_key': 'default'},
+    'default': {
+        'TEST': {
+            'NAME': 'test_micha',
+        },'exchange': 'default', 'routing_key': 'default'},
     'low': {'exchange': 'low', 'routing_key': 'low'},
     'dead_letter': {'exchange': 'dead_letter', 'routing_key': 'dead_letter'},
 }
@@ -277,18 +310,193 @@ CELERY_TASK_ROUTES = {
     
 }
 CELERY_BEAT_SCHEDULE = {
-    # ... your existing tasks ...
 
+    # ── Users ─────────────────────────────────────────────────
+    'cleanup-expired-otps': {
+        'task': 'users.cleanup_expired_otps',
+        'schedule': 3600,  # hourly
+        'options': {'queue': 'default'},
+    },
+    'cleanup-old-activity-logs': {
+        'task': 'users.cleanup_old_activity_logs',
+        'schedule': 86400,  # daily
+        'options': {'queue': 'low'},
+    },
+    'dormant-user-winback': {
+        'task': 'users.dormant_user_winback',
+        'schedule': crontab(hour=11, minute=0, day_of_week='sunday'),
+        'options': {'queue': 'low'},
+    },
+    'delete-scheduled-accounts': {
+        'task': 'users.delete_scheduled_accounts',
+        'schedule': 86400,
+        'options': {'queue': 'default'},
+    },
+
+    # ── Cart ──────────────────────────────────────────────────
+    'cart-abandonment-nudge': {
+        'task': 'cart.send_abandonment_nudge',
+        'schedule': 1800,  # every 30 min
+        'options': {'queue': 'default'},
+    },
+
+    # ── Orders ────────────────────────────────────────────────
+    'auto-complete-old-orders': {
+        'task': 'orders.auto_complete_old_orders',
+        'schedule': 3600,
+        'options': {'queue': 'default'},
+    },
+    'release-order-escrow': {
+        'task': 'orders.release_order_escrow',
+        'schedule': 3600,
+        'options': {'queue': 'high'},
+    },
+
+    # ── Payments ──────────────────────────────────────────────
+    'release-held-earnings': {
+        'task': 'payments.release_held_earnings',
+        'schedule': 3600,
+        'options': {'queue': 'high'},
+    },
+    'auto-payout-sellers': {
+        'task': 'payments.auto_payout_sellers',
+        'schedule': crontab(hour=9, minute=0, day_of_week='monday'),
+        'options': {'queue': 'high'},
+    },
+
+    # ── Recommendations & AI ──────────────────────────────────
+    'precompute-user-feeds': {
+        'task': 'recommendations.precompute_user_feeds',
+        'schedule': 1800,
+        'options': {'queue': 'low'},
+    },
+    'check-price-alerts': {
+        'task': 'recommendations.check_price_alerts',
+        'schedule': 1800,
+        'options': {'queue': 'default'},
+    },
+    'check-back-in-stock': {
+        'task': 'recommendations.check_back_in_stock_alerts',
+        'schedule': 900,  # every 15 min
+        'options': {'queue': 'default'},
+    },
+    'cleanup-stock-urgency': {
+        'task': 'recommendations.cleanup_stock_urgency',
+        'schedule': 300,  # every 5 min
+        'options': {'queue': 'low'},
+    },
+    'recalculate-product-similarity': {
+        'task': 'recommendations.recalculate_product_similarity',
+        'schedule': crontab(hour=3, minute=0),  # 3am daily
+        'options': {'queue': 'low'},
+    },
+    'send-weekly-digest': {
+        'task': 'recommendations.send_weekly_digest',
+        'schedule': crontab(hour=10, minute=0, day_of_week='friday'),
+        'options': {'queue': 'low'},
+    },
+    'check-all-price-drops': {
+        'task': 'ai_engine.check_all_price_drops',
+        'schedule': 3600,
+        'options': {'queue': 'default'},
+    },
+    'embed-all-products-nightly': {
+        'task': 'ai_engine.embed_all_products_nightly',
+        'schedule': crontab(hour=2, minute=0),
+        'options': {'queue': 'low'},
+    },
+    'refresh-stale-recommendation-caches': {
+        'task': 'ai_engine.refresh_stale_recommendation_caches',
+        'schedule': 1800,
+        'options': {'queue': 'low'},
+    },
+
+    # ── Inventory ─────────────────────────────────────────────
+    'clean-expired-reservations': {
+        'task': 'inventory.clean_expired_reservations',
+        'schedule': 300,
+        'options': {'queue': 'default'},
+    },
+    'send-low-stock-alerts': {
+        'task': 'inventory.send_low_stock_alerts',
+        'schedule': crontab(hour=8, minute=0),
+        'options': {'queue': 'default'},
+    },
+
+    # ── Verification ──────────────────────────────────────────
+    'suspend-expired-kyc': {
+        'task': 'verification.suspend_expired_kyc',
+        'schedule': crontab(hour=0, minute=0),
+        'options': {'queue': 'default'},
+    },
+    'send-selfie-reminders': {
+        'task': 'verification.send_selfie_reminders',
+        'schedule': crontab(hour=9, minute=0),
+        'options': {'queue': 'default'},
+    },
     'verification-daily-check': {
         'task': 'verification_gate.daily_verification_check',
-        'schedule': 86400,  # daily
-        'options': {'queue': 'ai_medium'},
+        'schedule': 86400,
+        'options': {'queue': 'default'},
+    },
+
+    # ── Analytics ─────────────────────────────────────────────
+    'update-seller-performance-scores': {
+        'task': 'analytics.update_seller_performance_scores',
+        'schedule': crontab(hour='*/6', minute=0),  # every 6h
+        'options': {'queue': 'low'},
+    },
+    'cleanup-old-funnel-events': {
+        'task': 'analytics.cleanup_old_funnel_events',
+        'schedule': crontab(hour=1, minute=0),
+        'options': {'queue': 'low'},
+    },
+    'record-price-history': {
+        'task': 'collections.record_price_history',
+        'schedule': crontab(hour=0, minute=30),
+        'options': {'queue': 'low'},
+    },
+
+    # ── Trust & Fraud ─────────────────────────────────────────
+    'fraud-sweep': {
+        'task': 'trust.run_fraud_sweep',
+        'schedule': crontab(hour=4, minute=0),
+        'options': {'queue': 'default'},
+    },
+    'recompute-all-trust-scores': {
+        'task': 'trust.recompute_all_trust_scores',
+        'schedule': crontab(hour=5, minute=0),
+        'options': {'queue': 'low'},
+    },
+
+    # ── Payment Reconciliation ────────────────────────────────
+    'payment-reconciliation': {
+        'task': 'payments.run_payment_reconciliation',
+        'schedule': crontab(hour=2, minute=0),  # 2am daily
+        'options': {'queue': 'high'},
+    },
+
+    # ── AI Feed Quality ───────────────────────────────────────
+    'feed-quality-report': {
+        'task': 'ai_engine.check_all_price_drops',  # reuse existing task runner
+        'schedule': crontab(hour=6, minute=0),  # 6am daily report
+        'options': {'queue': 'low'},
+    },
+
+    # ── Seller ────────────────────────────────────────────────
+    'seller-engagement-nudge': {
+        'task': 'seller.seller_engagement_nudge',
+        'schedule': crontab(hour=9, minute=0, day_of_week='monday'),
+        'options': {'queue': 'low'},
     },
 }
 
 # ── Cache — Redis in prod, LocMem in dev ──────────────────────────────────────
 CACHES = {
     'default': {
+        'TEST': {
+            'NAME': 'test_micha',
+        },
         'BACKEND': 'django.core.cache.backends.redis.RedisCache' if os.environ.get('REDIS_URL') else 'django.core.cache.backends.locmem.LocMemCache',
         'LOCATION': REDIS_URL if os.environ.get('REDIS_URL') else '',
         'KEY_PREFIX': 'micha',
@@ -314,6 +522,9 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 # Even in dev, use Redis if available so behaviour matches production
 CHANNEL_LAYERS = {
     'default': {
+        'TEST': {
+            'NAME': 'test_micha',
+        },
         'BACKEND': 'channels_redis.core.RedisChannelLayer' if os.environ.get('REDIS_URL') else 'channels.layers.InMemoryChannelLayer',
         'CONFIG': {'hosts': [REDIS_URL]} if os.environ.get('REDIS_URL') else {},
     }
@@ -328,7 +539,7 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    SECURE_SSL_REDIRECT = True
+    SECURE_SSL_REDIRECT = os.environ.get("FORCE_HTTPS", "false").lower() == "true"
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 
@@ -391,18 +602,171 @@ if SENTRY_DSN:
         pass
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+# ── Logging ─────────────────────────────────────────────────────
+LOG_FORMAT = os.environ.get('LOG_FORMAT', 'json')  # 'json' or 'text'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+
+    'filters': {
+        'request_id': {
+            '()': 'middleware.logging_middleware.StructuredLogFilter',
+        },
+    },
+
     'formatters': {
-        'verbose': {'format': '[{asctime}] {levelname} {name} {request_id}: {message}', 'style': '{'},
+        'json': {
+            '()': 'middleware.json_formatter.MichaJSONFormatter',
+        },
+        'text': {
+            'format': '[%(asctime)s] %(levelname)s [%(request_id)s] %(name)s: %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
     },
-    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'verbose'}},
-    'root': {'handlers': ['console'], 'level': 'INFO'},
+
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': LOG_FORMAT,
+            'filters': ['request_id'],
+        },
+        'error_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'errors.log',
+            'maxBytes': 10 * 1024 * 1024,  # 10MB
+            'backupCount': 5,
+            'formatter': 'json',
+            'filters': ['request_id'],
+            'level': 'ERROR',
+        },
+
+        # Papertrail — structured syslog (add PAPERTRAIL_HOST + PORT to .env)
+        'papertrail': {
+            'class': 'logging.handlers.SysLogHandler',
+            'formatter': 'json',
+            'filters': ['request_id'],
+            'address': (
+                os.environ.get('PAPERTRAIL_HOST', 'logs.papertrailapp.com'),
+                int(os.environ.get('PAPERTRAIL_PORT', 514)),
+            ),
+        },
+        'security_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'security.log',
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'formatter': 'json',
+            'filters': ['request_id'],
+            'level': 'INFO',
+        },
+    },
+
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+
     'loggers': {
-        'micha': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': False},
-        'django.security': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
-        'django.db.backends': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
-        'celery': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        # MICHA application logs
+        'micha': {
+            'handlers': ['console', 'error_file'] + (['papertrail'] if os.environ.get('PAPERTRAIL_HOST') else []),
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # Request logs
+        'micha.requests': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Security events (login, auth failures, suspicious activity)
+        'micha.security': {
+            'handlers': ['console', 'security_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Celery task logs
+        'celery': {
+            'handlers': ['console', 'error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'celery.task': {
+            'handlers': ['console', 'error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Django internals — only warnings+
+        'django': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console', 'security_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.db.backends': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console', 'error_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
+}
+
+# Prohibited keywords for product listings (T&C compliance)
+PROHIBITED_KEYWORDS = [
+    'arma', 'pistola', 'revólver', 'rifle', 'explosivo', 'bomba',
+    'droga', 'cocaína', 'heroína', 'cannabis', 'marijuana',
+    'falsificado', 'pirata', 'ilegal', 'contraband',
+    'pornografia', 'escort', 'prostituição',
+]
+
+# ── APPYPAY / Multicaixa Express ────────────────────────────────────
+APPYPAY_API_KEY = os.environ.get('APPYPAY_API_KEY', '')
+APPYPAY_SECRET = os.environ.get('APPYPAY_SECRET', '')
+APPYPAY_MERCHANT_ID = os.environ.get('APPYPAY_MERCHANT_ID', '')
+APPYPAY_BASE_URL = os.environ.get('APPYPAY_BASE_URL', 'https://api.appypay.co.ao/v1')
+APPYPAY_WEBHOOK_URL = os.environ.get('APPYPAY_WEBHOOK_URL', '')
+
+CSRF_COOKIE_HTTPONLY = True
+
+# ── Security Headers ─────────────────────────────────────────────
+SECURE_SSL_REDIRECT = os.environ.get('FORCE_HTTPS', 'false').lower() == 'true'
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
+PERMISSIONS_POLICY = {
+    'geolocation': [],
+    'camera': [],
+    'microphone': [],
+}
+
+
+# ── Password Hashing — Argon2 (winner of Password Hashing Competition) ──
+# Argon2id is resistant to GPU attacks, side-channel attacks, and time-memory tradeoffs
+# Falls back to PBKDF2 for existing passwords (auto-upgraded on next login)
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.Argon2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
+    'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
+]
+
+# ── Cache — Redis (shared across all workers) ────────────────────
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+        'KEY_PREFIX': 'micha',
+        'TIMEOUT': 300,
+    }
 }

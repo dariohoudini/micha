@@ -1,20 +1,19 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions
-from django.db.models import Count, Sum, Avg
-from django.db.models.functions import TruncDay, TruncWeek, TruncMonth
+from django.db.models import Sum
 from django.utils import timezone
 from datetime import timedelta
 from .models import FunnelEvent, SellerPerformance, GeoSalesData
 from apps.users.permissions import IsAdminOrSuperuser, IsSellerOrSuperuser, IsNotSuspended
 
 class TrackFunnelEventView(APIView):
-    permission_classes=[permissions.AllowAny]
+    permission_classes = [permissions.AllowAny]
     def post(self,request):
         event=request.data.get('event')
         product_id=request.data.get('product_id')
         session_id=request.data.get('session_id','')
-        if event not in('view','add_cart','checkout','purchase'): return Response({"detail":"Invalid event."},status=400)
+        if event not in('view','add_cart','checkout','purchase'): return Response({'error': 'Invalid event.'}, status=400)
         FunnelEvent.objects.create(
             user=request.user if request.user.is_authenticated else None,
             session_id=session_id, event=event,
@@ -23,7 +22,7 @@ class TrackFunnelEventView(APIView):
         return Response({"detail":"Tracked."})
 
 class FunnelAnalyticsView(APIView):
-    permission_classes=[IsAdminOrSuperuser]
+    permission_classes = [IsAdminOrSuperuser]
     def get(self,request):
         period_days=int(request.query_params.get('days',30))
         since=timezone.now()-timedelta(days=period_days)
@@ -34,7 +33,7 @@ class FunnelAnalyticsView(APIView):
         return Response({'funnel':funnel,'conversion_rate':f"{conversion}%",'period_days':period_days})
 
 class SellerPerformanceView(APIView):
-    permission_classes=[permissions.IsAuthenticated,IsSellerOrSuperuser,IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
     def get(self,request):
         perf,_=SellerPerformance.objects.get_or_create(seller=request.user)
         return Response({
@@ -49,7 +48,7 @@ class SellerPerformanceView(APIView):
         })
 
 class AdminGeoAnalyticsView(APIView):
-    permission_classes=[IsAdminOrSuperuser]
+    permission_classes = [IsAdminOrSuperuser]
     def get(self,request):
         data=GeoSalesData.objects.values('city','province').annotate(
             total_orders=Sum('order_count'),total_revenue=Sum('total_revenue')
@@ -57,7 +56,7 @@ class AdminGeoAnalyticsView(APIView):
         return Response(list(data))
 
 class AdminRealTimeView(APIView):
-    permission_classes=[IsAdminOrSuperuser]
+    permission_classes = [IsAdminOrSuperuser]
     def get(self,request):
         from apps.users.models import User
         from apps.orders.models import Order

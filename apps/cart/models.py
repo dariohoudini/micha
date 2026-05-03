@@ -33,7 +33,7 @@ class Cart(models.Model):
 
 class CartItem(models.Model):
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
-    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="cart_items")
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="cart_items", db_index=True)
     quantity = models.PositiveIntegerField(default=1)
     price_at_add = models.DecimalField(max_digits=10, decimal_places=2)
 

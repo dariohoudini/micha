@@ -1,3 +1,4 @@
+import client from '@/api/client'
 /**
  * AI Description Generator component for SellerProductNewPage
  * Add this to your existing SellerProductNewPage.jsx in Step 2

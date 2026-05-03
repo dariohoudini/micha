@@ -7,11 +7,19 @@ User = settings.AUTH_USER_MODEL
 
 
 class Store(models.Model):
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stores')
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stores', db_index=True)
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    is_open = models.BooleanField(default=True)
+    banner_image = models.ImageField(upload_to='store_banners/', blank=True, null=True)
+    primary_color = models.CharField(max_length=7, default='#C9A84C')
+    avg_response_minutes = models.PositiveIntegerField(default=0)
+    featured_product = models.ForeignKey(
+        'products.Product', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='featured_in_stores'
+    )
 
     # Cached average rating — updated whenever a StoreReview is saved/deleted
     cached_rating = models.DecimalField(

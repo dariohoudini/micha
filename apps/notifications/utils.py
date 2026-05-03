@@ -58,5 +58,5 @@ def send_push(token, title, body, data=None):
 
     except Exception as e:
         import logging
-        logging.getLogger('micha').error(f"FCM push failed for token {token[:20]}...: {e}")
+        logging.getLogger('micha').error(f"FCM push failed for token ...{str(token)[-8:] if token else "none"} {token[:20]}...: {e}")
         return f"Push failed: {str(e)}"

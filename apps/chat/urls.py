@@ -1,5 +1,12 @@
 from django.urls import path
-from .views import *
+from .views import (
+    ConversationListCreateView,
+    MessageListCreateView,
+    MarkReadView,
+    ArchiveChatView,
+    QuickReplyListCreateView,
+    ReportConversationView,
+)
 urlpatterns=[
     path('conversations/',ConversationListCreateView.as_view(),name='conversations'),
     path('conversations/<int:conversation_id>/messages/',MessageListCreateView.as_view(),name='messages'),

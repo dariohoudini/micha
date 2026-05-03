@@ -1,8 +1,9 @@
 from django.urls import path
 from .views import (
-    WalletView, WalletTransactionListView,
-    BankAccountListCreateView, BankAccountDetailView,
-    RequestPayoutView, AdminPayoutListView, AdminPayoutActionView,
+    PayoutScheduleView, WalletView, WalletTransactionListView,
+    BankAccountListCreateView,
+    BankAccountDetailView, RequestPayoutView,
+    AdminPayoutListView, AdminPayoutActionView,
     WebhookView,
 )
 
@@ -16,4 +17,5 @@ urlpatterns = [
     path("payout/admin/", AdminPayoutListView.as_view(), name="admin-payouts"),
     path("payout/admin/<uuid:pk>/", AdminPayoutActionView.as_view(), name="admin-payout-action"),
     path("webhook/", WebhookView.as_view(), name="payment-webhook"),
+    path("payouts/schedule/", PayoutScheduleView.as_view(), name="payout-schedule"),
 ]

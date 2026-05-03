@@ -61,19 +61,61 @@ class ActiveProductManager(models.Manager):
         ).select_related('store', 'category').prefetch_related('images', 'tags')
 
 
+
+class ProductGroup(models.Model):
+    """
+    Canonical product — represents a real-world item.
+    Multiple sellers can link their Product to the same ProductGroup.
+    Buyers see one card with all seller offers underneath.
+    """
+    title = models.CharField(max_length=200)
+    brand = models.CharField(max_length=100, blank=True)
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='product_groups'
+    , db_index=True)
+    description = models.TextField(blank=True)
+    fingerprint = models.CharField(max_length=64, unique=True, db_index=True)
+    image_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+    @classmethod
+    def find_or_create(cls, title, brand, category):
+        """Find existing group by fingerprint or create new one."""
+        import hashlib
+        raw = f"{title.lower().strip()}|{brand.lower().strip()}|{category.id if category else 0}"
+        fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:64]
+        group, created = cls.objects.get_or_create(
+            fingerprint=fingerprint,
+            defaults={
+                'title': title,
+                'brand': brand or '',
+                'category': category,
+            }
+        )
+        return group, created
+
 class Product(models.Model):
     SALE_CHOICES = (('sale', 'For Sale'), ('rent', 'For Rent'))
     CONDITION_CHOICES = (('new', 'New'), ('used', 'Used'), ('refurbished', 'Refurbished'))
 
-    store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='products')
-    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
+    product_group = models.ForeignKey('ProductGroup', on_delete=models.SET_NULL, null=True, blank=True, related_name='seller_listings', db_index=True)
+    store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='products', db_index=True)
+    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', db_index=True)
 
     # FIX: Track who listed the product (multi-manager audit trail)
     created_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='created_products',
         help_text='Which team member listed this product'
-    )
+    , db_index=True)
 
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=250, blank=True, unique=True)
@@ -116,6 +158,7 @@ class Product(models.Model):
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
+    image_hash = models.CharField(max_length=64, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -186,6 +229,16 @@ class Product(models.Model):
 
 
 class ProductImage(models.Model):
+    @staticmethod
+    def compute_hash(image_file):
+        try:
+            import imagehash
+            from PIL import Image
+            img = Image.open(image_file)
+            return str(imagehash.phash(img))
+        except Exception:
+            return ''
+
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='images')
     image = models.ImageField(upload_to='products/images/')
     # Resized variants stored separately
@@ -221,3 +274,4 @@ class ProductQA(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [models.Index(fields=['product', 'is_published'])]
+

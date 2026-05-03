@@ -30,7 +30,7 @@ class TrustScoreService:
         Queries all historical data and recomputes each dimension.
         Called by Celery — not in request path.
         """
-        from .models import SellerTrustScore, TrustScoreHistory
+        from .models import TrustScoreHistory
 
         score = cls.get_or_create(seller)
 
@@ -126,7 +126,6 @@ class TrustScoreService:
         """Response time — 20% weight."""
         try:
             from apps.orders.models import Order
-            from django.db.models import Avg, F, ExpressionWrapper, DurationField
 
             # Average hours to confirm orders
             recent_orders = Order.objects.filter(
@@ -229,7 +228,7 @@ class TrustScoreService:
         """
         Records a trust event and triggers async score recomputation.
         """
-        from .models import TrustEvent, SellerTrustScore
+        from .models import TrustEvent
 
         score = cls.get_or_create(seller)
         change = TrustEvent.SCORE_CHANGES.get(event_type, 0.0)
@@ -460,7 +459,6 @@ class FraudDetectionService:
 
         try:
             from apps.reviews.models import Review
-            from django.db.models import Count
 
             reviews = Review.objects.filter(seller_id=seller_id).order_by('-created_at')
 

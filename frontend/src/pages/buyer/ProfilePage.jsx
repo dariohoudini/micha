@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import { useAuthStore } from '@/stores/authStore'
+import client from '@/api/client'
 
 const MENU_SECTIONS = [
   {
@@ -35,6 +37,21 @@ export default function ProfilePage() {
   const logout = useAuthStore(s => s.logout)
 
   const initial = user?.email?.[0]?.toUpperCase() || 'U'
+  const [profileStats, setProfileStats] = useState({ orders: 0, points: 0, reviews: 0 })
+
+  useEffect(() => {
+    Promise.allSettled([
+      client.get('/api/v1/orders/').then(r => r.data.count || r.data.results?.length || 0),
+      client.get('/api/v1/loyalty/balance/').then(r => r.data?.points || r.data?.balance || 0),
+      client.get('/api/v1/reviews/my-reviews/').then(r => r.data.count || r.data.results?.length || 0),
+    ]).then(([orders, points, reviews]) => {
+      setProfileStats({
+        orders: orders.status === 'fulfilled' ? orders.value : 0,
+        points: points.status === 'fulfilled' ? points.value : 0,
+        reviews: reviews.status === 'fulfilled' ? reviews.value : 0,
+      })
+    })
+  }, [])
 
   const handleLogout = async () => {
     await logout()
@@ -77,7 +94,7 @@ export default function ProfilePage() {
 
           {/* Stats */}
           <div style={{ display: 'flex', marginTop: 20, background: '#1E1E1E', borderRadius: 14, overflow: 'hidden' }}>
-            {[{ label: 'Pedidos', value: '0' }, { label: 'Pontos', value: '0' }, { label: 'Avaliações', value: '0' }].map((stat, i) => (
+            {[{ label: 'Pedidos', value: profileStats.orders }, { label: 'Pontos', value: profileStats.points.toLocaleString() }, { label: 'Avaliações', value: profileStats.reviews }].map((stat, i) => (
               <div key={stat.label} style={{ flex: 1, padding: '12px 0', textAlign: 'center', borderRight: i < 2 ? '1px solid #2A2A2A' : 'none' }}>
                 <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 18, fontWeight: 700, color: '#C9A84C' }}>{stat.value}</p>
                 <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>{stat.label}</p>
@@ -85,6 +102,28 @@ export default function ProfilePage() {
             ))}
           </div>
         </div>
+
+        {/* Loyalty card */}
+        {profileStats.points > 0 && (
+          <div style={{ margin: '16px 16px 0' }}>
+            <div style={{ background: 'linear-gradient(135deg, #1a1200, #2a1e00)', borderRadius: 16, border: '1px solid rgba(201,168,76,0.25)', padding: 16, display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(201,168,76,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <span style={{ fontSize: 22 }}>🌟</span>
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: '#C9A84C', marginBottom: 2 }}>
+                  {profileStats.points.toLocaleString()} pontos de fidelidade
+                </p>
+                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: '#9A9A9A' }}>
+                  Use nos próximos pedidos para obter descontos
+                </p>
+              </div>
+              <button onClick={() => navigate('/referral')} style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: '#C9A84C', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, flexShrink: 0 }}>
+                Usar →
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Menu */}
         <div style={{ padding: '8px 16px 0' }}>

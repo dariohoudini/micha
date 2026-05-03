@@ -1,12 +1,12 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import generics, permissions, serializers
+from rest_framework import generics, serializers
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from apps.users.permissions import IsAdminOrSuperuser
-from .models import AdminActionLog, AdminAction, ProductModeration
+from .models import AdminActionLog
 
 User = get_user_model()
 
@@ -101,7 +101,7 @@ class AdminAnalyticsView(APIView):
     def get(self, request):
         from apps.orders.models import Order
         from apps.products.models import Product
-        from django.db.models import Sum, Count
+        from django.db.models import Sum
 
         today = timezone.now().date()
         orders_today = Order.objects.filter(created_at__date=today)
@@ -156,7 +156,7 @@ class AdminPayoutActionView(APIView):
     permission_classes = [IsAdminOrSuperuser]
 
     def patch(self, request, pk):
-        from apps.payments.models import PayoutRequest, SellerWallet, WalletTransaction
+        from apps.payments.models import PayoutRequest, SellerWallet
         from django.db import transaction
 
         payout = get_object_or_404(PayoutRequest, pk=pk)

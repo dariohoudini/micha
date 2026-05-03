@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    ReturnRequestCreateView,
     CheckoutView, MyOrderListView, OrderDetailView,
     CancelOrderView, ConfirmDeliveryView,
     SellerOrderListView, UpdateOrderStatusView,
@@ -18,4 +19,5 @@ urlpatterns = [
     path("<uuid:pk>/invoice/", InvoiceView.as_view(), name="invoice"),
     path("<uuid:pk>/packing-slip/", PackingSlipView.as_view(), name="packing-slip"),
     path("seller/", SellerOrderListView.as_view(), name="seller-orders"),
+    path("<uuid:pk>/return/", ReturnRequestCreateView.as_view(), name="return-request"),
 ]

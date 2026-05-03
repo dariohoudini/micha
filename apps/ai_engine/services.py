@@ -11,7 +11,6 @@ Real AI services using:
 import math
 import logging
 import json
-from datetime import timedelta
 from typing import Optional
 from django.utils import timezone
 from django.db import transaction
@@ -77,7 +76,7 @@ class EmbeddingService:
                 input=text[:8191],  # OpenAI token limit
                 encoding_format='float',
             )
-            embedding = response.data[0].embedding
+            embedding = (response.data[0].embedding if response and response.data else None)
 
             # Cache for 24h — same text = same embedding
             cache.set(cache_key, embedding, timeout=86400)
@@ -157,7 +156,6 @@ class TasteProfileService:
     @classmethod
     def get_or_create_profile(cls, user):
         from .models import UserTasteProfile, NotificationPreference
-        from .models import PROVINCE_PURCHASING_POWER
 
         profile, created = UserTasteProfile.objects.get_or_create(
             user=user,
@@ -174,7 +172,7 @@ class TasteProfileService:
         Seeds profile from onboarding quiz.
         Immediately embeds the profile with OpenAI for instant personalization.
         """
-        from .models import UserTasteProfile, PROVINCE_PURCHASING_POWER
+        from .models import PROVINCE_PURCHASING_POWER
 
         profile = cls.get_or_create_profile(user)
 
@@ -241,7 +239,7 @@ class TasteProfileService:
         Triggers embedding refresh if profile changed significantly.
         """
         from django.contrib.auth import get_user_model
-        from .models import BehavioralEvent, PROVINCE_PURCHASING_POWER
+        from .models import BehavioralEvent
 
         User = get_user_model()
         try:
@@ -407,8 +405,8 @@ class RecommendationService:
         - Freshness (recently added):         0.03
         """
         from .models import (
-            UserTasteProfile, ProductEmbedding,
-            RecommendationCache, BehavioralEvent
+            ProductEmbedding, RecommendationCache,
+            BehavioralEvent
         )
         from datetime import timedelta
 
@@ -662,7 +660,7 @@ Prices in Angolan Kwanza (Kz). "cheap" < 10000 Kz, "affordable" < 20000 Kz, "pre
                 max_tokens=200,
                 response_format={'type': 'json_object'},
             )
-            parsed = json.loads(response.choices[0].message.content)
+            parsed = json.loads((response.choices[0].message.content if response and response.choices else None))
             parsed['raw'] = query
             parsed['parse_method'] = 'gpt4o_mini'
             return parsed
@@ -809,7 +807,7 @@ class AIChatService:
                 max_tokens=500,
             )
 
-            assistant_message = response.choices[0].message.content
+            assistant_message = (response.choices[0].message.content if response and response.choices else None)
             tokens_used = response.usage.total_tokens
 
             # Cost: GPT-4o-mini is $0.15/1M input + $0.60/1M output tokens
@@ -969,7 +967,7 @@ class SizeRecommendationService:
         total = sum(freq.values())
         profile.inferred_sizes[category] = {
             'size': best,
-            'confidence': round(freq[best] / total, 2),
+            'confidence': round(freq[best] / total, 2) if total > 0 else 0.0,
             'purchase_count': total,
             'freq': freq,
         }

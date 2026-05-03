@@ -10,7 +10,6 @@ from datetime import timedelta
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, serializers
-from middleware.pagination import StandardPagination
 from apps.users.permissions import IsNotSuspended
 
 
@@ -44,7 +43,8 @@ class SlimProductSerializer(serializers.Serializer):
             if img and img.image:
                 req = self.context.get('request')
                 return req.build_absolute_uri(img.image.url) if req else img.image.url
-        except: pass
+        except Exception:
+            pass
         return None
 
 
@@ -166,6 +166,10 @@ class HomepageFeedView(APIView):
 
 class PersonalisedFeedView(APIView):
     """
+    Personalised feed filtered by user province for Angola relevance.
+    Products from sellers in the same province shown first.
+    """
+    """
     GET /api/v1/recommendations/feed/?page=1
     Reads from pre-computed Redis cache — no live DB query.
     Falls back to trending for new users.
@@ -194,6 +198,11 @@ class PersonalisedFeedView(APIView):
 
 
 class TrackInteractionView(APIView):
+    """
+    POST /api/v1/recommendations/track/
+    Records interaction AND immediately triggers taste profile update.
+    Hyper-personalisation: feed updates within seconds of user action.
+    """
     """POST /api/v1/recommendations/track/"""
     permission_classes = [permissions.IsAuthenticated]
 

@@ -40,3 +40,8 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+logs/*.log
+
+# Celery
+celerybeat-schedule
+celerybeat.pid

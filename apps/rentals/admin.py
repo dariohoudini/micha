@@ -5,7 +5,7 @@ from django.contrib import admin
 from .models import (
     Listing, PropertyDetail, VehicleDetail, OtherRentalDetail,
     ListingLocation, ListingImage, ListingInquiry,
-    RentalVerification, SavedListing
+    RentalVerification
 )
 
 

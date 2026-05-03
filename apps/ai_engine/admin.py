@@ -20,9 +20,9 @@ apps/ai_engine/admin.py
 """
 from django.contrib import admin
 from .models import (
-    UserTasteProfile, BehavioralEvent, ProductEmbedding,
-    RecommendationCache, SimilarProductsCache,
-    PriceDropAlert, SearchQuery, SizeProfile, NotificationPreference
+    UserTasteProfile, BehavioralEvent, RecommendationCache,
+    PriceDropAlert, SearchQuery,
+    SizeProfile, NotificationPreference
 )
 
 

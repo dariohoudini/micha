@@ -3,8 +3,8 @@ from django.conf import settings
 User = settings.AUTH_USER_MODEL
 
 class Chat(models.Model):
-    buyer=models.ForeignKey(User,on_delete=models.CASCADE,related_name='chats_as_buyer')
-    seller=models.ForeignKey(User,on_delete=models.CASCADE,related_name='chats_as_seller')
+    buyer=models.ForeignKey(User,on_delete=models.CASCADE,related_name='chats_as_buyer', db_index=True)
+    seller=models.ForeignKey(User,on_delete=models.CASCADE,related_name='chats_as_seller', db_index=True)
     is_archived_by_buyer=models.BooleanField(default=False)
     is_archived_by_seller=models.BooleanField(default=False)
     is_muted_by_buyer=models.BooleanField(default=False)
@@ -16,7 +16,7 @@ class Chat(models.Model):
 class Message(models.Model):
     STATUS=(('sent','Sent'),('delivered','Delivered'),('read','Read'))
     chat=models.ForeignKey(Chat,on_delete=models.CASCADE,related_name='messages')
-    sender=models.ForeignKey(User,on_delete=models.CASCADE,related_name='sent_messages')
+    sender=models.ForeignKey(User,on_delete=models.CASCADE,related_name='sent_messages', db_index=True)
     content=models.TextField(blank=True)
     status=models.CharField(max_length=10,choices=STATUS,default='sent')
     is_read=models.BooleanField(default=False)
@@ -35,7 +35,7 @@ class MessageAttachment(models.Model):
     uploaded_at=models.DateTimeField(auto_now_add=True)
 
 class QuickReplyTemplate(models.Model):
-    seller=models.ForeignKey(User,on_delete=models.CASCADE,related_name='quick_replies')
+    seller=models.ForeignKey(User,on_delete=models.CASCADE,related_name='quick_replies', db_index=True)
     shortcut=models.CharField(max_length=50)
     message=models.TextField()
     created_at=models.DateTimeField(auto_now_add=True)

@@ -1,3 +1,6 @@
+import OrderSuccessAnimation from '@/components/shared/OrderSuccessAnimation'
+import { SocialOrderShareCard } from '@/components/shared/MichaUXComponents'
+import { haptic } from '@/hooks/useUX'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 
@@ -9,6 +12,7 @@ export default function OrderConfirmedPage() {
 
   useEffect(() => {
     setTimeout(() => setScale(1), 100)
+    haptic.success()
   }, [])
 
   return (

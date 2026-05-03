@@ -28,8 +28,6 @@ def precompute_user_feeds(self):
     N correlated subqueries per product per user on every homepage load.
     """
     from django.contrib.auth import get_user_model
-    from apps.recommendations.models import UserInterest
-    from apps.products.models import Product
 
     User = get_user_model()
     users = User.objects.filter(
@@ -47,6 +45,57 @@ def precompute_user_feeds(self):
 
     return f"Pre-computed feeds for {computed} users"
 
+
+
+
+
+
+def _get_province_boost(product, user_province):
+    """
+    Boost products from sellers in the same province.
+    Angola logistics: same-province delivery is faster and cheaper.
+    Products from same province get 1.5x score boost.
+    """
+    if not user_province:
+        return 1.0
+    try:
+        seller_city = product.store.city or ''
+        seller_province = product.store.province if hasattr(product.store, 'province') else seller_city
+        if user_province.lower() in seller_province.lower() or seller_province.lower() in user_province.lower():
+            return 1.5
+        # Luanda sellers get slight boost everywhere (express delivery)
+        if 'luanda' in seller_province.lower():
+            return 1.2
+    except Exception:
+        pass
+    return 1.0
+
+def _get_time_context_boost(product, hour=None):
+    """
+    Hyper-personalisation: boost products based on time context.
+    Angola shopping patterns:
+    - Morning (6-10h): food, household, essentials
+    - Lunch (11-14h): fashion, accessories, electronics
+    - Evening (18-22h): entertainment, home, gifts
+    - Weekend: higher spend categories
+    """
+    from datetime import datetime
+    if hour is None:
+        hour = datetime.now().hour
+
+    category_name = (product.category.name if product.category else '').lower()
+
+    morning_cats = ['alimentação', 'casa', 'limpeza', 'saúde']
+    lunch_cats = ['moda', 'roupa', 'acessórios', 'electrónica']
+    evening_cats = ['entretenimento', 'jogos', 'decoração', 'presentes']
+
+    if 6 <= hour < 11:
+        return 1.3 if any(c in category_name for c in morning_cats) else 1.0
+    elif 11 <= hour < 15:
+        return 1.3 if any(c in category_name for c in lunch_cats) else 1.0
+    elif 18 <= hour < 23:
+        return 1.3 if any(c in category_name for c in evening_cats) else 1.0
+    return 1.0
 
 def _compute_feed_for_user(user_id):
     """Compute and cache feed for a single user."""
@@ -120,7 +169,6 @@ def recalculate_product_similarity(self):
     FIX: Uses cursor-based batch processing instead of loading all orders at once.
     Processes 1,000 orders at a time to avoid memory exhaustion.
     """
-    from apps.recommendations.models import ProductSimilarity
     from apps.orders.models import OrderItem
 
     BATCH_SIZE = 1000

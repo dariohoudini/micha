@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    ReviewFlagView,
     ReviewCreateView,
     SellerReviewListView,
     SellerRatingView,
@@ -25,4 +26,5 @@ urlpatterns = [
     path('product/<int:product_id>/rating/', ProductRatingView.as_view(), name='product-rating'),
     path('product/<int:review_id>/reply/', SellerReplyView.as_view(), name='seller-reply'),
     path('product/<int:review_id>/helpful/', VoteReviewHelpfulView.as_view(), name='helpful-vote'),
+    path("product/<int:pk>/flag/", ReviewFlagView.as_view(), name="flag-review"),
 ]

@@ -1,12 +1,13 @@
 from django.urls import path
 from .views import (
+    PriceAlertView,
     CategoryListView,
     ProductListView, ProductDetailView,
     SellerProductListView, ProductCreateView, ProductUpdateView,
     ProductImageUploadView, BulkProductCreateView,
     ProductCompareView, ProductQAListCreateView, ProductDuplicateView,
+    ProductGroupListView, ProductGroupOffersView,
 )
-
 
 urlpatterns = [
     path("", ProductListView.as_view(), name="list"),
@@ -15,6 +16,9 @@ urlpatterns = [
     path("bulk/", BulkProductCreateView.as_view(), name="bulk-create"),
     path("my/", SellerProductListView.as_view(), name="my-products"),
     path("create/", ProductCreateView.as_view(), name="create"),
+    path("groups/", ProductGroupListView.as_view(), name="product-groups"),
+    path("<slug:slug>/price-alert/", PriceAlertView.as_view(), name="price-alert"),
+    path("groups/<int:group_id>/offers/", ProductGroupOffersView.as_view(), name="product-group-offers"),
     path("<slug:slug>/", ProductDetailView.as_view(), name="detail"),
     path("<int:pk>/update/", ProductUpdateView.as_view(), name="update"),
     path("<int:pk>/images/", ProductImageUploadView.as_view(), name="upload-image"),

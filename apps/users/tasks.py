@@ -104,3 +104,56 @@ def cleanup_old_activity_logs():
         return f"Deleted {deleted} old activity logs"
     except Exception as e:
         return f"Error: {e}"
+
+
+@shared_task(name='users.dormant_user_winback')
+def dormant_user_winback():
+    """
+    Re-engage buyers who haven't logged in for 14+ days.
+    Sends personalised notification with incentive.
+    Runs weekly on Sundays.
+    """
+    from django.contrib.auth import get_user_model
+    from django.utils import timezone
+    from datetime import timedelta
+    from apps.notifications.models import Notification
+
+    User = get_user_model()
+    cutoff = timezone.now() - timedelta(days=14)
+
+    dormant = User.objects.filter(
+        last_login__lt=cutoff,
+        last_login__isnull=False,
+        is_active=True,
+        status='active',
+    ).exclude(
+        # Don't re-send if already notified in last 14 days
+        activity_logs__action='winback_sent',
+        activity_logs__created_at__gte=cutoff,
+    ).select_related('profile')[:500]
+
+    sent = 0
+    for user in dormant:
+        name = ''
+        try:
+            name = user.profile.full_name.split()[0] if user.profile.full_name else ''
+        except Exception:
+            pass
+
+        greeting = f'{name},' if name else 'Olá!'
+
+        Notification.objects.create(
+            recipient=user,
+            notification_type='winback',
+            title=f'{greeting} Saudades de si na MICHA!',
+            message='Temos novidades e promoções especiais à sua espera. Volte e descubra o que há de novo.',
+        )
+
+        UserActivityLog = user.activity_logs.model
+        UserActivityLog.objects.create(
+            user=user,
+            action='winback_sent',
+        )
+        sent += 1
+
+    return f'Win-back sent to {sent} dormant users'

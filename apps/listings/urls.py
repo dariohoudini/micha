@@ -5,8 +5,8 @@ from .views import (
     ListingCreateView,
     MyListingsView,
     ListingUpdateDeleteView,
+    ListingDuplicatesView,
 )
-
 
 urlpatterns = [
     path('', ListingListView.as_view(), name='listing-list'),
@@ -14,4 +14,5 @@ urlpatterns = [
     path('my/', MyListingsView.as_view(), name='my-listings'),
     path('<uuid:pk>/', ListingDetailView.as_view(), name='listing-detail'),
     path('<uuid:pk>/edit/', ListingUpdateDeleteView.as_view(), name='listing-edit'),
+    path('<uuid:pk>/offers/', ListingDuplicatesView.as_view(), name='listing-offers'),
 ]

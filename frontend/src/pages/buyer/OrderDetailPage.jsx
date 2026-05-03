@@ -2,6 +2,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import OrderTimeline from '@/components/buyer/OrderTimeline'
 import { formatPrice } from '@/components/buyer/mockData'
+import { BuyerProtectionButton } from '@/components/shared/UserActions'
 
 // Mock order for demo
 const MOCK_ORDER = {

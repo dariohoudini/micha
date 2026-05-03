@@ -1,6 +1,14 @@
 
 from django.urls import path
-from .views import *
+from .views import (
+    OpenDisputeView,
+    DisputeDetailView,
+    DisputeMessageView,
+    MyDisputesView,
+    AdminDisputeListView,
+    AdminResolveDisputeView,
+    FraudFlagView,
+)
 urlpatterns = [
     path("open/", OpenDisputeView.as_view()),
     path("my/", MyDisputesView.as_view()),

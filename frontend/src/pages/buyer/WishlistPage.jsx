@@ -4,6 +4,7 @@ import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
 import { unwatchPrice, trackCartAdd } from '@/api/ai'
 import { useCartStore } from '@/stores/cartStore'
+import trackInteraction, { INTERACTION_TYPES } from '@/api/tracking'
 
 export default function WishlistPage() {
   const navigate = useNavigate()
@@ -47,6 +48,7 @@ export default function WishlistPage() {
   }
 
   const handleAddToCart = (product) => {
+    trackInteraction(product.id, INTERACTION_TYPES.CART_ADD)
     addToCart(product)
     trackCartAdd(product)
   }

@@ -9,7 +9,6 @@ Fixes:
 """
 import re
 import json
-import hashlib
 import logging
 import time
 from functools import wraps

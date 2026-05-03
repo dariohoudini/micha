@@ -19,7 +19,6 @@ Usage — apply to a view:
 import hashlib
 from functools import wraps
 from django.utils.http import http_date
-from django.utils import timezone
 
 
 def etag_response(view_func):
@@ -35,7 +34,7 @@ def etag_response(view_func):
         if response.status_code == 200 and hasattr(response, 'data'):
             # Generate ETag from response content
             content = str(response.data).encode('utf-8')
-            etag = f'"{hashlib.md5(content).hexdigest()}"'
+            etag = f'"{hashlib.sha256(content).hexdigest()}"'
 
             # Check if client already has this version
             if_none_match = request.META.get('HTTP_IF_NONE_MATCH', '')

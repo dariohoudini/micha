@@ -8,8 +8,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
-from django.db.models import Count, Sum, Avg, Q
-from datetime import timedelta, date
+from django.db.models import Sum, Q
+from datetime import timedelta
 
 
 class AdminDashboardStatsView(APIView):
@@ -179,7 +179,7 @@ class AdminUserActionView(APIView):
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
+            return Response({'error': 'Não encontrado'}, status=404)
 
         action = request.data.get('action')
         if action == 'suspend':

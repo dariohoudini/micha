@@ -1,181 +1,78 @@
-import { useState, useMemo } from 'react'
+// SellerAnalyticsPage.jsx
+import { useState, useEffect } from 'react'
 import SellerLayout from '@/layouts/SellerLayout'
-import { formatPrice } from '@/components/buyer/mockData'
+import client from '@/api/client'
 
-const PERIOD_DATA = {
-  'Hoje': {
-    revenue: 17000, orders: 1, visitors: 234, conversion: 0.4,
-    avgOrder: 17000, returnRate: 0, rating: 4.7,
-    chart: [0, 0, 3000, 8000, 0, 6000, 0],
-    days: ['09h', '11h', '13h', '15h', '17h', '19h', '21h'],
-    topProducts: [
-      { name: 'Vestido Capulana Premium', sales: 1, revenue: 17000, pct: 100 },
-    ],
-  },
-  '7 dias': {
-    revenue: 53500, orders: 5, visitors: 892, conversion: 0.56,
-    avgOrder: 10700, returnRate: 1.2, rating: 4.7,
-    chart: [12000, 0, 18000, 4500, 28000, 0, 8500],
-    days: ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'],
-    topProducts: [
-      { name: 'Vestido Capulana Premium', sales: 3, revenue: 25500, pct: 100 },
-      { name: 'Colar de Missangas', sales: 1, revenue: 4500, pct: 55 },
-      { name: 'Bolsa de Couro', sales: 1, revenue: 28000, pct: 72 },
-    ],
-  },
-  '30 dias': {
-    revenue: 214000, orders: 22, visitors: 3841, conversion: 0.57,
-    avgOrder: 9727, returnRate: 0.9, rating: 4.8,
-    chart: [28000, 45000, 32000, 18000, 67000, 41000, 55000],
-    days: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'],
-    topProducts: [
-      { name: 'Bolsa de Couro', sales: 8, revenue: 224000, pct: 100 },
-      { name: 'Vestido Capulana', sales: 12, revenue: 102000, pct: 78 },
-      { name: 'Colar de Missangas', sales: 15, revenue: 67500, pct: 62 },
-    ],
-  },
-  '3 meses': {
-    revenue: 687000, orders: 74, visitors: 12450, conversion: 0.59,
-    avgOrder: 9284, returnRate: 1.1, rating: 4.7,
-    chart: [187000, 214000, 286000, 0, 0, 0, 0],
-    days: ['Fev', 'Mar', 'Abr', '', '', '', ''],
-    topProducts: [
-      { name: 'Bolsa de Couro', sales: 28, revenue: 784000, pct: 100 },
-      { name: 'Vestido Capulana', sales: 34, revenue: 289000, pct: 76 },
-      { name: 'Colar de Missangas', sales: 42, revenue: 189000, pct: 58 },
-    ],
-  },
-}
+const formatPrice = (n) => Number(n || 0).toLocaleString() + ' Kz'
 
-const PERIODS = ['Hoje', '7 dias', '30 dias', '3 meses']
+export function SellerAnalyticsPage() {
+  const [data, setData] = useState(null)
+  const [period, setPeriod] = useState(7)
+  const [loading, setLoading] = useState(true)
 
-export default function SellerAnalyticsPage() {
-  const [period, setPeriod] = useState('7 dias')
-  const data = PERIOD_DATA[period]
-  const maxVal = Math.max(...data.chart.filter(v => v > 0))
+  useEffect(() => {
+    setLoading(true)
+    client.get(`/api/v1/analytics/seller/performance/?period=${period}&include_chart=true`)
+      .then(res => setData(res.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [period])
+
+  const S = { fontFamily: "'DM Sans', sans-serif" }
+  const maxRevenue = Math.max(...(data?.chart || []).map(d => d.revenue || 0), 1)
 
   return (
     <SellerLayout title="Análises">
-      {/* Period selector */}
-      <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: 8, paddingBottom: 12, overflowX: 'auto', scrollbarWidth: 'none' }}>
-          {PERIODS.map(p => (
-            <button key={p} onClick={() => setPeriod(p)}
-              style={{ padding: '7px 16px', borderRadius: 50, flexShrink: 0, border: `1.5px solid ${period === p ? '#C9A84C' : '#2A2A2A'}`, background: period === p ? 'rgba(201,168,76,0.1)' : 'transparent', fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: period === p ? 600 : 400, color: period === p ? '#C9A84C' : '#9A9A9A', cursor: 'pointer', transition: 'all 0.2s' }}>
-              {p}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="screen" style={{ flex: 1 }}>
-        <div style={{ padding: '0 16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-          {/* Revenue card with chart */}
-          <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 4 }}>Receita — {period}</p>
-                <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 700, color: '#C9A84C' }}>
-                  {formatPrice(data.revenue)}
-                </p>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#059669', marginTop: 2 }}>
-                  {data.orders} pedido{data.orders !== 1 ? 's' : ''}
-                </p>
-              </div>
-              <div style={{ background: 'rgba(5,150,105,0.1)', border: '1px solid rgba(5,150,105,0.2)', borderRadius: 20, padding: '4px 12px' }}>
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#059669' }}>↑ Activo</span>
-              </div>
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[7, 14, 30].map(p => (
+              <button key={p} onClick={() => setPeriod(p)}
+                style={{ flex: 1, padding: '8px 0', borderRadius: 10, border: `1px solid ${period === p ? '#C9A84C' : '#2A2A2A'}`, background: period === p ? 'rgba(201,168,76,0.1)' : 'transparent', ...S, fontSize: 12, color: period === p ? '#C9A84C' : '#9A9A9A', cursor: 'pointer' }}>
+                {p} dias
+              </button>
+            ))}
+          </div>
+          {loading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #C9A84C', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }}><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>
             </div>
-
-            {/* Bar chart */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 100, marginBottom: 8 }}>
-              {data.chart.map((val, i) => (
-                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', position: 'relative' }}>
-                  {val > 0 && val === Math.max(...data.chart) && (
-                    <div style={{ position: 'absolute', top: -22, left: '50%', transform: 'translateX(-50%)', background: '#C9A84C', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap' }}>
-                      <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, fontWeight: 700, color: '#0A0A0A' }}>{formatPrice(val)}</span>
-                    </div>
-                  )}
-                  <div style={{
-                    width: '100%',
-                    height: val > 0 ? `${(val / maxVal) * 100}%` : '4px',
-                    minHeight: 4,
-                    borderRadius: '4px 4px 0 0',
-                    background: val > 0 && val === Math.max(...data.chart) ? '#C9A84C' : val > 0 ? 'rgba(201,168,76,0.3)' : '#1E1E1E',
-                    transition: 'height 0.4s ease',
-                  }} />
+          ) : data ? (<>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {[
+                { label: 'Receita', value: formatPrice(data.total_revenue), color: '#C9A84C' },
+                { label: 'Pedidos', value: data.total_orders || 0, color: '#FFFFFF' },
+                { label: 'Visitas', value: data.total_views || 0, color: '#FFFFFF' },
+                { label: 'Avaliação', value: data.avg_rating ? `★ ${Number(data.avg_rating).toFixed(1)}` : '—', color: '#C9A84C' },
+              ].map(stat => (
+                <div key={stat.label} style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 14 }}>
+                  <p style={{ ...S, fontSize: 20, fontWeight: 700, color: stat.color, marginBottom: 4 }}>{stat.value}</p>
+                  <p style={{ ...S, fontSize: 12, color: '#9A9A9A' }}>{stat.label}</p>
                 </div>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {data.days.map((d, i) => (
-                <span key={i} style={{ flex: 1, fontFamily: "'DM Sans', sans-serif", fontSize: 9, color: '#9A9A9A', textAlign: 'center' }}>{d}</span>
-              ))}
-            </div>
-          </div>
-
-          {/* KPIs */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {[
-              { label: 'Visitantes', value: data.visitors.toLocaleString(), sub: 'à sua loja', color: '#3b82f6' },
-              { label: 'Conversão', value: `${data.conversion}%`, sub: 'visitas → compras', color: '#059669' },
-              { label: 'Pedido médio', value: formatPrice(data.avgOrder), sub: 'por encomenda', color: '#C9A84C' },
-              { label: 'Taxa devolução', value: `${data.returnRate}%`, sub: period, color: data.returnRate < 2 ? '#059669' : '#f59e0b' },
-              { label: 'Avaliação', value: `${data.rating} ★`, sub: 'média dos clientes', color: '#f59e0b' },
-              { label: 'Pedidos', value: data.orders.toString(), sub: period, color: '#8b5cf6' },
-            ].map(kpi => (
-              <div key={kpi.label} style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 14 }}>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 700, color: kpi.color, marginBottom: 2 }}>{kpi.value}</p>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#FFFFFF', marginBottom: 2 }}>{kpi.label}</p>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#9A9A9A' }}>{kpi.sub}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Top products */}
-          <div>
-            <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#9A9A9A', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>
-              Produtos mais vendidos — {period}
-            </h3>
-            {data.topProducts.length === 0 ? (
-              <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 24, textAlign: 'center' }}>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A' }}>Sem dados suficientes para este período.</p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {data.topProducts.map((p, i) => (
-                  <div key={p.name} style={{ background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: 14 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: '#C9A84C', flexShrink: 0 }}>#{i + 1}</span>
-                        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FFFFFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                      </div>
-                      <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: '#C9A84C', flexShrink: 0, marginLeft: 8 }}>{formatPrice(p.revenue)}</span>
+            {data.chart?.length > 0 && (
+              <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 16 }}>
+                <p style={{ ...S, fontSize: 13, fontWeight: 700, color: '#FFFFFF', marginBottom: 16 }}>Receita diária</p>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 80, marginBottom: 8 }}>
+                  {data.chart.map((day, i) => (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
+                      <div style={{ width: '100%', borderRadius: '3px 3px 0 0', height: `${((day.revenue || 0) / maxRevenue) * 100}%`, minHeight: (day.revenue || 0) > 0 ? 4 : 2, background: i === data.chart.length - 1 ? '#C9A84C' : 'rgba(201,168,76,0.3)' }} />
                     </div>
-                    <div style={{ height: 4, background: '#2A2A2A', borderRadius: 2, marginBottom: 6 }}>
-                      <div style={{ height: '100%', borderRadius: 2, background: '#C9A84C', width: `${p.pct}%`, transition: 'width 0.5s ease' }} />
-                    </div>
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A' }}>{p.sales} vendido{p.sales !== 1 ? 's' : ''}</span>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {data.chart.map((day, i) => (
+                    <span key={i} style={{ flex: 1, ...S, fontSize: 8, color: '#9A9A9A', textAlign: 'center' }}>{day.day || ''}</span>
+                  ))}
+                </div>
               </div>
             )}
-          </div>
-
-          {/* Tips */}
-          <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.15)', borderRadius: 14, padding: 16 }}>
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: '#C9A84C', marginBottom: 8 }}>💡 Dica para aumentar vendas</p>
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', lineHeight: 1.6 }}>
-              {data.conversion < 0.5
-                ? 'A sua taxa de conversão está abaixo da média. Melhore as fotos e descrições dos produtos.'
-                : 'Boa taxa de conversão! Adicione mais produtos para aumentar a receita total.'
-              }
-            </p>
-          </div>
-
+          </>) : <p style={{ ...S, fontSize: 14, color: '#9A9A9A', textAlign: 'center', padding: '40px 0' }}>Sem dados disponíveis.</p>}
         </div>
       </div>
     </SellerLayout>
   )
 }
+
+export default SellerAnalyticsPage

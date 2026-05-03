@@ -1,5 +1,5 @@
 from rest_framework import generics, filters, permissions
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated, AllowAny
 from django.db.models import Q
 
 from .models import Listing
@@ -17,7 +17,7 @@ class ListingListView(generics.ListAPIView):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        qs = Listing.objects.filter(is_active=True).select_related('owner').prefetch_related('images')
+        qs = Listing.objects.filter(is_active=True, is_duplicate=False).select_related('owner').prefetch_related('images')
 
         city = self.request.query_params.get('city')
         sale_type = self.request.query_params.get('sale_type')
@@ -51,13 +51,13 @@ class ListingDetailView(generics.RetrieveAPIView):
 class ListingCreateView(generics.CreateAPIView):
     """POST /api/listings/create/ — Create a new listing."""
     serializer_class = ListingSerializer
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    permission_classes = [IsAuthenticated, IsNotSuspended]
 
 
 class MyListingsView(generics.ListAPIView):
     """GET /api/listings/my/ — All listings by the authenticated user."""
     serializer_class = ListingSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return Listing.objects.filter(owner=self.request.user).prefetch_related('images')
@@ -66,7 +66,36 @@ class MyListingsView(generics.ListAPIView):
 class ListingUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
     """GET/PUT/PATCH/DELETE /api/listings/<uuid>/ — Edit or delete own listing."""
     serializer_class = ListingSerializer
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    permission_classes = [IsAuthenticated, IsNotSuspended]
 
     def get_queryset(self):
         return Listing.objects.filter(owner=self.request.user)
+
+
+class ListingDuplicatesView(generics.ListAPIView):
+    """
+    GET /api/listings/<uuid>/offers/ 
+    Show all duplicate listings for the same property.
+    Buyer sees all sellers offering the same property with different prices.
+    """
+    serializer_class = ListingSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        listing_id = self.kwargs['pk']
+        try:
+            listing = Listing.objects.get(pk=listing_id, is_active=True)
+        except Listing.DoesNotExist:
+            return Listing.objects.none()
+
+        # Get all listings for same property
+        if listing.is_duplicate and listing.duplicate_of:
+            root = listing.duplicate_of
+        else:
+            root = listing
+
+        return Listing.objects.filter(
+            is_active=True
+        ).filter(
+            Q(pk=root.pk) | Q(duplicate_of=root)
+        ).select_related('owner').prefetch_related('images').order_by('price')

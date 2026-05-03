@@ -1,3 +1,4 @@
+from rest_framework.permissions import AllowAny
 """
 Products Views
 FIX: Image resizing wired to upload
@@ -7,14 +8,14 @@ FIX: ?fields= sparse fieldsets supported
 """
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
+from django.db import models
 from django.db.models import F
 from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 
-from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser
-from middleware.cache_control import ProductETagMixin
+from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser
 from .models import Product, Category, ProductImage, ProductQA
 from .serializers import (
     ProductListSerializer, ProductDetailSerializer, ProductWriteSerializer,
@@ -24,14 +25,14 @@ from .serializers import (
 
 class CategoryListView(generics.ListAPIView):
     serializer_class = CategorySerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     queryset = Category.objects.filter(parent=None).prefetch_related("subcategories")
 
 
 class ProductListView(generics.ListAPIView):
     """GET /api/products/ — public, cached, supports ?fields="""
     serializer_class = ProductListSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get_queryset(self):
         qs = Product.active.all()
@@ -68,7 +69,7 @@ class ProductDetailView(APIView):
     GET /api/products/<slug>/
     FIX: ETag header — mobile clients skip download if product unchanged
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request, slug):
         product = get_object_or_404(
@@ -138,7 +139,7 @@ class ProductImageUploadView(APIView):
         product = get_object_or_404(Product, pk=pk, store__owner=request.user)
         image_file = request.FILES.get("image")
         if not image_file:
-            return Response({"error": "validation_error", "detail": "image file required."}, status=400)
+            return Response({'error': 'validation_error', "detail": "image file required."}, status=400)
 
         # FIX: Validate MIME type
         from middleware.file_validator import validate_image
@@ -149,7 +150,7 @@ class ProductImageUploadView(APIView):
         try:
             paths = process_image_upload(image_file, upload_to=f"products/{product.pk}/")
         except ValueError as e:
-            return Response({"error": "invalid_image", "detail": str(e)}, status=400)
+            return Response({'error': 'invalid_image', "detail": str(e)}, status=400)
 
         img = ProductImage.objects.create(
             product=product,
@@ -185,9 +186,9 @@ class BulkProductCreateView(APIView):
         products_data = request.data.get("products", [])
 
         if not isinstance(products_data, list):
-            return Response({"error": "validation_error", "detail": "products must be an array."}, status=400)
+            return Response({'error': 'validation_error', "detail": "products must be an array."}, status=400)
         if len(products_data) > 100:
-            return Response({"error": "too_many", "detail": "Maximum 100 products per request."}, status=400)
+            return Response({'error': 'too_many', "detail": "Maximum 100 products per request."}, status=400)
 
         created = []
         errors = []
@@ -209,18 +210,18 @@ class BulkProductCreateView(APIView):
 
 class ProductCompareView(APIView):
     """GET /api/products/compare/?id=1&id=2&id=3"""
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request):
         ids = request.query_params.getlist("id")[:4]  # Max 4
         if len(ids) < 2:
-            return Response({"error": "validation_error", "detail": "Provide at least 2 product IDs."}, status=400)
+            return Response({'error': 'validation_error', "detail": "Provide at least 2 product IDs."}, status=400)
         products = Product.active.filter(id__in=ids)
         return Response(ProductDetailSerializer(products, many=True, context={"request": request}).data)
 
 
 class ProductQAListCreateView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request, pk):
         product = get_object_or_404(Product, pk=pk)
@@ -229,11 +230,11 @@ class ProductQAListCreateView(APIView):
 
     def post(self, request, pk):
         if not request.user.is_authenticated:
-            return Response({"error": "authentication_required"}, status=401)
+            return Response({'error': 'authentication_required'}, status=401)
         product = get_object_or_404(Product, pk=pk, is_active=True)
         question = request.data.get("question", "").strip()
         if not question:
-            return Response({"error": "validation_error", "detail": "question required."}, status=400)
+            return Response({'error': 'validation_error', "detail": "question required."}, status=400)
         qa = ProductQA.objects.create(product=product, asker=request.user, question=question)
         return Response(ProductQASerializer(qa).data, status=201)
 
@@ -250,3 +251,103 @@ class ProductDuplicateView(APIView):
         product.views = 0
         product.save()
         return Response({"detail": "Product duplicated.", "id": product.id, "slug": product.slug}, status=201)
+
+
+class ProductGroupListView(generics.ListAPIView):
+    """
+    GET /api/products/groups/
+    Shows one card per unique product — buyers see canonical products.
+    Each card shows best price and number of sellers.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.products.models import ProductGroup, Product
+        from django.db.models import Min, Count
+
+        groups = ProductGroup.objects.annotate(
+            seller_count=Count('seller_listings', filter=models.Q(
+                seller_listings__is_active=True,
+                seller_listings__is_archived=False,
+            )),
+            best_price=Min('seller_listings__price'),
+        ).filter(seller_count__gt=0)
+
+        category = request.query_params.get('category')
+        search = request.query_params.get('search', '').strip()
+
+        if category:
+            groups = groups.filter(category__slug=category)
+        if search:
+            groups = groups.filter(
+                models.Q(title__icontains=search) |
+                models.Q(brand__icontains=search)
+            )
+
+        data = []
+        for g in groups:
+            # Get best seller listing
+            best = Product.objects.filter(
+                product_group=g,
+                is_active=True,
+                is_archived=False,
+            ).order_by('price').select_related('store').prefetch_related('images').first()
+
+            if best:
+                data.append({
+                    'group_id': g.id,
+                    'title': g.title,
+                    'brand': g.brand,
+                    'best_price': g.best_price,
+                    'seller_count': g.seller_count,
+                    'best_seller': best.store.name if best.store else '',
+                    'image': request.build_absolute_uri(
+                        (best.images.first().image.url if best.images.exists() else None)
+                    ) if best.images.exists() else None,
+                    'slug': best.slug,
+                })
+
+        return Response(data)
+
+
+class ProductGroupOffersView(generics.ListAPIView):
+    """
+    GET /api/products/groups/<group_id>/offers/
+    All sellers offering the same product — buyer picks best deal.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = ProductListSerializer
+
+    def get_queryset(self):
+        return Product.active.filter(
+            product_group_id=self.kwargs['group_id']
+        ).order_by('price')
+
+
+class PriceAlertView(APIView):
+    """POST/DELETE /api/v1/products/<slug>/price-alert/ — Subscribe/unsubscribe to price drop alert."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, slug):
+        product = get_object_or_404(Product, slug=slug, is_active=True)
+        from apps.recommendations.models import PriceAlert
+        alert, created = PriceAlert.objects.get_or_create(
+            user=request.user,
+            product=product,
+            defaults={'target_price': request.data.get('target_price')}
+        )
+        if not created:
+            return Response({'error': 'Already subscribed to price alerts for this product.'}, status=200)
+        return Response({'error': 'Price alert activated. You will be notified when the price drops.'}, status=201)
+
+    def delete(self, request, slug):
+        product = get_object_or_404(Product, slug=slug)
+        from apps.recommendations.models import PriceAlert
+        PriceAlert.objects.filter(user=request.user, product=product).delete()
+        return Response({'detail': 'Price alert removed.'})
+
+    def get(self, request, slug):
+        product = get_object_or_404(Product, slug=slug)
+        from apps.recommendations.models import PriceAlert
+        active = PriceAlert.objects.filter(user=request.user, product=product).exists()
+        return Response({'active': active})

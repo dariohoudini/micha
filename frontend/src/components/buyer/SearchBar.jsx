@@ -1,5 +1,20 @@
+import client from '@/api/client'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+
+function useSearchSuggestions(query) {
+  const [suggestions, setSuggestions] = useState([])
+  useEffect(() => {
+    if (!query || query.length < 2) { setSuggestions([]); return }
+    const t = setTimeout(() => {
+      client.get('/api/v1/search/suggestions/', { params: { q: query } })
+        .then(r => setSuggestions(r.data.suggestions || r.data || []))
+        .catch(() => {})
+    }, 300)
+    return () => clearTimeout(t)
+  }, [query])
+  return suggestions
+}
 
 export default function SearchBar({ onSearch, placeholder = 'Pesquisar produtos...' }) {
   const [query, setQuery] = useState('')

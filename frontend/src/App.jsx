@@ -4,6 +4,7 @@ import ErrorBoundary from '@/components/shared/ErrorBoundary'
 import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
+import { usePushNotifications } from '@/hooks/usePushNotifications'
 
 // Onboarding
 const SplashPage         = lazy(() => import('@/pages/SplashPage'))
@@ -32,6 +33,9 @@ const SecurityPage          = lazy(() => import('@/pages/buyer/SecurityPage'))
 const ReferralPage          = lazy(() => import('@/pages/buyer/ReferralPage'))
 const ChatPage              = lazy(() => import('@/pages/buyer/ChatPage'))
 const ChatConversationPage  = lazy(() => import('@/pages/buyer/ChatConversationPage'))
+const StorePage             = lazy(() => import('@/pages/buyer/StorePage'))
+const OrderDetailPage       = lazy(() => import('@/pages/buyer/OrderDetailPage'))
+const DisputeFilingPage     = lazy(() => import('@/pages/buyer/DisputeFilingPage'))
 
 // Seller
 const SellerDashboardPage   = lazy(() => import('@/pages/seller/SellerDashboardPage'))
@@ -106,6 +110,7 @@ const A = ({ children }) => <AdminRoute>{children}</AdminRoute>
 
 function GlobalSetup() {
   const setOnline = useUIStore(s => s.setOnline)
+  usePushNotifications()
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -168,6 +173,9 @@ export default function App() {
             <Route path="/referral"            element={<P><ReferralPage /></P>} />
             <Route path="/chat"                element={<P><ChatPage /></P>} />
             <Route path="/chat/:id"            element={<P><ChatConversationPage /></P>} />
+            <Route path="/store/:id"           element={<P><StorePage /></P>} />
+            <Route path="/orders/:id"          element={<P><OrderDetailPage /></P>} />
+            <Route path="/dispute/:orderId"    element={<P><DisputeFilingPage /></P>} />
 
             {/* ── Seller ── */}
             <Route path="/seller"              element={<S><SellerDashboardPage /></S>} />

@@ -4,7 +4,7 @@ FIX: DynamicFieldsMixin — ?fields=id,title,price returns only those fields
      Mobile apps no longer download 30 fields when they need 4
 """
 from rest_framework import serializers
-from .models import Product, Category, ProductImage, ProductQA, ProductTag
+from .models import Product, Category, ProductImage, ProductQA
 
 
 class DynamicFieldsMixin:

@@ -7,4 +7,5 @@ urlpatterns = [
     path("unread-count/", UnreadCountView.as_view(), name="unread-count"),
     path("mark-all-read/", MarkAllReadView.as_view(), name="mark-all-read"),
     path("<int:pk>/read/", MarkReadView.as_view(), name="mark-read"),
+    path("read-all/", MarkAllReadView.as_view(), name="notifications-read-all"),
 ]

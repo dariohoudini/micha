@@ -9,5 +9,6 @@ class AIEngineConfig(AppConfig):
     verbose_name = 'MICHA AI Engine'
 
     def ready(self):
+        import apps.ai_engine.cache_signals  # noqa
         from .signals import register_signals
         register_signals()

@@ -64,7 +64,8 @@ export default function CheckoutPage() {
         ...(couponResult?.valid ? { coupon_code: couponCode.trim() } : {}),
       })
       useCartStore.getState().clearCart()
-      navigate('/order-confirmed', { state: { orderId: res.data?.id || res.data?.order_id, total: finalTotal } })
+      const orderId = res.data?.id || res.data?.order_id || res.data?.orders?.[0] || null
+      navigate('/order-confirmed', { state: { orderId, total: finalTotal } })
     } catch (err) {
       setError(err.response?.data?.detail || err.response?.data?.error || 'Erro ao processar pedido.')
     } finally { setLoading(false) }

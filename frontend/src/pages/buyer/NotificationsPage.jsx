@@ -28,13 +28,13 @@ export default function NotificationsPage() {
   }
 
   const markAllRead = async () => {
-    await client.post('/api/v1/notifications/read-all/').catch(() => {})
+    await client.patch('/api/v1/notifications/mark-all-read/').catch(() => {})
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
   }
 
   const dismiss = async (id) => {
     setNotifications(prev => prev.filter(n => n.id !== id))
-    await client.post(`/api/v1/notifications/${id}/read/`).catch(() => {})
+    await client.patch(`/api/v1/notifications/${id}/read/`).catch(() => {})
   }
 
   const unread = notifications.filter(n => !n.is_read).length

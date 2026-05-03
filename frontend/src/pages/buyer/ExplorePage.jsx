@@ -183,7 +183,11 @@ export default function ExplorePage() {
   const location = useLocation()
 
   const [query, setQuery] = useState(location.state?.query || '')
-  const [category, setCategory] = useState('🛍️ Todos')
+  const [category, setCategory] = useState(() => {
+    const incoming = location.state?.category
+    if (!incoming) return '🛍️ Todos'
+    return CATEGORIES.find(c => c.toLowerCase().includes(incoming.toLowerCase())) || '🛍️ Todos'
+  })
   const [sort, setSort] = useState('-sold_count')
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [showFilters, setShowFilters] = useState(false)

@@ -18,6 +18,7 @@ import PullToRefreshIndicator from '@/components/shared/PullToRefresh'
 import LazyImage from '@/components/ui/LazyImage'
 import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import FlashSaleBanner from '@/components/buyer/FlashSaleBanner'
+import CategoryPills from '@/components/buyer/CategoryPills'
 
 
 // Skeleton loader for product cards
@@ -378,6 +379,17 @@ export default function HomePage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Category navigation */}
+      <div style={{ paddingBottom: 4 }}>
+        <CategoryPills selected={null} onSelect={(catId) => {
+          if (catId && catId !== 'all') {
+            navigate('/explore', { state: { category: catId } })
+          } else {
+            navigate('/explore')
+          }
+        }} />
       </div>
 
       {/* Flash sales */}

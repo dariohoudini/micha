@@ -230,8 +230,18 @@ export default function OrderDetailPage() {
                 Avaliar produtos
               </button>
             )}
+            {(order.status === 'delivered' || order.status === 'shipped') && !order.has_dispute && (
+              <button onClick={() => navigate(`/dispute/${order.id}`)} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.08)', ...S, fontSize: 14, fontWeight: 600, color: '#f59e0b', cursor: 'pointer' }}>
+                Disputar
+              </button>
+            )}
             {order.status === 'pending' && (
-              <button style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', ...S, fontSize: 14, fontWeight: 600, color: '#ef4444', cursor: 'pointer' }}>
+              <button onClick={async () => {
+                try {
+                  await client.post(`/api/v1/orders/${order.id}/cancel/`, { reason: 'Cancelado pelo comprador' })
+                  navigate('/orders')
+                } catch {}
+              }} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', ...S, fontSize: 14, fontWeight: 600, color: '#ef4444', cursor: 'pointer' }}>
                 Cancelar pedido
               </button>
             )}

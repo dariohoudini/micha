@@ -3,7 +3,7 @@
  * Buyer files a dispute against a delivered order.
  */
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import client from '@/api/client'
 
 const REASONS = [
@@ -18,7 +18,8 @@ const REASONS = [
 export default function DisputeFilingPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const orderId = location.state?.order_id
+  const params = useParams()
+  const orderId = params.orderId || location.state?.order_id
 
   const [reason, setReason] = useState('')
   const [description, setDescription] = useState('')

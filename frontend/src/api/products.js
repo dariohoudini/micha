@@ -4,13 +4,13 @@ export const productsAPI = {
   getFeed: (cursor) => api.get('/api/v1/recommendations/feed/', { params: { cursor } }),
 
   getProduct: (id) =>
-    api.get(`/products/${id}/`),
+    api.get(`/api/v1/products/${id}/`),
 
   search: (query, filters) =>
-    api.get('/products/search/', { params: { q: query, ...filters } }),
+    api.get('/api/v1/products/', { params: { q: query, ...filters } }),
 
   getCategories: () =>
-    api.get('/products/categories/'),
+    api.get('/api/v1/products/categories/'),
 
   searchWithFilters: (params) => api.get('/api/v1/search/', { params: {
     q: params.query,

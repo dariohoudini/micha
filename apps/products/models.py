@@ -162,6 +162,12 @@ class Product(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Postgres full-text search index — populated by signal on save / m2m change.
+    # GIN-indexed for fast search; diacritic-folded so "telemovel" matches "telemóvel".
+    # Stays NULL on SQLite (dev); search code falls back to LIKE there.
+    from django.contrib.postgres.search import SearchVectorField
+    search_vector = SearchVectorField(null=True, blank=True)
+
     # FIX: Custom manager with select_related pre-loaded — prevents N+1
     objects = models.Manager()  # Raw manager for admin
     active = ActiveProductManager()  # Use this in views

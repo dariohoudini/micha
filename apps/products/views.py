@@ -53,7 +53,8 @@ class ProductListView(generics.ListAPIView):
 
         search = params.get("search", "").strip()[:200]
         if search:
-            qs = qs.filter(Q(title__icontains=search) | Q(brand__icontains=search))
+            from .search import search_products
+            qs = search_products(qs, search)
 
         if params.get("category"):
             qs = qs.filter(category__slug=params["category"])
@@ -100,7 +101,15 @@ class ProductListView(generics.ListAPIView):
             "popular": "-views",
             "-rating": "-_avg_rating" if needs_rating else "-views",
         }
-        qs = qs.order_by(allowed_orderings.get(ordering, "-created_at"))
+        # When a search query is active and caller didn't explicitly choose an
+        # ordering, sort by relevance rank rather than by creation date.
+        if search and "ordering" not in params:
+            try:
+                qs = qs.order_by("-_rank", "-created_at")
+            except Exception:
+                qs = qs.order_by("-created_at")
+        else:
+            qs = qs.order_by(allowed_orderings.get(ordering, "-created_at"))
 
         return qs
 

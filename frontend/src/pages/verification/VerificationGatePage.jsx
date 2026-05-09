@@ -171,7 +171,7 @@ export default function VerificationGatePage({ lockReason, rejectionReason, reje
       Object.entries(formData).forEach(([k, v]) => v && data.append(k, v))
       Object.entries(files).forEach(([k, v]) => v && data.append(k, v))
 
-      await client.post('/api/verification-gate/submit/', data, {
+      await client.post('/api/v1/verification-gate/submit/', data, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       setSubmitted(true)

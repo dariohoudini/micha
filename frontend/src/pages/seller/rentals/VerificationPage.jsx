@@ -28,7 +28,7 @@ export default function VerificationPage() {
       formData.append('is_micheiro', isMicheiro)
       if (isMicheiro) formData.append('micheiro_description', commissionDesc)
 
-      await client.post('/api/rentals/verify/', formData, {
+      await client.post('/api/v1/rentals/verify/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       navigate('/rentals/create')

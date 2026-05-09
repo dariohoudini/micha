@@ -1,17 +1,3 @@
-
-// Shipping cost estimate hook
-function useShippingEstimate(items, province) {
-  const [cost, setCost] = useState(1500)
-  useEffect(() => {
-    if (!items?.length || !province) return
-    client.post('/api/v1/shipping/estimate/', { province, items: items.map(i => ({ product_id: i.id, quantity: i.quantity })) })
-      .then(r => setCost(r.data.cost || 1500))
-      .catch(() => setCost(1500))
-  }, [items?.length, province])
-  return cost
-}
-
-// CartPage.jsx
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
@@ -19,15 +5,34 @@ import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import SwipeToDelete from '@/components/shared/SwipeToDelete'
 import { haptic } from '@/hooks/useUX'
-
+import { useAuthStore } from '@/stores/authStore'
 
 const fmt = (n) => Number(n || 0).toLocaleString() + ' Kz'
 
+// Shipping cost estimate hook — calls real API then falls back to 1500
+function useShippingEstimate(items, province) {
+  const [cost, setCost] = useState(1500)
+  useEffect(() => {
+    if (!items?.length || !province) return
+    client.post('/api/v1/shipping/estimate/', {
+      province,
+      items: items.map(i => ({ product_id: i.product?.id || i.id, quantity: i.quantity || 1 })),
+    })
+      .then(r => setCost(r.data.cost || 1500))
+      .catch(() => setCost(1500))
+  }, [items?.length, province])
+  return cost
+}
+
 export function CartPage() {
   const navigate = useNavigate()
+  const user = useAuthStore(s => s.user)
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(null)
+
+  const province = user?.province || 'Luanda'
+  const delivery = useShippingEstimate(items, province)
 
   useEffect(() => {
     client.get('/api/v1/cart/')
@@ -46,6 +51,7 @@ export function CartPage() {
   }
 
   const remove = async (itemId) => {
+    haptic.light?.()
     try {
       await client.delete(`/api/v1/cart/items/${itemId}/remove/`)
       setItems(prev => prev.filter(i => i.id !== itemId))
@@ -53,7 +59,6 @@ export function CartPage() {
   }
 
   const subtotal = items.reduce((sum, i) => sum + Number(i.price || i.product?.price || 0) * (i.quantity || 1), 0)
-  const delivery = items.length > 0 ? 2500 : 0
   const S = { fontFamily: "'DM Sans', sans-serif" }
 
   return (
@@ -79,25 +84,27 @@ export function CartPage() {
               const product = item.product || item
               const price = Number(item.price || product.price || 0)
               return (
-                <div key={item.id} style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 14, display: 'flex', gap: 12 }}>
-                  <div style={{ width: 70, height: 70, borderRadius: 10, background: '#1E1E1E', flexShrink: 0, overflow: 'hidden' }}>
-                    {(product.image_url || product.images?.[0]?.image) && <img src={product.image_url || product.images[0].image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ ...S, fontSize: 13, fontWeight: 500, color: '#FFFFFF', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{product.name}</p>
-                    <p style={{ ...S, fontSize: 14, fontWeight: 700, color: '#C9A84C', marginBottom: 8 }}>{fmt(price)}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', background: '#1E1E1E', borderRadius: 10, border: '1px solid #2A2A2A' }}>
-                        <button onClick={() => updateQty(item.id, (item.quantity || 1) - 1)} style={{ width: 32, height: 32, background: 'none', border: 'none', cursor: 'pointer', color: '#FFFFFF', fontSize: 16 }}>−</button>
-                        <span style={{ ...S, fontSize: 13, fontWeight: 600, color: '#FFFFFF', minWidth: 24, textAlign: 'center' }}>{updating === item.id ? '…' : (item.quantity || 1)}</span>
-                        <button onClick={() => updateQty(item.id, (item.quantity || 1) + 1)} style={{ width: 32, height: 32, background: 'none', border: 'none', cursor: 'pointer', color: '#FFFFFF', fontSize: 16 }}>+</button>
+                <SwipeToDelete key={item.id} onDelete={() => remove(item.id)} deleteLabel="Remover">
+                  <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 14, display: 'flex', gap: 12 }}>
+                    <div style={{ width: 70, height: 70, borderRadius: 10, background: '#1E1E1E', flexShrink: 0, overflow: 'hidden' }}>
+                      {(product.image_url || product.images?.[0]?.image) && <img src={product.image_url || product.images[0].image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ ...S, fontSize: 13, fontWeight: 500, color: '#FFFFFF', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{product.name}</p>
+                      <p style={{ ...S, fontSize: 14, fontWeight: 700, color: '#C9A84C', marginBottom: 8 }}>{fmt(price)}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#1E1E1E', borderRadius: 10, border: '1px solid #2A2A2A' }}>
+                          <button onClick={() => updateQty(item.id, (item.quantity || 1) - 1)} style={{ width: 32, height: 32, background: 'none', border: 'none', cursor: 'pointer', color: '#FFFFFF', fontSize: 16 }}>−</button>
+                          <span style={{ ...S, fontSize: 13, fontWeight: 600, color: '#FFFFFF', minWidth: 24, textAlign: 'center' }}>{updating === item.id ? '…' : (item.quantity || 1)}</span>
+                          <button onClick={() => updateQty(item.id, (item.quantity || 1) + 1)} style={{ width: 32, height: 32, background: 'none', border: 'none', cursor: 'pointer', color: '#FFFFFF', fontSize: 16 }}>+</button>
+                        </div>
+                        <button onClick={() => remove(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+                        </button>
                       </div>
-                      <button onClick={() => remove(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
-                      </button>
                     </div>
                   </div>
-                </div>
+                </SwipeToDelete>
               )
             })}
             <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 16 }}>
@@ -118,15 +125,16 @@ export function CartPage() {
 
       {items.length > 0 && (
         <div style={{ padding: '14px 16px', paddingBottom: 'max(28px, env(safe-area-inset-bottom))', borderTop: '1px solid #1E1E1E', flexShrink: 0 }}>
-          <button onClick={() => navigate('/checkout', { state: { cartItems: items, total: subtotal + delivery } })}
+          <button
+            onClick={() => { haptic.medium?.(); navigate('/checkout', { state: { cartItems: items, total: subtotal + delivery } }) }}
             style={{ width: '100%', padding: '15px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
             Finalizar — {fmt(subtotal + delivery)}
           </button>
         </div>
       )}
-    
+
       <HelperBot screen="cart" isSeller={false} />
-      </BuyerLayout>
+    </BuyerLayout>
   )
 }
 

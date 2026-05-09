@@ -10,20 +10,20 @@ import client from './client'
 // ── Onboarding Quiz ───────────────────────────────────────────────────────────
 
 export const submitOnboardingQuiz = (quizData) =>
-  client.post('/api/ai/onboarding-quiz/', quizData)
+  client.post('/api/v1/ai/onboarding-quiz/', quizData)
 
 export const getQuizStatus = () =>
-  client.get('/api/ai/onboarding-quiz/')
+  client.get('/api/v1/ai/onboarding-quiz/')
 
 // ── Personalised Feed ─────────────────────────────────────────────────────────
 
 export const getPersonalisedFeed = ({ limit = 20, offset = 0 } = {}) =>
-  client.get('/api/ai/feed/', { params: { limit, offset } })
+  client.get('/api/v1/ai/feed/', { params: { limit, offset } })
 
 // ── Similar Products ──────────────────────────────────────────────────────────
 
 export const getSimilarProducts = (productId, { limit = 10 } = {}) =>
-  client.get(`/api/ai/similar/${productId}/`, { params: { limit } })
+  client.get(`/api/v1/ai/similar/${productId}/`, { params: { limit } })
 
 // ── Behavioral Tracking (fire and forget) ────────────────────────────────────
 
@@ -37,7 +37,7 @@ const getSessionId = () => {
 
 export const trackEvent = async (eventType, data = {}) => {
   try {
-    await client.post('/api/ai/event/', {
+    await client.post('/api/v1/ai/event/', {
       event_type: eventType,
       session_id: getSessionId(),
       ...data,
@@ -83,27 +83,27 @@ export const trackRecommendationClick = (productId, source = 'home_feed') =>
 // ── Smart Search ──────────────────────────────────────────────────────────────
 
 export const smartSearch = (query, { limit = 20 } = {}) =>
-  client.get('/api/ai/search/', { params: { q: query, limit } })
+  client.get('/api/v1/ai/search/', { params: { q: query, limit } })
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
 export const startAIChat = ({ productId, productName, language = 'pt' } = {}) =>
-  client.post('/api/ai/chat/start/', {
+  client.post('/api/v1/ai/chat/start/', {
     product_id: productId,
     product_name: productName,
     language,
   })
 
 export const sendAIChatMessage = (conversationId, message) =>
-  client.post(`/api/ai/chat/${conversationId}/`, { message })
+  client.post(`/api/v1/ai/chat/${conversationId}/`, { message })
 
 export const getAIChatHistory = (conversationId) =>
-  client.get(`/api/ai/chat/${conversationId}/`)
+  client.get(`/api/v1/ai/chat/${conversationId}/`)
 
 // ── Price Alerts ──────────────────────────────────────────────────────────────
 
 export const watchPrice = (product, thresholdPct = 10) =>
-  client.post('/api/ai/price-watch/', {
+  client.post('/api/v1/ai/price-watch/', {
     product_id: product.id,
     price: product.price,
     product_name: product.name,
@@ -111,54 +111,54 @@ export const watchPrice = (product, thresholdPct = 10) =>
   })
 
 export const unwatchPrice = (productId) =>
-  client.delete(`/api/ai/price-watch/${productId}/`)
+  client.delete(`/api/v1/ai/price-watch/${productId}/`)
 
 export const getPriceWatches = () =>
-  client.get('/api/ai/price-watch/')
+  client.get('/api/v1/ai/price-watch/')
 
 // ── Size Recommendations ──────────────────────────────────────────────────────
 
 export const getSizeRecommendation = (productId, category) =>
-  client.get('/api/ai/size/', { params: { product_id: productId, category } })
+  client.get('/api/v1/ai/size/', { params: { product_id: productId, category } })
 
 export const getSizeProfile = () =>
-  client.get('/api/ai/size-profile/')
+  client.get('/api/v1/ai/size-profile/')
 
 export const updateSizeProfile = (data) =>
-  client.put('/api/ai/size-profile/', data)
+  client.put('/api/v1/ai/size-profile/', data)
 
 // ── Taste Profile & Preferences ───────────────────────────────────────────────
 
 export const getTasteProfile = () =>
-  client.get('/api/ai/taste-profile/')
+  client.get('/api/v1/ai/taste-profile/')
 
 export const getNotificationPreferences = () =>
-  client.get('/api/ai/notification-preferences/')
+  client.get('/api/v1/ai/notification-preferences/')
 
 export const updateNotificationPreferences = (data) =>
-  client.put('/api/ai/notification-preferences/', data)
+  client.put('/api/v1/ai/notification-preferences/', data)
 
 // ── Content Generation (sellers only) ────────────────────────────────────────
 
 export const generateProductDescription = (productData) =>
-  client.post('/api/ai/content/generate-description/', productData)
+  client.post('/api/v1/ai/content/generate-description/', productData)
 
 export const translateProduct = (productData, targetLanguage) =>
-  client.post('/api/ai/content/translate/', { ...productData, target_language: targetLanguage })
+  client.post('/api/v1/ai/content/translate/', { ...productData, target_language: targetLanguage })
 
 export const improveDescription = (description, category, language = 'pt') =>
-  client.post('/api/ai/content/improve/', { description, category, language })
+  client.post('/api/v1/ai/content/improve/', { description, category, language })
 
 export const getReviewsSummary = (productId, language = 'pt') =>
-  client.get(`/api/ai/content/reviews-summary/${productId}/`, { params: { language } })
+  client.get(`/api/v1/ai/content/reviews-summary/${productId}/`, { params: { language } })
 
 // ── Trust Score ───────────────────────────────────────────────────────────────
 
 export const getSellerTrustScore = (sellerId) =>
-  client.get(`/api/trust/seller/${sellerId}/`)
+  client.get(`/api/v1/trust/seller/${sellerId}/`)
 
 export const getMyTrustScore = () =>
-  client.get('/api/trust/me/')
+  client.get('/api/v1/trust/me/')
 
 export const getTrustLeaderboard = () =>
-  client.get('/api/trust/leaderboard/')
+  client.get('/api/v1/trust/leaderboard/')

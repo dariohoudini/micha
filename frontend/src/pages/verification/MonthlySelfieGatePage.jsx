@@ -22,7 +22,7 @@ export default function MonthlySelfieGatePage({ onComplete }) {
     try {
       const data = new FormData()
       data.append('selfie', file)
-      await client.post('/api/verification-gate/monthly-selfie/', data, {
+      await client.post('/api/v1/verification-gate/monthly-selfie/', data, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       setSubmitted(true)

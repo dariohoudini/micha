@@ -33,7 +33,7 @@ export default function VerificationGuard({ children }) {
 
   const checkVerificationStatus = async () => {
     try {
-      const res = await client.get('/api/verification-gate/status/')
+      const res = await client.get('/api/v1/verification-gate/status/')
       setStatus(res.data)
     } catch (err) {
       // If 403, the middleware already blocked — extract status from error

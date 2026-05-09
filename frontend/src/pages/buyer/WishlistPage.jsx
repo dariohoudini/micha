@@ -20,7 +20,7 @@ export default function WishlistPage() {
 
   const loadWishlist = async () => {
     try {
-      const res = await client.get('/api/wishlist/')
+      const res = await client.get('/api/v1/wishlist/')
       setItems(res.data.results || res.data || [])
     } catch {
       setItems([])

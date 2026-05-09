@@ -125,7 +125,7 @@ export default function CreateListingPage() {
 
   const checkVerification = async () => {
     try {
-      const res = await client.get('/api/rentals/verify/')
+      const res = await client.get('/api/v1/rentals/verify/')
       setVerificationStatus(res.data.status)
     } catch {
       setVerificationStatus('not_submitted')
@@ -220,7 +220,7 @@ export default function CreateListingPage() {
         }
       }
 
-      const res = await client.post('/api/rentals/create/', payload)
+      const res = await client.post('/api/v1/rentals/create/', payload)
       setCreatedListingId(res.data.id)
       setStep(5) // Go to image upload step
     } catch (err) {
@@ -236,7 +236,7 @@ export default function CreateListingPage() {
       const formData = new FormData()
       formData.append('image', file)
       try {
-        const res = await client.post(`/api/rentals/${createdListingId}/images/`, formData, {
+        const res = await client.post(`/api/v1/rentals/${createdListingId}/images/`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
         setImages(prev => [...prev, res.data])
@@ -249,7 +249,7 @@ export default function CreateListingPage() {
   const handlePublish = async () => {
     setLoading(true)
     try {
-      await client.post(`/api/rentals/${createdListingId}/publish/`)
+      await client.post(`/api/v1/rentals/${createdListingId}/publish/`)
       navigate('/rentals/my', { replace: true })
     } catch (err) {
       console.error('Publish failed:', err)

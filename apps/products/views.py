@@ -109,6 +109,40 @@ class SellerProductListView(generics.ListAPIView):
         ).select_related("store", "category").prefetch_related("images")
 
 
+def _save_variant_combos(product, combos_payload):
+    """Replace product's variant_combos with the given list.
+    combos_payload: list of dicts with options, price, quantity, sku (optional).
+    """
+    import json
+    from apps.inventory.models import ProductVariantCombo
+    if isinstance(combos_payload, str):
+        try:
+            combos_payload = json.loads(combos_payload)
+        except Exception:
+            return
+    if not isinstance(combos_payload, list):
+        return
+    # Wipe existing and recreate (simple, idempotent for MVP)
+    product.variant_combos.all().delete()
+    for c in combos_payload:
+        opts = c.get('options') or {}
+        if not isinstance(opts, dict) or not opts:
+            continue
+        try:
+            price = float(c.get('price'))
+            qty = int(c.get('quantity', 0))
+        except (TypeError, ValueError):
+            continue
+        ProductVariantCombo.objects.create(
+            product=product,
+            options=opts,
+            price=price,
+            quantity=qty,
+            sku=str(c.get('sku') or '')[:100],
+            is_active=True,
+        )
+
+
 class ProductCreateView(generics.CreateAPIView):
     serializer_class = ProductWriteSerializer
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
@@ -116,7 +150,10 @@ class ProductCreateView(generics.CreateAPIView):
     def perform_create(self, serializer):
         from apps.stores.models import Store
         store = get_object_or_404(Store, owner=self.request.user)
-        serializer.save(store=store, created_by=self.request.user)
+        product = serializer.save(store=store, created_by=self.request.user)
+        combos = self.request.data.get('variant_combos')
+        if combos:
+            _save_variant_combos(product, combos)
 
 
 class ProductUpdateView(generics.UpdateAPIView):
@@ -125,6 +162,11 @@ class ProductUpdateView(generics.UpdateAPIView):
 
     def get_queryset(self):
         return Product.objects.filter(store__owner=self.request.user)
+
+    def perform_update(self, serializer):
+        product = serializer.save()
+        if 'variant_combos' in self.request.data:
+            _save_variant_combos(product, self.request.data.get('variant_combos'))
 
 
 class ProductImageUploadView(APIView):

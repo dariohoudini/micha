@@ -87,10 +87,19 @@ export function CartPage() {
                 <SwipeToDelete key={item.id} onDelete={() => remove(item.id)} deleteLabel="Remover">
                   <div style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 14, display: 'flex', gap: 12 }}>
                     <div style={{ width: 70, height: 70, borderRadius: 10, background: '#1E1E1E', flexShrink: 0, overflow: 'hidden' }}>
-                      {(product.image_url || product.images?.[0]?.image) && <img src={product.image_url || product.images[0].image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                      {(item.variant_image || item.product_image || product.image_url || product.images?.[0]?.image) && (
+                        <img src={item.variant_image || item.product_image || product.image_url || product.images[0].image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ ...S, fontSize: 13, fontWeight: 500, color: '#FFFFFF', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{product.name}</p>
+                      <p style={{ ...S, fontSize: 13, fontWeight: 500, color: '#FFFFFF', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.product_title || product.name || product.title}
+                      </p>
+                      {item.variant_options && Object.keys(item.variant_options).length > 0 && (
+                        <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginBottom: 4 }}>
+                          {Object.entries(item.variant_options).map(([k, v]) => `${k}: ${v}`).join(' · ')}
+                        </p>
+                      )}
                       <p style={{ ...S, fontSize: 14, fontWeight: 700, color: '#C9A84C', marginBottom: 8 }}>{fmt(price)}</p>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div style={{ display: 'flex', alignItems: 'center', background: '#1E1E1E', borderRadius: 10, border: '1px solid #2A2A2A' }}>

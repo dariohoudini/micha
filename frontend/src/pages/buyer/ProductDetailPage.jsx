@@ -16,6 +16,7 @@ import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
 import { ReportButton, BlockUserButton } from '@/components/shared/UserActions'
 import ReviewsSection from '@/components/buyer/ReviewsSection'
 import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
+import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
 
 // Stock urgency hook
 function useStockUrgency(productId) {
@@ -72,8 +73,7 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState(null)
   const [loading, setLoading] = useState(true)
   const [selectedImage, setSelectedImage] = useState(0)
-  const [selectedSize, setSelectedSize] = useState(null)
-  const [selectedColor, setSelectedColor] = useState(null)
+  const [selectedOptions, setSelectedOptions] = useState({}) // { Color: "Red", Size: "M" }
   const [quantity, setQuantity] = useState(1)
   const [wishlisted, setWishlisted] = useState(false)
   const [addedToCart, setAddedToCart] = useState(false)
@@ -152,26 +152,51 @@ export default function ProductDetailPage() {
     }
   }
 
+  const variantAxes = product?.variant_axes || []
+  const variantCombos = product?.variant_combos || []
+  const hasVariants = variantAxes.length > 0
+  const selectedCombo = hasVariants ? findMatchingCombo(variantCombos, selectedOptions) : null
+  const variantsComplete = !hasVariants || !!selectedCombo
+  const effectivePrice = selectedCombo?.price ?? product?.price
+  const effectiveStock = selectedCombo?.quantity ?? product?.quantity
+
+  const handleVariantSelect = (axisName, value) => {
+    setSelectedOptions(prev => ({ ...prev, [axisName]: value }))
+  }
+
   const handleAddToCart = async () => {
-    addToCart({ ...product, quantity, selectedSize, selectedColor })
+    if (hasVariants && !selectedCombo) {
+      haptic.warning?.()
+      const missing = variantAxes.find(a => !selectedOptions[a.name])
+      alert(`Por favor selecione ${missing?.name?.toLowerCase() || 'as variantes'}.`)
+      return
+    }
+    addToCart({ ...product, quantity, variant_combo_id: selectedCombo?.id, options: selectedOptions })
     trackCartAdd(product)
     setAddedToCart(true)
     setTimeout(() => setAddedToCart(false), 2000)
     client.post('/api/v1/cart/add/', {
       product_id: product.id,
       quantity,
-      ...(selectedSize ? { size: selectedSize } : {}),
-      ...(selectedColor ? { color: selectedColor } : {}),
-    }).catch(() => {})
+      ...(selectedCombo ? { variant_combo_id: selectedCombo.id } : {}),
+    }).catch((err) => {
+      const msg = err?.response?.data?.detail || err?.response?.data?.variant_combo_id?.[0]
+      if (msg) alert(msg)
+    })
   }
 
   const handleBuyNow = async () => {
-    addToCart({ ...product, quantity, selectedSize, selectedColor })
-    await client.post('/api/v1/cart/', {
+    if (hasVariants && !selectedCombo) {
+      haptic.warning?.()
+      const missing = variantAxes.find(a => !selectedOptions[a.name])
+      alert(`Por favor selecione ${missing?.name?.toLowerCase() || 'as variantes'}.`)
+      return
+    }
+    addToCart({ ...product, quantity, variant_combo_id: selectedCombo?.id, options: selectedOptions })
+    await client.post('/api/v1/cart/add/', {
       product_id: product.id,
       quantity,
-      ...(selectedSize ? { size: selectedSize } : {}),
-      ...(selectedColor ? { color: selectedColor } : {}),
+      ...(selectedCombo ? { variant_combo_id: selectedCombo.id } : {}),
     }).catch(() => {})
     navigate('/checkout')
   }
@@ -199,8 +224,6 @@ export default function ProductDetailPage() {
   const discount = product.original_price && product.original_price > product.price
     ? Math.round((1 - product.price / product.original_price) * 100)
     : null
-  const sizes = product.sizes || product.variants?.sizes || []
-  const colors = product.colors || product.variants?.colors || []
 
   return (
     <BuyerLayout hideNav>
@@ -257,9 +280,9 @@ export default function ProductDetailPage() {
 
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
             <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 24, fontWeight: 700, color: '#C9A84C' }}>
-              {Number(product.price).toLocaleString()} Kz
+              {Number(effectivePrice).toLocaleString()} Kz
             </span>
-            <PersonalisedPriceBadge productId={product?.id} currentPrice={Number(product?.price)} />
+            <PersonalisedPriceBadge productId={product?.id} currentPrice={Number(effectivePrice)} />
         {product?.original_price && (
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: '#9A9A9A', textDecoration: 'line-through' }}>
                 {Number(product.original_price).toLocaleString()} Kz
@@ -289,39 +312,19 @@ export default function ProductDetailPage() {
             </div>
           )}
 
-          {/* Size selector */}
-          {sizes.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#FFFFFF' }}>Tamanho</p>
-                {sizeRecommendation && (
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#C9A84C' }}>
-                    ★ Recomendado para si: {sizeRecommendation.recommended_size}
-                  </span>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {sizes.map(size => (
-                  <button key={size} onClick={() => setSelectedSize(size)}
-                    style={{ width: 44, height: 44, borderRadius: 10, border: `1.5px solid ${selectedSize === size ? '#C9A84C' : '#2A2A2A'}`, background: selectedSize === size ? 'rgba(201,168,76,0.1)' : '#141414', fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: selectedSize === size ? 600 : 400, color: selectedSize === size ? '#C9A84C' : '#FFFFFF', cursor: 'pointer' }}>
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Variant picker (replaces legacy size/color UI) */}
+          <VariantPicker
+            axes={variantAxes}
+            combos={variantCombos}
+            selectedOptions={selectedOptions}
+            onSelect={handleVariantSelect}
+          />
 
-          {/* Color selector */}
-          {colors.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: '#FFFFFF', marginBottom: 8 }}>Cor</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {colors.map(color => (
-                  <button key={color.name || color} onClick={() => setSelectedColor(color.name || color)}
-                    style={{ width: 32, height: 32, borderRadius: '50%', border: `2.5px solid ${selectedColor === (color.name || color) ? '#C9A84C' : 'transparent'}`, background: color.hex || '#1E1E1E', cursor: 'pointer', outline: `2px solid ${selectedColor === (color.name || color) ? '#C9A84C' : 'transparent'}`, outlineOffset: 2 }} />
-                ))}
-              </div>
-            </div>
+          {/* Combo stock indicator */}
+          {selectedCombo && (
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: effectiveStock <= 5 ? '#dc2626' : '#9A9A9A', marginBottom: 16 }}>
+              {effectiveStock > 0 ? `${effectiveStock} disponíveis` : 'Esgotado'}
+            </p>
           )}
 
           {/* Quantity */}

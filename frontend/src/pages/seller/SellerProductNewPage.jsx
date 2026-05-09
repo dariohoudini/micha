@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
+import VariantsBuilder from '@/components/seller/VariantsBuilder'
 
 const CATEGORIES = ['Moda', 'Tecnologia', 'Casa & Jardim', 'Beleza', 'Alimentação', 'Desporto', 'Crianças', 'Arte & Artesanato', 'Acessórios', 'Outro']
 const CONDITIONS = [{ value: 'new', label: 'Novo' }, { value: 'used', label: 'Usado' }, { value: 'refurbished', label: 'Recondicionado' }]
@@ -23,10 +24,12 @@ export default function SellerProductNewPage() {
     name: '', category: '', condition: 'new',
     price: '', original_price: '', stock: '', sku: '',
     description: '', tags: '',
-    has_variants: false, variants_text: '',
+    has_variants: false,
     express: false, free_shipping: false,
     weight: '', processing_time: '1-2 dias úteis',
   })
+  const [variantAxes, setVariantAxes] = useState([])
+  const [variantCombos, setVariantCombos] = useState([])
 
   const discount = form.price && form.original_price && Number(form.original_price) > Number(form.price)
     ? Math.round((1 - Number(form.price) / Number(form.original_price)) * 100) : null
@@ -97,7 +100,19 @@ export default function SellerProductNewPage() {
       fd.append('free_shipping', form.free_shipping ? 'true' : 'false')
       if (form.weight) fd.append('weight', form.weight)
       fd.append('processing_time', form.processing_time)
-      if (form.has_variants && form.variants_text) fd.append('variants', form.variants_text)
+      if (form.has_variants && variantCombos.length > 0) {
+        const cleaned = variantCombos
+          .filter(c => c.price && Number(c.price) > 0)
+          .map(c => ({
+            options: c.options,
+            price: Number(c.price),
+            quantity: Number(c.quantity || 0),
+            sku: c.sku || '',
+          }))
+        if (cleaned.length > 0) {
+          fd.append('variant_combos', JSON.stringify(cleaned))
+        }
+      }
 
       images.forEach((img, i) => {
         fd.append(i === 0 ? 'image' : `image_${i + 1}`, img.file, img.file.name)
@@ -288,13 +303,19 @@ export default function SellerProductNewPage() {
               <span style={{ ...S, fontSize: 11, color: '#555' }}>Separe com vírgulas. Ajuda compradores a encontrar o produto.</span>
             </Field>
 
-            <Toggle name="has_variants" label="Tem variantes?" sub="Tamanhos, cores ou modelos diferentes" />
+            <Toggle name="has_variants" label="Tem variantes?" sub="Cor, tamanho, modelo — cada combinação tem o seu próprio stock e preço" />
 
             {form.has_variants && (
-              <div style={{ background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <p style={{ ...S, fontSize: 12, color: '#9A9A9A' }}>Ex: S, M, L, XL — Vermelho, Azul, Verde</p>
-                <input name="variants_text" placeholder="S, M, L, XL" value={form.variants_text} onChange={handleChange} style={inputStyle} />
-              </div>
+              <VariantsBuilder
+                axes={variantAxes}
+                combos={variantCombos}
+                defaultPrice={form.price}
+                defaultStock={form.stock}
+                onChange={(nextAxes, nextCombos) => {
+                  setVariantAxes(nextAxes)
+                  setVariantCombos(nextCombos)
+                }}
+              />
             )}
           </>}
 

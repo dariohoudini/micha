@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
+import VariantsBuilder from '@/components/seller/VariantsBuilder'
 
 const CATEGORIES = ['Moda', 'Tecnologia', 'Casa & Jardim', 'Beleza', 'Alimentação', 'Desporto', 'Crianças', 'Arte & Artesanato', 'Acessórios', 'Outro']
 const CONDITIONS = [{ value: 'new', label: 'Novo' }, { value: 'used', label: 'Usado' }, { value: 'refurbished', label: 'Recondicionado' }]
@@ -25,10 +26,12 @@ export default function SellerProductEditPage() {
     name: '', category: '', condition: 'new',
     price: '', original_price: '', stock: '', sku: '',
     description: '', tags: '',
-    has_variants: false, variants_text: '',
+    has_variants: false,
     express: false, free_shipping: false,
     weight: '', processing_time: '1-2 dias úteis',
   })
+  const [variantAxes, setVariantAxes] = useState([])
+  const [variantCombos, setVariantCombos] = useState([])
 
   useEffect(() => {
     client.get(`/api/v1/products/${id}/`).then(r => {
@@ -43,8 +46,7 @@ export default function SellerProductEditPage() {
         sku: p.sku || '',
         description: p.description || '',
         tags: Array.isArray(p.tags) ? p.tags.join(', ') : (p.tags || ''),
-        has_variants: !!p.variants,
-        variants_text: p.variants || '',
+        has_variants: Array.isArray(p.variant_combos) && p.variant_combos.length > 0,
         express: !!p.is_express,
         free_shipping: !!p.free_shipping,
         weight: p.weight ? String(p.weight) : '',
@@ -60,6 +62,19 @@ export default function SellerProductEditPage() {
         existingImgs.push({ preview: p.image, existing: true })
       }
       setImages(existingImgs)
+
+      // Hydrate variants from API
+      if (Array.isArray(p.variant_axes) && p.variant_axes.length > 0) {
+        setVariantAxes(p.variant_axes)
+      }
+      if (Array.isArray(p.variant_combos) && p.variant_combos.length > 0) {
+        setVariantCombos(p.variant_combos.map(c => ({
+          options: c.options,
+          price: String(c.price ?? ''),
+          quantity: String(c.quantity ?? 0),
+          sku: c.sku || '',
+        })))
+      }
     }).catch(() => {
       showToast('Erro ao carregar produto.', 'error')
       setTimeout(() => navigate('/seller/products'), 1500)
@@ -139,7 +154,19 @@ export default function SellerProductEditPage() {
         fd.append('free_shipping', form.free_shipping ? 'true' : 'false')
         if (form.weight) fd.append('weight', form.weight)
         fd.append('processing_time', form.processing_time)
-        if (form.has_variants && form.variants_text) fd.append('variants', form.variants_text)
+        if (form.has_variants && variantCombos.length > 0) {
+          const cleaned = variantCombos
+            .filter(c => c.price && Number(c.price) > 0)
+            .map(c => ({
+              options: c.options,
+              price: Number(c.price),
+              quantity: Number(c.quantity || 0),
+              sku: c.sku || '',
+            }))
+          if (cleaned.length > 0) fd.append('variant_combos', JSON.stringify(cleaned))
+        } else if (!form.has_variants) {
+          fd.append('variant_combos', JSON.stringify([]))
+        }
         newImages.forEach((img, i) => {
           fd.append(i === 0 ? 'image' : `image_${i + 1}`, img.file, img.file.name)
         })
@@ -159,7 +186,16 @@ export default function SellerProductEditPage() {
           free_shipping: form.free_shipping,
           weight: form.weight || null,
           processing_time: form.processing_time,
-          variants: form.has_variants ? form.variants_text : null,
+          variant_combos: form.has_variants
+            ? variantCombos
+                .filter(c => c.price && Number(c.price) > 0)
+                .map(c => ({
+                  options: c.options,
+                  price: Number(c.price),
+                  quantity: Number(c.quantity || 0),
+                  sku: c.sku || '',
+                }))
+            : [],
         })
       }
 
@@ -350,13 +386,19 @@ export default function SellerProductEditPage() {
               <span style={{ ...S, fontSize: 11, color: '#555' }}>Separe com vírgulas.</span>
             </Field>
 
-            <Toggle name="has_variants" label="Tem variantes?" sub="Tamanhos, cores ou modelos diferentes" />
+            <Toggle name="has_variants" label="Tem variantes?" sub="Cor, tamanho, modelo — cada combinação tem o seu próprio stock e preço" />
 
             {form.has_variants && (
-              <div style={{ background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <p style={{ ...S, fontSize: 12, color: '#9A9A9A' }}>Ex: S, M, L, XL — Vermelho, Azul, Verde</p>
-                <input name="variants_text" placeholder="S, M, L, XL" value={form.variants_text} onChange={handleChange} style={inputStyle} />
-              </div>
+              <VariantsBuilder
+                axes={variantAxes}
+                combos={variantCombos}
+                defaultPrice={form.price}
+                defaultStock={form.stock}
+                onChange={(nextAxes, nextCombos) => {
+                  setVariantAxes(nextAxes)
+                  setVariantCombos(nextCombos)
+                }}
+              />
             )}
           </>}
 

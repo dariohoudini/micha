@@ -370,12 +370,28 @@ class PaymentProcessor:
             # Credit seller wallet (in escrow until delivery)
             self._credit_seller_escrow(order, payment)
 
+            # Outbox: durable async-work intent. Lives in this transaction
+            # so a broker outage can no longer cause a "silent" payment.
+            try:
+                from apps.outbox.service import publish
+                publish(
+                    topic='order.payment_confirmed',
+                    payload={
+                        'order_id': str(order.id),
+                        'payment_id': str(payment.id),
+                        'amount': str(payment.amount),
+                    },
+                    dedupe_key=f'order.payment_confirmed:{order.id}',
+                    ref_type='order', ref_id=str(order.id),
+                )
+            except Exception as e:
+                logger.error('Outbox publish failed for order.payment_confirmed', extra={
+                    'order_id': str(order.id), 'error': str(e),
+                })
+
         # Log and mark idempotent
         self.logger.log(payment, 'confirmed', gateway_data)
         IdempotencyGuard.mark_processed(gateway_reference, 'confirmed')
-
-        # Trigger async tasks
-        self._post_payment_tasks(order, payment)
 
         logger.info('Payment confirmed', extra={
             'order_id': str(order.id),

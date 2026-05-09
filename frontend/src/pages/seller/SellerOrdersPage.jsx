@@ -3,6 +3,7 @@ import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import OrderKanban, { PendingActionsBar } from '@/components/seller/SellerOrderManagement'
+import SellerCheckpointModal from '@/components/seller/SellerCheckpointModal'
 import { haptic } from '@/hooks/useUX'
 
 
@@ -19,6 +20,7 @@ export default function SellerOrdersPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [toast, setToast] = useState(null)
+  const [checkpointOrderId, setCheckpointOrderId] = useState(null)
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 2500) }
 
@@ -92,6 +94,10 @@ export default function SellerOrdersPage() {
                       <button onClick={() => updateStatus(order.id, 'shipped')}
                         style={{ flex: 1, padding: '8px 0', borderRadius: 10, border: 'none', background: '#8b5cf6', ...S, fontSize: 12, fontWeight: 700, color: '#FFFFFF', cursor: 'pointer' }}>🚚 Marcar como enviado</button>
                     )}
+                    {(order.status === 'confirmed' || order.status === 'shipped' || order.status === 'processing') && (
+                      <button onClick={() => setCheckpointOrderId(order.id)}
+                        style={{ flex: 1, padding: '8px 0', borderRadius: 10, border: '1px solid #2A2A2A', background: 'transparent', ...S, fontSize: 12, color: '#C9A84C', cursor: 'pointer' }}>+ Atualização</button>
+                    )}
                   </div>
                 </div>
               )
@@ -101,6 +107,14 @@ export default function SellerOrdersPage() {
       </div>
     
       <HelperBot screen="orders" isSeller={true} />
+
+      {checkpointOrderId && (
+        <SellerCheckpointModal
+          orderId={checkpointOrderId}
+          onClose={() => setCheckpointOrderId(null)}
+          onSuccess={() => showToast('Atualização publicada.')}
+        />
+      )}
       </SellerLayout>
   )
 }

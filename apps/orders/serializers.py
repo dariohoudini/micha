@@ -62,6 +62,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'tracking_number', 'carrier', 'estimated_delivery',
             'notes', 'cancelled_reason',
             'items', 'status_logs', 'payment',
+            'protection_state', 'protection_deadline_at',
             'created_at', 'updated_at', 'delivered_at',
         ]
         read_only_fields = [

@@ -4,6 +4,7 @@ import BuyerLayout from '@/layouts/BuyerLayout'
 import { useOrder } from '@/hooks/useQueries'
 import client from '@/api/client'
 import ReturnFilingModal from '@/components/buyer/ReturnFilingModal'
+import BuyerProtectionBanner from '@/components/buyer/BuyerProtectionBanner'
 
 const RETURN_STATUS = {
   pending:   { label: 'Em análise',  color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
@@ -285,6 +286,14 @@ export default function OrderDetailPage() {
 
       <div className="screen" style={{ flex: 1 }}>
         <div style={{ padding: '0 16px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Buyer Protection */}
+          {order.protection_state && order.protection_state !== 'none' && (
+            <BuyerProtectionBanner
+              state={order.protection_state}
+              deadlineAt={order.protection_deadline_at}
+            />
+          )}
 
           {/* Timeline */}
           <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 20 }}>

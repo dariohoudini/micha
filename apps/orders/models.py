@@ -84,6 +84,28 @@ class Order(models.Model):
         related_name="deleted_orders"
     )
 
+    # ── MICHA Buyer Protection ───────────────────────────────────────────
+    # state machine derived from order.status:
+    #   awaiting_seller — pending; seller has 48h to confirm
+    #   awaiting_ship   — confirmed; seller has 7 days to ship
+    #   in_transit      — shipped; auto-mark delivered after 30 days
+    #   in_protection   — delivered; buyer can dispute/return for 60 days
+    #   completed       — protection lapsed cleanly (or buyer confirmed early)
+    #   broken          — auto-cancelled / auto-refunded due to lapsed deadline
+    PROTECTION_STATES = (
+        ("none", "None (cancelled / refunded)"),
+        ("awaiting_seller", "Awaiting seller confirmation"),
+        ("awaiting_ship", "Awaiting shipment"),
+        ("in_transit", "In transit"),
+        ("in_protection", "Buyer protection (post-delivery)"),
+        ("completed", "Protection completed"),
+        ("broken", "Protection broken (auto-refunded)"),
+    )
+    protection_state = models.CharField(
+        max_length=20, choices=PROTECTION_STATES, default="awaiting_seller", db_index=True,
+    )
+    protection_deadline_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -128,11 +150,48 @@ class Order(models.Model):
             )
         return True
 
+    # ── Buyer Protection: deadline policy per status ────────────────────
+    # Days the seller / buyer has before the protection auto-actions.
+    PROTECTION_DAYS = {
+        "pending":   2,    # seller must confirm within 48h
+        "confirmed": 7,    # then has a week to ship
+        "processing": 7,   # treated like confirmed
+        "shipped":   30,   # auto-mark delivered after 30 days no update
+        "delivered": 60,   # post-delivery protection window for buyer
+    }
+    PROTECTION_STATE_BY_STATUS = {
+        "pending":    "awaiting_seller",
+        "confirmed":  "awaiting_ship",
+        "processing": "awaiting_ship",
+        "shipped":    "in_transit",
+        "delivered":  "in_protection",
+        "completed":  "completed",
+        "cancelled":  "none",
+        "refunded":   "none",
+    }
+
+    def _compute_protection_for_status(self, status):
+        """Return (state, deadline_at) for the given order status."""
+        from django.utils import timezone
+        from datetime import timedelta
+        state = self.PROTECTION_STATE_BY_STATUS.get(status, "none")
+        days = self.PROTECTION_DAYS.get(status)
+        deadline = timezone.now() + timedelta(days=days) if days else None
+        return state, deadline
+
     def update_status(self, new_status, changed_by=None, note=""):
         with transaction.atomic():
             old = self.status
             self.status = new_status
-            self.save(update_fields=["status", "updated_at"])
+
+            # Recompute protection state + deadline based on the new status.
+            new_state, new_deadline = self._compute_protection_for_status(new_status)
+            self.protection_state = new_state
+            self.protection_deadline_at = new_deadline
+            self.save(update_fields=[
+                "status", "protection_state", "protection_deadline_at", "updated_at",
+            ])
+
             OrderStatusLog.objects.create(
                 order=self, from_status=old, to_status=new_status,
                 changed_by=changed_by, note=note,

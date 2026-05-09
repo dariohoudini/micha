@@ -119,3 +119,62 @@ def send_shipping_notification(order_id):
         return f"Shipping notification sent for order {order_id}"
     except Exception as e:
         return f"Error: {e}"
+
+
+# ── Buyer Protection enforcement ─────────────────────────────────────────
+# Add to celery beat schedule:
+#     'orders.enforce_protection': {'task': 'orders.enforce_buyer_protection', 'schedule': 600.0}
+# Runs every 10 minutes — picks orders whose protection_deadline_at has passed
+# and emits the appropriate outbox event for the auto-action.
+#
+# Outbox topics:
+#   order.protection_lapsed_pending    — seller never confirmed → auto-cancel + refund buyer
+#   order.protection_lapsed_unshipped  — seller confirmed but never shipped → auto-cancel + refund
+#   order.protection_lapsed_in_transit — shipped but not delivered after 30d → auto-confirm delivered
+#   order.protection_completed         — 60d post-delivery passed → mark complete (release loyalty etc)
+
+PROTECTION_TOPICS = {
+    'awaiting_seller': 'order.protection_lapsed_pending',
+    'awaiting_ship':   'order.protection_lapsed_unshipped',
+    'in_transit':      'order.protection_lapsed_in_transit',
+    'in_protection':   'order.protection_completed',
+}
+
+
+@shared_task(name='orders.enforce_buyer_protection')
+def enforce_buyer_protection(batch_size=200):
+    """Scan orders whose buyer-protection deadline has lapsed; emit one outbox
+    event per order so the actual action is durable + retryable.
+
+    Idempotent — uses dedupe_key keyed on (order_id, state) so the same
+    lapse can't fire twice. The outbox handler advances the order state,
+    which prevents further re-emission.
+    """
+    from django.db import transaction
+    from apps.orders.models import Order
+    from apps.outbox.service import publish
+
+    now = timezone.now()
+    expired = Order.objects.filter(
+        protection_deadline_at__lte=now,
+        protection_state__in=list(PROTECTION_TOPICS.keys()),
+        is_deleted=False,
+    ).only('id', 'protection_state').order_by('protection_deadline_at')[:batch_size]
+
+    fired = 0
+    for order in expired:
+        topic = PROTECTION_TOPICS.get(order.protection_state)
+        if not topic:
+            continue
+        try:
+            with transaction.atomic():
+                publish(
+                    topic=topic,
+                    payload={'order_id': str(order.id), 'from_state': order.protection_state},
+                    dedupe_key=f'{topic}:{order.id}',
+                    ref_type='order', ref_id=str(order.id),
+                )
+            fired += 1
+        except Exception:
+            pass
+    return f'Emitted {fired} protection-lapse event(s).'

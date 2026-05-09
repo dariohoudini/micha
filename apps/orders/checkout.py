@@ -415,6 +415,14 @@ class CheckoutService:
             status='pending',
             payment_status='pending',
         )
+        # Initial Buyer Protection deadline: 48h for the seller to confirm.
+        from django.utils import timezone
+        from datetime import timedelta
+        order.protection_state = 'awaiting_seller'
+        order.protection_deadline_at = timezone.now() + timedelta(
+            days=Order.PROTECTION_DAYS.get('pending', 2)
+        )
+        order.save(update_fields=['protection_state', 'protection_deadline_at'])
 
         # Create order items with price + variant snapshot
         order_items = []

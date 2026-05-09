@@ -391,3 +391,88 @@ class OrderTrackingView(APIView):
             created_by=request.user,
         )
         return Response(OrderTrackingEventSerializer(event).data, status=201)
+
+
+def _serialize_return(ret, request):
+    photo_url = None
+    if ret.photo:
+        try:
+            photo_url = request.build_absolute_uri(ret.photo.url)
+        except Exception:
+            photo_url = ret.photo.url
+    buyer_name = ''
+    try:
+        buyer_name = (
+            getattr(ret.buyer, 'profile', None) and ret.buyer.profile.full_name
+        ) or ret.buyer.email.split('@')[0]
+    except Exception:
+        pass
+    return {
+        'id': ret.id,
+        'order_id': str(ret.order_id),
+        'order_number': str(ret.order_id)[:8].upper(),
+        'buyer_email': ret.buyer.email,
+        'buyer_name': buyer_name,
+        'reason': ret.reason,
+        'description': ret.description,
+        'pickup_method': ret.pickup_method,
+        'photo_url': photo_url,
+        'status': ret.status,
+        'admin_note': ret.admin_note,
+        'created_at': ret.created_at,
+        'updated_at': ret.updated_at,
+    }
+
+
+class SellerReturnListView(APIView):
+    """GET /api/v1/orders/returns/seller/  — all return requests for this seller's orders."""
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
+
+    def get(self, request):
+        from apps.orders.return_models import ReturnRequest
+        qs = ReturnRequest.objects.filter(
+            order__seller=request.user
+        ).select_related('order', 'buyer').order_by('-created_at')
+
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        return Response({
+            'results': [_serialize_return(r, request) for r in qs[:100]],
+        })
+
+
+class SellerReturnActionView(APIView):
+    """PATCH /api/v1/orders/returns/<id>/  — seller approves / rejects / completes a return."""
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
+
+    VALID_TRANSITIONS = {
+        'pending':   {'approved', 'rejected'},
+        'approved':  {'completed', 'rejected'},
+        'rejected':  set(),
+        'completed': set(),
+    }
+
+    def patch(self, request, pk):
+        from apps.orders.return_models import ReturnRequest
+        ret = get_object_or_404(
+            ReturnRequest.objects.select_related('order'),
+            pk=pk, order__seller=request.user,
+        )
+        new_status = (request.data.get('status') or '').strip()
+        if new_status not in {'approved', 'rejected', 'completed'}:
+            return Response({'error': 'validation_error', 'detail': 'Status inválido.'}, status=400)
+        allowed = self.VALID_TRANSITIONS.get(ret.status, set())
+        if new_status not in allowed:
+            return Response({
+                'error': 'invalid_transition',
+                'detail': f'Não é possível ir de {ret.status} para {new_status}.',
+            }, status=400)
+
+        admin_note = (request.data.get('admin_note') or '').strip()[:2000]
+        ret.status = new_status
+        if admin_note:
+            ret.admin_note = admin_note
+        ret.save(update_fields=['status', 'admin_note', 'updated_at'])
+        return Response(_serialize_return(ret, request))

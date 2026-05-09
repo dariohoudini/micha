@@ -6,6 +6,7 @@ from .views import (
     SellerOrderListView, UpdateOrderStatusView,
     RequestRefundView, InvoiceView, PackingSlipView,
     OrderTrackingView,
+    SellerReturnListView, SellerReturnActionView,
 )
 
 
@@ -20,6 +21,8 @@ urlpatterns = [
     path("<uuid:pk>/invoice/", InvoiceView.as_view(), name="invoice"),
     path("<uuid:pk>/packing-slip/", PackingSlipView.as_view(), name="packing-slip"),
     path("seller/", SellerOrderListView.as_view(), name="seller-orders"),
+    path("returns/seller/", SellerReturnListView.as_view(), name="seller-returns"),
+    path("returns/<int:pk>/", SellerReturnActionView.as_view(), name="seller-return-action"),
     path("<uuid:pk>/return/", ReturnRequestCreateView.as_view(), name="return-request"),
     path("<uuid:pk>/tracking/", OrderTrackingView.as_view(), name="order-tracking"),
 ]

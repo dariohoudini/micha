@@ -4,6 +4,7 @@ import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import OrderKanban, { PendingActionsBar } from '@/components/seller/SellerOrderManagement'
 import SellerCheckpointModal from '@/components/seller/SellerCheckpointModal'
+import SellerReturnsList from '@/components/seller/SellerReturnsList'
 import { haptic } from '@/hooks/useUX'
 
 
@@ -25,6 +26,7 @@ export default function SellerOrdersPage() {
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 2500) }
 
   const loadOrders = useCallback(async () => {
+    if (filter === 'returns') { setLoading(false); return }  // returns view fetches its own
     setLoading(true)
     try {
       const params = filter !== 'all' ? `?status=${filter}` : ''
@@ -52,7 +54,7 @@ export default function SellerOrdersPage() {
 
       <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 10 }}>
-          {[{v:'all',l:'Todos'},{v:'pending',l:'Pendentes'},{v:'confirmed',l:'Confirmados'},{v:'shipped',l:'Enviados'},{v:'delivered',l:'Entregues'}].map(f => (
+          {[{v:'all',l:'Todos'},{v:'pending',l:'Pendentes'},{v:'confirmed',l:'Confirmados'},{v:'shipped',l:'Enviados'},{v:'delivered',l:'Entregues'},{v:'returns',l:'↩️ Devoluções'}].map(f => (
             <button key={f.v} onClick={() => setFilter(f.v)}
               style={{ padding: '5px 12px', borderRadius: 50, flexShrink: 0, border: `1px solid ${filter === f.v ? '#C9A84C' : '#2A2A2A'}`, background: filter === f.v ? 'rgba(201,168,76,0.1)' : 'transparent', ...S, fontSize: 11, color: filter === f.v ? '#C9A84C' : '#9A9A9A', cursor: 'pointer' }}>
               {f.l}
@@ -62,7 +64,11 @@ export default function SellerOrdersPage() {
       </div>
 
       <div className="screen" style={{ flex: 1 }}>
-        {loading ? (
+        {filter === 'returns' ? (
+          <div style={{ padding: '0 16px 20px' }}>
+            <SellerReturnsList />
+          </div>
+        ) : loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
             <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #C9A84C', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }}><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>
           </div>

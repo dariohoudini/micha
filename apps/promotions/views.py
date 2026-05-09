@@ -79,12 +79,25 @@ class ValidateCouponView(APIView):
             }, status=400)
 
         discount = coupon.calculate_discount(subtotal)
+        seller_name = ''
+        if coupon.seller_id:
+            try:
+                seller_name = (
+                    getattr(coupon.seller, 'profile', None) and coupon.seller.profile.full_name
+                ) or coupon.seller.email.split('@')[0]
+            except Exception:
+                seller_name = 'Loja'
+
         return Response({
             "code": coupon.code,
             "discount_type": coupon.discount_type,
             "discount_value": coupon.discount_value,
             "discount_amount": discount,
             "new_total": round(subtotal - discount, 2),
+            "scope": "seller" if coupon.seller_id else "platform",
+            "seller_id": coupon.seller_id,
+            "seller_name": seller_name,
+            "min_order_amount": coupon.min_order_amount,
         })
 
 

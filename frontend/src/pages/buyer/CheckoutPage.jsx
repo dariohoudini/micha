@@ -30,24 +30,51 @@ export default function CheckoutPage() {
   const [error, setError] = useState(null)
   const [couponCode, setCouponCode] = useState('')
   const [couponLoading, setCouponLoading] = useState(false)
-  const [couponResult, setCouponResult] = useState(null)
+  const [couponError, setCouponError] = useState('')
+  const [appliedCoupons, setAppliedCoupons] = useState([]) // [{code, discount_amount, scope, seller_name, ...}]
 
-  const discountAmount = couponResult?.discount_amount || 0
+  const discountAmount = appliedCoupons.reduce((sum, c) => sum + Number(c.discount_amount || 0), 0)
   const finalTotal = Math.max(0, total - discountAmount)
 
+  const platformCount = appliedCoupons.filter(c => c.scope === 'platform').length
+  const sellerSlotsTaken = new Set(appliedCoupons.filter(c => c.scope === 'seller').map(c => c.seller_id))
+
   const handleApplyCoupon = async () => {
-    if (!couponCode.trim()) return
+    const code = couponCode.trim().toUpperCase()
+    if (!code) return
+    if (appliedCoupons.some(c => c.code === code)) {
+      setCouponError('Cupão já aplicado.')
+      return
+    }
     setCouponLoading(true)
-    setCouponResult(null)
+    setCouponError('')
     try {
-      const res = await promotionsAPI.validateCoupon(couponCode.trim())
-      setCouponResult({ ...res.data, valid: true })
+      const res = await promotionsAPI.validateCoupon(code)
+      const data = res.data
+      // Stacking checks
+      if (data.scope === 'platform' && platformCount >= 1) {
+        setCouponError('Apenas um cupão da plataforma por compra.')
+        setCouponLoading(false)
+        return
+      }
+      if (data.scope === 'seller' && sellerSlotsTaken.has(data.seller_id)) {
+        setCouponError('Já tens um cupão desta loja aplicado.')
+        setCouponLoading(false)
+        return
+      }
+      setAppliedCoupons(prev => [...prev, data])
+      setCouponCode('')
       haptic.success?.()
     } catch (err) {
-      const msg = err.response?.data?.detail || err.response?.data?.error || 'Código inválido ou expirado.'
-      setCouponResult({ valid: false, error: msg })
+      setCouponError(err.response?.data?.detail || err.response?.data?.error || 'Código inválido ou expirado.')
     } finally {
-      setCouponLoading(false) }
+      setCouponLoading(false)
+    }
+  }
+
+  const removeCoupon = (code) => {
+    setAppliedCoupons(prev => prev.filter(c => c.code !== code))
+    setCouponError('')
   }
 
   const handleCheckout = async () => {
@@ -61,7 +88,7 @@ export default function CheckoutPage() {
         delivery_notes: address.notes,
         payment_method: payment,
         items: cartItems.map(i => ({ product: i.product?.id || i.id, quantity: i.quantity || 1 })),
-        ...(couponResult?.valid ? { coupon_code: couponCode.trim() } : {}),
+        ...(appliedCoupons.length > 0 ? { coupon_codes: appliedCoupons.map(c => c.code) } : {}),
       })
       useCartStore.getState().clearCart()
       client.delete('/api/v1/cart/clear/').catch(() => {})
@@ -133,11 +160,35 @@ export default function CheckoutPage() {
 
           {/* Promo code */}
           <div>
-            <h2 style={{ ...S, fontSize: 14, fontWeight: 700, color: '#FFFFFF', marginBottom: 12 }}>🎟️ Código promocional</h2>
+            <h2 style={{ ...S, fontSize: 14, fontWeight: 700, color: '#FFFFFF', marginBottom: 4 }}>🎟️ Códigos promocionais</h2>
+            <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginBottom: 12 }}>Pode combinar 1 cupão da plataforma + 1 cupão de cada loja.</p>
+
+            {/* Applied coupons list */}
+            {appliedCoupons.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                {appliedCoupons.map(c => (
+                  <div key={c.code} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(5,150,105,0.08)', border: '1px solid rgba(5,150,105,0.25)', borderRadius: 10, padding: '8px 12px' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ ...S, fontSize: 12, fontWeight: 600, color: '#FFF', margin: 0 }}>
+                        {c.code}
+                        <span style={{ ...S, fontSize: 10, color: '#9A9A9A', fontWeight: 400, marginLeft: 6 }}>
+                          {c.scope === 'platform' ? 'Plataforma' : (c.seller_name ? `Loja ${c.seller_name}` : 'Loja')}
+                        </span>
+                      </p>
+                    </div>
+                    <span style={{ ...S, fontSize: 13, fontWeight: 700, color: '#059669' }}>−{fmt(c.discount_amount)}</span>
+                    <button onClick={() => removeCoupon(c.code)} style={{ background: 'none', border: 'none', color: '#9A9A9A', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 value={couponCode}
-                onChange={e => { setCouponCode(e.target.value.toUpperCase()); setCouponResult(null) }}
+                onChange={e => { setCouponCode(e.target.value.toUpperCase()); setCouponError('') }}
+                onKeyDown={e => { if (e.key === 'Enter') handleApplyCoupon() }}
                 placeholder="CÓDIGO"
                 style={{ ...inputStyle, flex: 1, letterSpacing: '0.08em', fontWeight: 600 }}
               />
@@ -149,29 +200,24 @@ export default function CheckoutPage() {
                 {couponLoading ? '...' : 'Aplicar'}
               </button>
             </div>
-            {couponResult?.valid && (
-              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(5,150,105,0.1)', border: '1px solid rgba(5,150,105,0.2)', borderRadius: 10, padding: '10px 14px' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                <p style={{ ...S, fontSize: 13, color: '#059669', flex: 1 }}>{couponResult.message || 'Desconto aplicado!'}</p>
-                <span style={{ ...S, fontSize: 14, fontWeight: 700, color: '#059669' }}>−{fmt(discountAmount)}</span>
-              </div>
-            )}
-            {couponResult && !couponResult.valid && (
-              <p style={{ ...S, fontSize: 12, color: '#ef4444', marginTop: 6 }}>{couponResult.error}</p>
+            {couponError && (
+              <p style={{ ...S, fontSize: 12, color: '#ef4444', marginTop: 6 }}>{couponError}</p>
             )}
           </div>
 
           {/* Updated total with discount */}
-          {couponResult?.valid && discountAmount > 0 && (
+          {discountAmount > 0 && (
             <div style={{ background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <span style={{ ...S, fontSize: 13, color: '#9A9A9A' }}>Subtotal</span>
                 <span style={{ ...S, fontSize: 13, color: '#9A9A9A' }}>{fmt(total)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ ...S, fontSize: 13, color: '#059669' }}>Desconto ({couponCode})</span>
-                <span style={{ ...S, fontSize: 13, color: '#059669' }}>−{fmt(discountAmount)}</span>
-              </div>
+              {appliedCoupons.map(c => (
+                <div key={c.code} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ ...S, fontSize: 13, color: '#059669' }}>Desconto ({c.code})</span>
+                  <span style={{ ...S, fontSize: 13, color: '#059669' }}>−{fmt(c.discount_amount)}</span>
+                </div>
+              ))}
               <div style={{ borderTop: '1px solid #1E1E1E', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ ...S, fontSize: 15, fontWeight: 700, color: '#FFF' }}>Total a pagar</span>
                 <span style={{ ...S, fontSize: 17, fontWeight: 700, color: '#C9A84C' }}>{fmt(finalTotal)}</span>

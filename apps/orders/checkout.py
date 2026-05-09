@@ -37,7 +37,14 @@ class CheckoutService:
         self.payment_method = data.get('payment_method', 'card')
         self.notes = data.get('notes', '')
         self.gift_wrap = data.get('gift_wrap', False)
-        self.coupon_code = data.get('coupon_code', '')
+        # Accept either coupon_codes (list) or coupon_code (single, legacy)
+        codes = data.get('coupon_codes') or []
+        if not isinstance(codes, list):
+            codes = []
+        single = data.get('coupon_code')
+        if single and single not in codes:
+            codes.append(single)
+        self.coupon_codes = [str(c).strip().upper() for c in codes if str(c).strip()]
         # Idempotency key — client generates once, retries use same key
         self.idempotency_key = data.get('idempotency_key') or str(uuid.uuid4())
 
@@ -99,19 +106,21 @@ class CheckoutService:
         # 3. Load shipping address
         address = self._get_address()
 
-        # 4. Apply coupon if provided
-        discount = self._apply_coupon(cart_items)
-
-        # 5. Group items by seller
+        # 4. Group items by seller
         seller_items = {}
         for item in validated_items:
             seller = item.product.store.owner
             seller_items.setdefault(seller, []).append(item)
 
-        # 6. Create one order per seller
+        # 5. Apply coupons — returns per-seller discount Decimal + applied codes
+        coupon_result = self._apply_coupons(seller_items)
+
+        # 6. Create one order per seller, passing each seller's allocated discount
         orders = []
         for seller, items in seller_items.items():
-            order = self._create_order(seller, items, address, discount, orders)
+            seller_discount = coupon_result['per_seller'].get(seller.id, Decimal('0'))
+            order = self._create_order(seller, items, address, seller_discount,
+                                       coupon_result['codes_used'], orders)
             orders.append(order)
 
         # 7. Deduct stock atomically (with row locks)
@@ -151,59 +160,116 @@ class CheckoutService:
         except ShippingAddress.DoesNotExist:
             raise CheckoutError("Shipping address not found.")
 
-    def _apply_coupon(self, cart_items):
-        """Apply coupon with usage limit enforcement."""
-        if not self.coupon_code:
-            return 0
+    def _apply_coupons(self, seller_items):
+        """Validate coupon codes with stacking rules and return per-seller discounts.
+
+        Stacking rules (AliExpress-style):
+          * At most one platform coupon (Coupon.seller is null)
+          * At most one seller-specific coupon per seller
+          * Platform discount is split across sellers proportionally to subtotal
+
+        Returns:
+          {
+            'per_seller': {seller_id: Decimal discount},
+            'codes_used': [str codes],
+          }
+        Raises CheckoutError on invalid / expired / duplicate-scope coupons.
+        """
+        empty = {'per_seller': {}, 'codes_used': []}
+        if not self.coupon_codes:
+            return empty
+
         from apps.promotions.models import Coupon
-        from django.db import transaction
-        try:
-            with transaction.atomic():
-                coupon = Coupon.objects.select_for_update().get(
-                    code=self.coupon_code,
-                    is_active=True,
-                )
-                # Check usage limit
-                if coupon.usage_limit and coupon.used_count >= coupon.usage_limit:
-                    raise CheckoutError('Cupão esgotado')
-                # Check per-user limit
-                if coupon.usage_limit_per_user:
-                    from apps.orders.models import Order
-                    user_uses = Order.objects.filter(
-                        buyer=self.user,
-                        coupon_code=self.coupon_code,
-                        status__in=['confirmed', 'shipped', 'delivered', 'completed'],
-                    ).count()
-                    if user_uses >= coupon.usage_limit_per_user:
-                        raise CheckoutError('Já usaste este cupão o número máximo de vezes')
-                # Increment usage count atomically
-                coupon.used_count = (coupon.used_count or 0) + 1
-                coupon.save(update_fields=['used_count'])
-                return coupon
-        except Coupon.DoesNotExist:
-            raise CheckoutError('Cupão inválido ou expirado')
+        from apps.orders.models import Order
+        from django.db.models import F
 
-    def _apply_coupon_legacy(self, cart_items):
-        discount = Decimal('0.00')
-        if not self.coupon_code:
-            return discount
-        try:
-            from apps.promotions.models import Coupon
-            coupon = Coupon.objects.get(
-                code=self.coupon_code,
-                is_active=True,
+        # De-dupe while preserving order
+        seen = set()
+        codes = [c for c in self.coupon_codes if not (c in seen or seen.add(c))]
+
+        coupons = list(
+            Coupon.objects.select_for_update().filter(code__in=codes, is_active=True)
+        )
+        found = {c.code for c in coupons}
+        missing = [c for c in codes if c not in found]
+        if missing:
+            raise CheckoutError(f"Cupão inválido: {', '.join(missing)}")
+
+        # Per-user limit & expiry
+        for coupon in coupons:
+            if not coupon.is_valid():
+                raise CheckoutError(f"Cupão {coupon.code} expirado ou esgotado")
+            if coupon.usage_limit_per_user:
+                user_uses = Order.objects.filter(
+                    buyer=self.user,
+                    coupon_code__contains=coupon.code,
+                    status__in=['confirmed', 'shipped', 'delivered', 'completed'],
+                ).count()
+                if user_uses >= coupon.usage_limit_per_user:
+                    raise CheckoutError(f"Já usaste {coupon.code} o número máximo de vezes")
+
+        # Stacking rules
+        platform = [c for c in coupons if not c.seller_id]
+        seller_specific = [c for c in coupons if c.seller_id]
+        if len(platform) > 1:
+            raise CheckoutError("Apenas um cupão da plataforma por compra")
+
+        per_seller_coupon = {}
+        for c in seller_specific:
+            if c.seller_id in per_seller_coupon:
+                raise CheckoutError("Apenas um cupão por loja por compra")
+            per_seller_coupon[c.seller_id] = c
+
+        # Subtotal per seller (use price_at_add to honour tier/variant pricing)
+        seller_subtotals = {}
+        grand_subtotal = Decimal('0')
+        for seller, items in seller_items.items():
+            sub = sum(
+                ((it.price_at_add or it.product.price) * it.quantity for it in items),
+                Decimal('0')
             )
-            if coupon.is_valid():
-                subtotal = sum(item.product.price * item.quantity for item in cart_items)
-                discount = coupon.calculate_discount(subtotal)
-                coupon.record_use()
-        except Exception:
-            pass  # Invalid coupon — proceed without discount
-        return discount
+            seller_subtotals[seller.id] = sub
+            grand_subtotal += sub
 
-    def _create_order(self, seller, items, address, discount, existing_orders):
-        # Split discount proportionally if multiple sellers
-        subtotal = sum(item.product.price * item.quantity for item in items)
+        # Validate seller-specific coupons cover at least one item from that seller
+        for seller_id, c in per_seller_coupon.items():
+            if seller_id not in seller_subtotals:
+                raise CheckoutError(f"Cupão {c.code} não se aplica a nenhum item")
+
+        # Per-seller discount: platform allocation (proportional) + own seller coupon
+        per_seller = {}
+        for seller_id, sub in seller_subtotals.items():
+            d = Decimal('0')
+            # Platform coupon allocation
+            if platform and grand_subtotal > 0:
+                pc = platform[0]
+                # If platform coupon has min_order_amount, it applies to grand subtotal
+                full_disc = Decimal(str(pc.calculate_discount(grand_subtotal)))
+                if full_disc > 0:
+                    share = (full_disc * sub / grand_subtotal).quantize(Decimal('0.01'))
+                    d += share
+            # Seller-specific coupon
+            if seller_id in per_seller_coupon:
+                sc = per_seller_coupon[seller_id]
+                d += Decimal(str(sc.calculate_discount(sub)))
+            per_seller[seller_id] = d
+
+        # Increment usage count atomically (one per coupon — shared across sellers
+        # for platform coupon, once per seller-specific coupon)
+        for c in coupons:
+            Coupon.objects.filter(pk=c.pk).update(used_count=F('used_count') + 1)
+
+        return {
+            'per_seller': per_seller,
+            'codes_used': [c.code for c in coupons],
+        }
+
+    def _create_order(self, seller, items, address, discount, codes_used, existing_orders):
+        # Subtotal honours tier/variant pricing snapshotted on the cart item
+        subtotal = sum(
+            ((it.price_at_add or it.product.price) * it.quantity for it in items),
+            Decimal('0')
+        )
         from apps.shipping.models import DeliveryZone
         shipping_cost = Decimal('500.00')  # default
         try:
@@ -213,6 +279,8 @@ class CheckoutService:
         except Exception:
             pass
 
+        # Cap discount at subtotal so total can't go negative
+        discount = min(Decimal(str(discount or 0)), subtotal)
         total = subtotal + shipping_cost - discount
 
         # Build idempotency key per seller (unique per checkout session per seller)
@@ -232,7 +300,7 @@ class CheckoutService:
             shipping_cost=shipping_cost,
             discount=discount,
             total=total,
-            coupon_code=self.coupon_code,
+            coupon_code=','.join(codes_used)[:50] if codes_used else '',
             notes=self.notes,
             gift_wrap=self.gift_wrap,
             status='pending',

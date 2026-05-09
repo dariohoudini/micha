@@ -165,7 +165,7 @@ export default function RentalsPage() {
       if (filters.lister_role) params.set('lister_role', filters.lister_role)
       params.set('page', reset ? 1 : page)
 
-      const res = await client.get(`/api/rentals/browse/?${params}`)
+      const res = await client.get(`/api/v1/rentals/browse/?${params}`)
       const data = res.data.results || res.data || []
       if (reset) {
         setListings(data)

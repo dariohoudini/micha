@@ -45,7 +45,7 @@ export default function RentalDetailPage() {
 
   const loadListing = async () => {
     try {
-      const res = await client.get(`/api/rentals/${id}/`)
+      const res = await client.get(`/api/v1/rentals/${id}/`)
       setListing(res.data)
       setSaved(res.data.is_saved)
     } catch (err) {
@@ -58,10 +58,10 @@ export default function RentalDetailPage() {
   const handleSave = async () => {
     try {
       if (saved) {
-        await client.delete(`/api/rentals/${id}/save/`)
+        await client.delete(`/api/v1/rentals/${id}/save/`)
         setSaved(false)
       } else {
-        await client.post(`/api/rentals/${id}/save/`)
+        await client.post(`/api/v1/rentals/${id}/save/`)
         setSaved(true)
       }
     } catch {}
@@ -71,7 +71,7 @@ export default function RentalDetailPage() {
     if (!user) { navigate('/login'); return }
     setInquiring(true)
     try {
-      const res = await client.post(`/api/rentals/${id}/inquire/`, {
+      const res = await client.post(`/api/v1/rentals/${id}/inquire/`, {
         message: inquiryMessage || `Olá! Tenho interesse no seu anúncio: ${listing.title}`,
         move_in_date: moveInDate || undefined,
         rental_duration: duration || undefined,

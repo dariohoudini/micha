@@ -546,14 +546,18 @@ class PaymentProcessor:
         wallet, _ = SellerWallet.objects.get_or_create(seller=order.seller)
         wallet.hold(seller_earnings, f'Earnings from order {str(order.id)[:8]}')
 
-        # Source-of-truth: post the 3-line journal
-        # (buyer payment in, seller earnings to escrow, platform commission to revenue)
+        # Source-of-truth: post the canonical decomposition journal.
+        # buyer_paid is what the gateway received (= order.total). Subsidies, seller
+        # discounts and store credit were captured on the Order at checkout time, so
+        # we replay them here to attribute the platform/seller funding split.
         try:
             from apps.ledger.service import record_payment_received
             record_payment_received(
                 order=order,
-                gross_amount=payment.amount,
+                buyer_paid=payment.amount,
                 commission_amount=platform_fee,
+                platform_subsidy=getattr(order, 'platform_subsidy', 0) or 0,
+                seller_discount=getattr(order, 'seller_subsidy', 0) or 0,
             )
         except Exception as e:
             logger.error('Ledger posting failed for payment_received', extra={

@@ -45,6 +45,20 @@ class Order(models.Model):
     subtotal = models.DecimalField(max_digits=12, decimal_places=2)
     shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Decomposition of `discount` so we can audit "who paid for this discount".
+    # platform_subsidy + seller_subsidy + store_credit_used = discount
+    platform_subsidy = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Portion of discount funded by the platform (platform-wide coupons)',
+    )
+    seller_subsidy = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Portion of discount funded by this seller (seller-specific coupons)',
+    )
+    store_credit_used = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Portion redeemed from buyer loyalty / store credit',
+    )
     total = models.DecimalField(max_digits=12, decimal_places=2)
     coupon_code = models.CharField(max_length=50, blank=True)
 

@@ -123,13 +123,20 @@ class CheckoutService:
         # 5b. Apply store credit (loyalty redemption) — splits proportionally
         credit_result = self._apply_store_credit(seller_items, coupon_result['per_seller'])
 
-        # 6. Create one order per seller, passing each seller's allocated discount
+        # 6. Create one order per seller with full discount decomposition
         orders = []
         for seller, items in seller_items.items():
-            seller_discount = coupon_result['per_seller'].get(seller.id, Decimal('0'))
-            seller_discount += credit_result['per_seller'].get(seller.id, Decimal('0'))
-            order = self._create_order(seller, items, address, seller_discount,
-                                       coupon_result['codes_used'], orders)
+            platform_subsidy = coupon_result.get('per_seller_platform', {}).get(seller.id, Decimal('0'))
+            seller_subsidy = coupon_result.get('per_seller_seller', {}).get(seller.id, Decimal('0'))
+            store_credit = credit_result['per_seller'].get(seller.id, Decimal('0'))
+            order = self._create_order(
+                seller, items, address,
+                platform_subsidy=platform_subsidy,
+                seller_subsidy=seller_subsidy,
+                store_credit=store_credit,
+                codes_used=coupon_result['codes_used'],
+                existing_orders=orders,
+            )
             orders.append(order)
 
         # 7. Deduct stock atomically (with row locks)
@@ -321,23 +328,24 @@ class CheckoutService:
             if seller_id not in seller_subtotals:
                 raise CheckoutError(f"Cupão {c.code} não se aplica a nenhum item")
 
-        # Per-seller discount: platform allocation (proportional) + own seller coupon
-        per_seller = {}
+        # Per-seller discount split between platform-funded and seller-funded.
+        per_seller = {}            # total discount per seller (platform + seller)
+        per_seller_platform = {}   # share funded by platform (subsidised by us)
+        per_seller_seller = {}     # share funded by the seller (lower margin)
         for seller_id, sub in seller_subtotals.items():
-            d = Decimal('0')
-            # Platform coupon allocation
+            platform_share = Decimal('0')
+            seller_share = Decimal('0')
             if platform and grand_subtotal > 0:
                 pc = platform[0]
-                # If platform coupon has min_order_amount, it applies to grand subtotal
                 full_disc = Decimal(str(pc.calculate_discount(grand_subtotal)))
                 if full_disc > 0:
-                    share = (full_disc * sub / grand_subtotal).quantize(Decimal('0.01'))
-                    d += share
-            # Seller-specific coupon
+                    platform_share = (full_disc * sub / grand_subtotal).quantize(Decimal('0.01'))
             if seller_id in per_seller_coupon:
                 sc = per_seller_coupon[seller_id]
-                d += Decimal(str(sc.calculate_discount(sub)))
-            per_seller[seller_id] = d
+                seller_share = Decimal(str(sc.calculate_discount(sub)))
+            per_seller_platform[seller_id] = platform_share
+            per_seller_seller[seller_id] = seller_share
+            per_seller[seller_id] = platform_share + seller_share
 
         # Increment usage count atomically (one per coupon — shared across sellers
         # for platform coupon, once per seller-specific coupon)
@@ -346,10 +354,13 @@ class CheckoutService:
 
         return {
             'per_seller': per_seller,
+            'per_seller_platform': per_seller_platform,
+            'per_seller_seller': per_seller_seller,
             'codes_used': [c.code for c in coupons],
         }
 
-    def _create_order(self, seller, items, address, discount, codes_used, existing_orders):
+    def _create_order(self, seller, items, address, *, platform_subsidy, seller_subsidy,
+                      store_credit, codes_used, existing_orders):
         # Subtotal honours tier/variant pricing snapshotted on the cart item
         subtotal = sum(
             ((it.price_at_add or it.product.price) * it.quantity for it in items),
@@ -364,9 +375,19 @@ class CheckoutService:
         except Exception:
             pass
 
-        # Cap discount at subtotal so total can't go negative
-        discount = min(Decimal(str(discount or 0)), subtotal)
-        total = subtotal + shipping_cost - discount
+        platform_subsidy = Decimal(str(platform_subsidy or 0))
+        seller_subsidy = Decimal(str(seller_subsidy or 0))
+        store_credit = Decimal(str(store_credit or 0))
+        total_discount = platform_subsidy + seller_subsidy + store_credit
+        # Cap each component proportionally if it would push total below zero
+        if total_discount > subtotal:
+            scale = subtotal / total_discount
+            platform_subsidy = (platform_subsidy * scale).quantize(Decimal('0.01'))
+            seller_subsidy = (seller_subsidy * scale).quantize(Decimal('0.01'))
+            store_credit = (store_credit * scale).quantize(Decimal('0.01'))
+            total_discount = platform_subsidy + seller_subsidy + store_credit
+
+        total = subtotal + shipping_cost - total_discount
 
         # Build idempotency key per seller (unique per checkout session per seller)
         seller_idem_key = f"{self.idempotency_key}:{seller.pk}"
@@ -383,7 +404,10 @@ class CheckoutService:
             shipping_country=getattr(address, 'country', 'Angola'),
             subtotal=subtotal,
             shipping_cost=shipping_cost,
-            discount=discount,
+            discount=total_discount,
+            platform_subsidy=platform_subsidy,
+            seller_subsidy=seller_subsidy,
+            store_credit_used=store_credit,
             total=total,
             coupon_code=','.join(codes_used)[:50] if codes_used else '',
             notes=self.notes,

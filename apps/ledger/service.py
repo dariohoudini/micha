@@ -105,33 +105,79 @@ def post(journal_key, lines, *, ref_type='', ref_id='', description='', user=Non
     return journal, True
 
 
-def record_payment_received(*, order, gross_amount, commission_amount, idempotency_key=None):
-    """At payment confirmation: split gross between seller-pending and platform-revenue.
+def record_payment_received(*, order, buyer_paid, commission_amount,
+                            platform_subsidy=0, seller_discount=0,
+                            idempotency_key=None):
+    """At payment confirmation: post the canonical decomposition.
 
-    Posting (AOA, in cents):
-        DR EXTERNAL_CLEARING       gross
-        CR SELLER_PENDING          gross − commission
-        CR PLATFORM_REVENUE        commission
+    Variables:
+        nominal           = order.subtotal (price before any discount)
+        buyer_paid        = what the gateway received (= nominal − all discounts)
+        commission        = platform's % cut of nominal
+        platform_subsidy  = portion of discount FUNDED by the platform (eats commission)
+        seller_discount   = portion of discount funded by the seller (lower earnings)
+        store_credit      = redeemed buyer credit — already moved at checkout, not here
 
-    Returns: (journal, created)
+    seller_earnings = nominal − commission − seller_discount
+
+    Posting (AOA, cents):
+        DR EXTERNAL_CLEARING                buyer_paid
+        DR PLATFORM_REVENUE                 platform_subsidy   (only if > 0)
+        CR SELLER_PENDING                   seller_earnings
+        CR PLATFORM_REVENUE                 commission
+
+    Net platform revenue = commission − platform_subsidy.
+    The journal is balanced because:
+        debits  = buyer_paid + platform_subsidy
+                = (nominal − platform_subsidy − seller_discount − store_credit) + platform_subsidy
+                = nominal − seller_discount − store_credit
+        credits = seller_earnings + commission
+                = (nominal − commission − seller_discount) + commission
+                = nominal − seller_discount
+    These are only equal when store_credit == 0. When the buyer redeemed store
+    credit at checkout, that money was already debited from USER_STORE_CREDIT
+    and credited to PLATFORM_REFUND_POOL in a separate journal — so the
+    `buyer_paid` here is *before* store credit is added back. The platform
+    effectively pays the seller by drawing from PLATFORM_REFUND_POOL.
+
+    To make this journal balance regardless, we credit any store-credit-funded
+    portion from PLATFORM_REFUND_POOL → SELLER_PENDING in the same journal.
     """
     from .models import Account, AccountType
     journal_key = idempotency_key or f'order:{order.id}:payment'
 
-    gross_cents = _to_cents(gross_amount)
+    buyer_paid_cents = _to_cents(buyer_paid)
     commission_cents = _to_cents(commission_amount)
-    seller_cents = gross_cents - commission_cents
-    if seller_cents < 0:
-        raise LedgerError('Commission cannot exceed gross')
+    platform_subsidy_cents = _to_cents(platform_subsidy)
+    seller_discount_cents = _to_cents(seller_discount)
+    store_credit_cents = _to_cents(getattr(order, 'store_credit_used', 0) or 0)
+    nominal_cents = (
+        buyer_paid_cents + platform_subsidy_cents + seller_discount_cents + store_credit_cents
+    )
+    seller_earnings_cents = nominal_cents - commission_cents - seller_discount_cents
 
-    lines = [
-        (Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA'), gross_cents, 'debit'),
-        (Account.for_user(order.seller, AccountType.SELLER_PENDING, currency='AOA'), seller_cents, 'credit'),
-    ]
+    if seller_earnings_cents < 0 or commission_cents < 0:
+        raise LedgerError('Negative seller earnings or commission')
+
+    lines = []
+    if buyer_paid_cents > 0:
+        lines.append((Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA'),
+                      buyer_paid_cents, 'debit'))
+    if platform_subsidy_cents > 0:
+        lines.append((Account.platform(AccountType.PLATFORM_REVENUE, currency='AOA'),
+                      platform_subsidy_cents, 'debit'))
+    if store_credit_cents > 0:
+        # Buyer's store credit was already moved to PLATFORM_REFUND_POOL at checkout;
+        # now the pool funds the seller's share for this order.
+        lines.append((Account.platform(AccountType.PLATFORM_REFUND_POOL, currency='AOA'),
+                      store_credit_cents, 'debit'))
+
+    if seller_earnings_cents > 0:
+        lines.append((Account.for_user(order.seller, AccountType.SELLER_PENDING, currency='AOA'),
+                      seller_earnings_cents, 'credit'))
     if commission_cents > 0:
-        lines.append(
-            (Account.platform(AccountType.PLATFORM_REVENUE, currency='AOA'), commission_cents, 'credit')
-        )
+        lines.append((Account.platform(AccountType.PLATFORM_REVENUE, currency='AOA'),
+                      commission_cents, 'credit'))
 
     journal, created = post(
         journal_key, lines,
@@ -171,6 +217,45 @@ def record_payout_debit(*, seller, amount, payout_id, idempotency_key=None):
         ref_type='payout', ref_id=str(payout_id),
         description=f'Payout {payout_id} to bank',
         user=seller,
+    )
+
+
+def record_refund_to_buyer(*, order, amount, refund_id, destination='store_credit', idempotency_key=None):
+    """Refund flows back to the buyer.
+
+    `destination` controls where the refund lands:
+      'store_credit' (default) — money goes to USER_STORE_CREDIT
+      'gateway'                — money goes back out via EXTERNAL_CLEARING
+
+    Source is the SELLER_WALLET (or SELLER_PENDING if escrow not yet released).
+    For MVP we always pull from SELLER_WALLET — caller must ensure escrow has been
+    released first (auto-completed orders meet this).
+
+    Posting (AOA, in cents):
+      destination='store_credit':
+        DR SELLER_WALLET             amount
+        CR USER_STORE_CREDIT         amount
+      destination='gateway':
+        DR SELLER_WALLET             amount
+        CR EXTERNAL_CLEARING         amount   (refund issued via gateway)
+    """
+    from .models import Account, AccountType
+    if destination not in ('store_credit', 'gateway'):
+        raise LedgerError(f'Unknown refund destination: {destination!r}')
+
+    src = Account.for_user(order.seller, AccountType.SELLER_WALLET, currency='AOA')
+    if destination == 'store_credit':
+        dst = Account.for_user(order.buyer, AccountType.USER_STORE_CREDIT, currency='AOA')
+    else:
+        dst = Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA')
+
+    return transfer(
+        from_account=src, to_account=dst,
+        amount=amount,
+        journal_key=idempotency_key or f'refund:{refund_id}:{destination}',
+        ref_type='refund', ref_id=str(refund_id),
+        description=f'Refund {refund_id} ({destination}) for order {str(order.id)[:8]}',
+        user=order.buyer,
     )
 
 

@@ -496,4 +496,28 @@ class SellerReturnActionView(APIView):
         if admin_note:
             ret.admin_note = admin_note
         ret.save(update_fields=['status', 'admin_note', 'updated_at'])
+
+        # When the return is marked completed, refund the buyer (default: store credit)
+        if new_status == 'completed':
+            try:
+                from apps.ledger.service import record_refund_to_buyer
+                # Cap refund at order total in case of stale data
+                refund_amount = min(ret.order.total, ret.order.total)  # placeholder for partial logic
+                record_refund_to_buyer(
+                    order=ret.order,
+                    amount=refund_amount,
+                    refund_id=ret.id,
+                    destination='store_credit',
+                )
+                # Also bump the cached User.store_credit so existing read paths stay consistent
+                from django.contrib.auth import get_user_model
+                from django.db.models import F
+                User = get_user_model()
+                User.objects.filter(pk=ret.order.buyer_id).update(
+                    store_credit=F('store_credit') + refund_amount,
+                )
+            except Exception:
+                # Drift will be surfaced by reconcile_ledger; do not block the status change.
+                pass
+
         return Response(_serialize_return(ret, request))

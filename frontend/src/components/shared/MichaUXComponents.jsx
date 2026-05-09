@@ -103,33 +103,148 @@ export function FlashSaleCountdown({ endsAt, discount, salePrice, originalPrice 
   )
 }
 
-export function ProductQASection({ isSeller = false }) {
-  const [questions, setQuestions] = useState([
-    { id: 1, question: 'Este produto tem garantia em Angola?', answer: 'Sim, 12 meses.', askedAt: '2 dias atrás' },
-    { id: 2, question: 'Fazem entrega para Benguela?', answer: null, askedAt: '5 horas atrás' },
-  ])
+function relTime(iso) {
+  if (!iso) return ''
+  const diff = Date.now() - new Date(iso).getTime()
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return 'agora'
+  if (m < 60) return `${m}m atrás`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h atrás`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d atrás`
+  return new Date(iso).toLocaleDateString('pt-AO', { day: '2-digit', month: 'short' })
+}
+
+export function ProductQASection({ productId, isSeller = false }) {
+  const [questions, setQuestions] = useState([])
+  const [loading, setLoading] = useState(true)
   const [newQ, setNewQ] = useState('')
+  const [posting, setPosting] = useState(false)
   const [answerInputs, setAnswerInputs] = useState({})
+  const [answering, setAnswering] = useState({})
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!productId) return
+    setLoading(true)
+    api.get(`/api/v1/products/${productId}/qa/`)
+      .then(r => setQuestions(r.data.results || r.data || []))
+      .catch(() => setQuestions([]))
+      .finally(() => setLoading(false))
+  }, [productId])
+
+  const askQuestion = async () => {
+    const text = newQ.trim()
+    if (!text || posting) return
+    setPosting(true); setError('')
+    try {
+      const res = await api.post(`/api/v1/products/${productId}/qa/`, { question: text })
+      setQuestions(prev => [res.data, ...prev])
+      setNewQ('')
+    } catch (err) {
+      if (err.response?.status === 401) setError('Faça login para perguntar.')
+      else setError(err.response?.data?.detail || 'Erro ao enviar.')
+    } finally { setPosting(false) }
+  }
+
+  const submitAnswer = async (qaId) => {
+    const text = (answerInputs[qaId] || '').trim()
+    if (!text || answering[qaId]) return
+    setAnswering(p => ({ ...p, [qaId]: true }))
+    try {
+      const res = await api.patch(`/api/v1/products/qa/${qaId}/answer/`, { answer: text })
+      setQuestions(prev => prev.map(q => q.id === qaId ? res.data : q))
+      setAnswerInputs(p => ({ ...p, [qaId]: '' }))
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Erro ao responder.')
+    } finally {
+      setAnswering(p => ({ ...p, [qaId]: false }))
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[1, 2].map(i => (
+          <div key={i} className="skeleton" style={{ height: 60, borderRadius: 12 }} />
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {questions.map(q => (
-        <div key={q.id} style={{ background: CARD, borderRadius: 12, border: `1px solid ${BORDER}`, padding: 14 }}>
-          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TEXT, margin: '0 0 4px' }}><strong style={{ color: BLUE }}>P:</strong> {q.question}</p>
-          {q.answer
-            ? <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: MUTED, margin: 0 }}><strong style={{ color: GOLD }}>R:</strong> {q.answer}</p>
-            : isSeller
-              ? <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <input value={answerInputs[q.id] || ''} onChange={e => setAnswerInputs(p => ({ ...p, [q.id]: e.target.value }))} placeholder="Responder..." style={{ flex: 1, padding: '8px', background: BG, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, fontFamily: "'DM Sans', sans-serif", fontSize: 12, outline: 'none' }} />
-                  <button onClick={() => { setQuestions(p => p.map(q2 => q2.id === q.id ? { ...q2, answer: answerInputs[q.id] } : q2)); setAnswerInputs(p => ({ ...p, [q.id]: '' })) }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', background: GOLD, color: '#000', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600 }}>Responder</button>
-                </div>
-              : <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: MUTED, margin: '6px 0 0', fontStyle: 'italic' }}>Aguardando resposta...</p>
-          }
-        </div>
-      ))}
+      {questions.length === 0 ? (
+        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: MUTED, fontStyle: 'italic', margin: 0 }}>
+          Sem perguntas ainda. {isSeller ? 'Aguarde perguntas dos compradores.' : 'Seja o primeiro a perguntar.'}
+        </p>
+      ) : (
+        questions.map(q => (
+          <div key={q.id} style={{ background: CARD, borderRadius: 12, border: `1px solid ${BORDER}`, padding: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TEXT, margin: 0 }}>
+                <strong style={{ color: BLUE }}>P:</strong> {q.question}
+              </p>
+              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: MUTED, flexShrink: 0 }}>{relTime(q.created_at)}</span>
+            </div>
+            {q.asker_name && q.asker_name !== 'Anonymous' && (
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: MUTED, margin: '0 0 6px' }}>— {q.asker_name}</p>
+            )}
+            {q.answer ? (
+              <div>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: TEXT, margin: '6px 0 2px' }}>
+                  <strong style={{ color: GOLD }}>R:</strong> {q.answer}
+                </p>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: MUTED, margin: 0 }}>
+                  {q.answered_by_name || 'Vendedor'} · {relTime(q.answered_at)}
+                </p>
+              </div>
+            ) : isSeller ? (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input
+                  value={answerInputs[q.id] || ''}
+                  onChange={e => setAnswerInputs(p => ({ ...p, [q.id]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') submitAnswer(q.id) }}
+                  placeholder="Responder…"
+                  disabled={answering[q.id]}
+                  style={{ flex: 1, padding: '8px 12px', background: BG, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, fontFamily: "'DM Sans', sans-serif", fontSize: 12, outline: 'none' }}
+                />
+                <button
+                  onClick={() => submitAnswer(q.id)}
+                  disabled={answering[q.id] || !(answerInputs[q.id] || '').trim()}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: GOLD, color: '#000', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, opacity: answering[q.id] ? 0.5 : 1 }}>
+                  {answering[q.id] ? '...' : 'Responder'}
+                </button>
+              </div>
+            ) : (
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: MUTED, margin: '6px 0 0', fontStyle: 'italic' }}>
+                Aguardando resposta do vendedor…
+              </p>
+            )}
+          </div>
+        ))
+      )}
+
       {!isSeller && (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input value={newQ} onChange={e => setNewQ(e.target.value)} placeholder="Fazer uma pergunta..." style={{ flex: 1, padding: '11px 14px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: 'none' }} />
-          <button onClick={() => { if (newQ.trim()) { setQuestions(p => [...p, { id: Date.now(), question: newQ, answer: null, askedAt: 'agora' }]); setNewQ('') } }} style={{ padding: '11px 16px', borderRadius: 12, border: 'none', background: GOLD, color: '#000', fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Perguntar</button>
+        <div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={newQ}
+              onChange={e => { setNewQ(e.target.value); setError('') }}
+              onKeyDown={e => { if (e.key === 'Enter') askQuestion() }}
+              placeholder="Fazer uma pergunta…"
+              disabled={posting}
+              style={{ flex: 1, padding: '11px 14px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: 'none' }}
+            />
+            <button
+              onClick={askQuestion}
+              disabled={posting || !newQ.trim()}
+              style={{ padding: '11px 18px', borderRadius: 12, border: 'none', background: GOLD, color: '#000', fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: posting || !newQ.trim() ? 0.5 : 1 }}>
+              {posting ? '...' : 'Perguntar'}
+            </button>
+          </div>
+          {error && <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: RED, margin: '6px 0 0' }}>{error}</p>}
         </div>
       )}
     </div>

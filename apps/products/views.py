@@ -386,6 +386,27 @@ class ProductQAListCreateView(APIView):
         return Response(ProductQASerializer(qa).data, status=201)
 
 
+class ProductQAAnswerView(APIView):
+    """PATCH /api/v1/products/qa/<int:qa_id>/answer/  — seller answers a question."""
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
+
+    def patch(self, request, qa_id):
+        from django.utils import timezone
+        qa = get_object_or_404(ProductQA, pk=qa_id)
+        if qa.product.store.owner_id != request.user.id and not request.user.is_staff:
+            return Response({'error': 'forbidden', 'detail': 'Apenas o vendedor pode responder.'}, status=403)
+        answer = (request.data.get('answer') or '').strip()
+        if not answer:
+            return Response({'error': 'validation_error', 'detail': 'Resposta vazia.'}, status=400)
+        if len(answer) > 2000:
+            return Response({'error': 'validation_error', 'detail': 'Máximo 2000 caracteres.'}, status=400)
+        qa.answer = answer
+        qa.answered_by = request.user
+        qa.answered_at = timezone.now()
+        qa.save(update_fields=['answer', 'answered_by', 'answered_at'])
+        return Response(ProductQASerializer(qa).data)
+
+
 class ProductDuplicateView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 

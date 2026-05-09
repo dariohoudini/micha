@@ -396,6 +396,7 @@ export default function ProductDetailPage() {
             {[
               { v: 'description', l: 'Descrição' },
               { v: 'reviews', l: 'Avaliações' },
+              { v: 'qa', l: 'Perguntas' },
               { v: 'shipping', l: 'Entrega' },
             ].map(tab => (
               <button key={tab.v} onClick={() => setActiveTab(tab.v)}
@@ -444,6 +445,12 @@ export default function ProductDetailPage() {
                 </div>
               )}
               <ReviewsSection productId={id} />
+            </div>
+          )}
+
+          {activeTab === 'qa' && (
+            <div style={{ marginBottom: 24 }}>
+              <ProductQASection productId={id} />
             </div>
           )}
 

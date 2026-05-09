@@ -163,10 +163,11 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 
 class ProductQASerializer(serializers.ModelSerializer):
     asker_name = serializers.SerializerMethodField()
+    answered_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductQA
-        fields = ["id", "question", "answer", "asker_name", "answered_at", "created_at"]
+        fields = ["id", "question", "answer", "asker_name", "answered_by_name", "answered_at", "created_at"]
         read_only_fields = ["id", "answer", "asker_name", "answered_at", "created_at"]
 
     def get_asker_name(self, obj):
@@ -174,6 +175,14 @@ class ProductQASerializer(serializers.ModelSerializer):
             return obj.asker.profile.full_name or "Anonymous"
         except Exception:
             return "Anonymous"
+
+    def get_answered_by_name(self, obj):
+        if not obj.answered_by_id:
+            return None
+        try:
+            return obj.answered_by.profile.full_name or "Vendedor"
+        except Exception:
+            return "Vendedor"
 
 # Backwards compatibility aliases — other apps import these names
 PublicProductSerializer = ProductListSerializer

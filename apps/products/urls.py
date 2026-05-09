@@ -5,7 +5,7 @@ from .views import (
     ProductListView, ProductDetailView, ProductFacetsView,
     SellerProductListView, ProductCreateView, ProductUpdateView,
     ProductImageUploadView, BulkProductCreateView,
-    ProductCompareView, ProductQAListCreateView, ProductDuplicateView,
+    ProductCompareView, ProductQAListCreateView, ProductQAAnswerView, ProductDuplicateView,
     ProductGroupListView, ProductGroupOffersView,
 )
 
@@ -24,5 +24,6 @@ urlpatterns = [
     path("<int:pk>/update/", ProductUpdateView.as_view(), name="update"),
     path("<int:pk>/images/", ProductImageUploadView.as_view(), name="upload-image"),
     path("<int:pk>/qa/", ProductQAListCreateView.as_view(), name="qa"),
+    path("qa/<int:qa_id>/answer/", ProductQAAnswerView.as_view(), name="qa-answer"),
     path("<int:pk>/duplicate/", ProductDuplicateView.as_view(), name="duplicate"),
 ]

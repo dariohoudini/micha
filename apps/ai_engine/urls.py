@@ -3,6 +3,12 @@ apps/ai_engine/urls.py
 """
 from django.urls import path
 from . import views
+from .content_views import (
+    GenerateProductDescriptionView,
+    TranslateProductView,
+    ImproveDescriptionView,
+    SummariseReviewsView,
+)
 
 urlpatterns = [
     path('onboarding-quiz/', views.OnboardingQuizView.as_view()),
@@ -20,4 +26,9 @@ urlpatterns = [
     path('notification-preferences/', views.NotificationPreferenceView.as_view()),
     path('flash-sale-target/', views.FlashSaleTargetView.as_view()),
     path('admin/stats/', views.AIStatsView.as_view()),
+    # Content generation (seller tools)
+    path('content/generate-description/', GenerateProductDescriptionView.as_view()),
+    path('content/translate/', TranslateProductView.as_view()),
+    path('content/improve/', ImproveDescriptionView.as_view()),
+    path('content/reviews-summary/<uuid:product_id>/', SummariseReviewsView.as_view()),
 ]

@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     PriceAlertView,
     CategoryListView,
-    ProductListView, ProductDetailView,
+    ProductListView, ProductDetailView, ProductFacetsView,
     SellerProductListView, ProductCreateView, ProductUpdateView,
     ProductImageUploadView, BulkProductCreateView,
     ProductCompareView, ProductQAListCreateView, ProductDuplicateView,
@@ -11,6 +11,7 @@ from .views import (
 
 urlpatterns = [
     path("", ProductListView.as_view(), name="list"),
+    path("facets/", ProductFacetsView.as_view(), name="facets"),
     path("categories/", CategoryListView.as_view(), name="categories"),
     path("compare/", ProductCompareView.as_view(), name="compare"),
     path("bulk/", BulkProductCreateView.as_view(), name="bulk-create"),

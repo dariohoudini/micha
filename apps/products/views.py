@@ -30,17 +30,29 @@ class CategoryListView(generics.ListAPIView):
 
 
 class ProductListView(generics.ListAPIView):
-    """GET /api/products/ — public, cached, supports ?fields="""
+    """GET /api/products/ — public, supports ?fields and faceted filters.
+
+    Filters:
+      search           - free text on title/brand
+      category         - slug
+      min_price/max_price
+      condition        - new|used|refurbished
+      city             - store city
+      brand            - single value or comma-separated list
+      has_discount     - 1/true to only show items with compare_at_price > price
+      min_rating       - 0-5 (annotates avg rating; uses 0 for unreviewed)
+      ordering         - -created_at|price|-price|-views|popular|-rating
+    """
     serializer_class = ProductListSerializer
     permission_classes = [AllowAny]
 
     def get_queryset(self):
+        from django.db.models import Q, F, Avg, Count
         qs = Product.active.all()
         params = self.request.query_params
 
         search = params.get("search", "").strip()[:200]
         if search:
-            from django.db.models import Q
             qs = qs.filter(Q(title__icontains=search) | Q(brand__icontains=search))
 
         if params.get("category"):
@@ -53,15 +65,108 @@ class ProductListView(generics.ListAPIView):
             qs = qs.filter(condition=params["condition"])
         if params.get("city"):
             qs = qs.filter(store__city__iexact=params["city"])
-        if params.get("brand"):
-            qs = qs.filter(brand__iexact=params["brand"])
+
+        brand_param = params.get("brand", "").strip()
+        if brand_param:
+            brands = [b.strip() for b in brand_param.split(",") if b.strip()]
+            if len(brands) == 1:
+                qs = qs.filter(brand__iexact=brands[0])
+            elif brands:
+                qs = qs.filter(brand__in=brands)
+
+        if params.get("has_discount") in ("1", "true", "True"):
+            qs = qs.filter(compare_at_price__gt=F("price"))
 
         ordering = params.get("ordering", "-created_at")
-        allowed_orderings = ["-created_at", "price", "-price", "-views"]
-        if ordering in allowed_orderings:
-            qs = qs.order_by(ordering)
+
+        # Annotate rating only when filtering or sorting by it
+        needs_rating = params.get("min_rating") or ordering == "-rating"
+        if needs_rating:
+            qs = qs.annotate(
+                _avg_rating=Avg("reviews__rating"),
+            )
+            min_rating = params.get("min_rating")
+            if min_rating:
+                try:
+                    qs = qs.filter(_avg_rating__gte=float(min_rating))
+                except (TypeError, ValueError):
+                    pass
+
+        allowed_orderings = {
+            "-created_at": "-created_at",
+            "price": "price",
+            "-price": "-price",
+            "-views": "-views",
+            "popular": "-views",
+            "-rating": "-_avg_rating" if needs_rating else "-views",
+        }
+        qs = qs.order_by(allowed_orderings.get(ordering, "-created_at"))
 
         return qs
+
+
+class ProductFacetsView(APIView):
+    """GET /api/v1/products/facets/ — aggregate filter values for current search.
+
+    Returns counts per brand/condition/category and the price range,
+    optionally narrowed by an active search query.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.db.models import Count, Min, Max, F, Q
+        qs = Product.active.all()
+        params = request.query_params
+
+        search = params.get("search", "").strip()[:200]
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(brand__icontains=search))
+
+        if params.get("category"):
+            qs = qs.filter(category__slug=params["category"])
+
+        # Brands (top 30, with counts)
+        brands_qs = (
+            qs.exclude(brand__isnull=True).exclude(brand="")
+              .values("brand")
+              .annotate(count=Count("id"))
+              .order_by("-count")[:30]
+        )
+        brands = [{"name": b["brand"], "count": b["count"]} for b in brands_qs]
+
+        # Conditions
+        conditions_qs = qs.values("condition").annotate(count=Count("id")).order_by("-count")
+        conditions = [{"value": c["condition"], "count": c["count"]} for c in conditions_qs]
+
+        # Categories (top 20)
+        cats_qs = (
+            qs.exclude(category__isnull=True)
+              .values("category__slug", "category__name")
+              .annotate(count=Count("id"))
+              .order_by("-count")[:20]
+        )
+        categories = [
+            {"slug": c["category__slug"], "name": c["category__name"], "count": c["count"]}
+            for c in cats_qs
+        ]
+
+        # Price range
+        price_agg = qs.aggregate(min=Min("price"), max=Max("price"))
+
+        # Special toggles
+        discount_count = qs.filter(compare_at_price__gt=F("price")).count()
+
+        return Response({
+            "total": qs.count(),
+            "brands": brands,
+            "conditions": conditions,
+            "categories": categories,
+            "price_range": {
+                "min": float(price_agg["min"] or 0),
+                "max": float(price_agg["max"] or 0),
+            },
+            "discount_count": discount_count,
+        })
 
 
 class ProductDetailView(APIView):

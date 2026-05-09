@@ -235,9 +235,17 @@ class TrackInteractionView(APIView):
 
 
 class StockUrgencyView(APIView):
-    """GET/POST /api/v1/recommendations/viewing/<product_id>/"""
+    """GET/POST /api/v1/recommendations/viewing/<product_id>/
+
+    Returns AliExpress-style social proof signals:
+      viewing_now   - distinct sessions that pinged in the last 30s
+      sold_recent   - orders (any status) containing this product in last 7 days
+      in_carts      - distinct carts currently containing this product
+      low_stock     - product.quantity if <= 10 else None
+    """
     permission_classes = [permissions.AllowAny]
     WINDOW_SECONDS = 30
+    SOLD_DAYS = 7
 
     def post(self, request, product_id):
         from apps.recommendations.models import StockUrgencySignal
@@ -247,11 +255,49 @@ class StockUrgencyView(APIView):
 
     def get(self, request, product_id):
         from apps.recommendations.models import StockUrgencySignal
-        threshold = timezone.now() - timedelta(seconds=self.WINDOW_SECONDS)
-        count = StockUrgencySignal.objects.filter(
-            product_id=product_id, last_seen__gte=threshold
+        from apps.products.models import Product
+
+        viewing_threshold = timezone.now() - timedelta(seconds=self.WINDOW_SECONDS)
+        viewing_now = StockUrgencySignal.objects.filter(
+            product_id=product_id, last_seen__gte=viewing_threshold
         ).count()
-        return Response({'product_id': product_id, 'viewing_now': count})
+
+        sold_threshold = timezone.now() - timedelta(days=self.SOLD_DAYS)
+        sold_recent = 0
+        try:
+            from apps.orders.models import OrderItem
+            sold_recent = OrderItem.objects.filter(
+                product_id=product_id,
+                order__created_at__gte=sold_threshold,
+            ).values('order_id').distinct().count()
+        except Exception:
+            pass
+
+        in_carts = 0
+        try:
+            from apps.cart.models import CartItem
+            in_carts = CartItem.objects.filter(
+                product_id=product_id,
+            ).values('cart_id').distinct().count()
+        except Exception:
+            pass
+
+        low_stock = None
+        try:
+            qty = Product.objects.filter(pk=product_id).values_list('quantity', flat=True).first()
+            if qty is not None and qty <= 10:
+                low_stock = qty
+        except Exception:
+            pass
+
+        return Response({
+            'product_id': product_id,
+            'viewing_now': viewing_now,
+            'sold_recent': sold_recent,
+            'sold_recent_days': self.SOLD_DAYS,
+            'in_carts': in_carts,
+            'low_stock': low_stock,
+        })
 
 
 class UserInterestView(APIView):

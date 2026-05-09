@@ -19,16 +19,58 @@ import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import ProductRail from '@/components/buyer/ProductRail'
 import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
 
-// Stock urgency hook
-function useStockUrgency(productId) {
-  const [urgency, setUrgency] = useState(null)
+// Live social-proof signals (viewing now / sold recently / in carts / low stock)
+function useSocialProof(productId) {
+  const [proof, setProof] = useState(null)
   useEffect(() => {
     if (!productId) return
-    client.get(`/api/v1/recommendations/stock-urgency/${productId}/`)
-      .then(r => setUrgency(r.data))
-      .catch(() => {})
+    let cancelled = false
+    const url = `/api/v1/recommendations/viewing/${productId}/`
+    const tick = () => {
+      // Heartbeat first so we count ourselves; ignore errors silently
+      client.post(url).catch(() => {})
+      client.get(url)
+        .then(r => { if (!cancelled) setProof(r.data) })
+        .catch(() => {})
+    }
+    tick()
+    const id = setInterval(tick, 30000) // refresh every 30s
+    return () => { cancelled = true; clearInterval(id) }
   }, [productId])
-  return urgency
+  return proof
+}
+
+function SocialProofStrip({ proof }) {
+  if (!proof) return null
+  const items = []
+  if (proof.viewing_now > 1) {
+    items.push({ icon: '👀', text: `${proof.viewing_now} a ver agora`, color: '#C9A84C' })
+  }
+  if (proof.sold_recent > 0) {
+    items.push({ icon: '🔥', text: `${proof.sold_recent} vendidos nos últimos ${proof.sold_recent_days || 7} dias`, color: '#F97316' })
+  }
+  if (proof.in_carts > 1) {
+    items.push({ icon: '🛒', text: `${proof.in_carts} no carrinho`, color: '#9A9A9A' })
+  }
+  if (proof.low_stock != null && proof.low_stock <= 10) {
+    items.push({ icon: '⚡', text: `Restam apenas ${proof.low_stock}`, color: '#dc2626' })
+  }
+  if (!items.length) return null
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+      {items.map((it, i) => (
+        <span key={i} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '5px 10px', borderRadius: 20,
+          background: 'rgba(255,255,255,0.04)', border: `1px solid ${it.color}33`,
+          fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: it.color,
+        }}>
+          <span>{it.icon}</span>{it.text}
+        </span>
+      ))}
+    </div>
+  )
 }
 import StickyAddToCart from '@/components/buyer/StickyAddToCart'
 import { CartFlyParticle, useCartFly } from '@/components/shared/CartFlyAnimation'
@@ -76,6 +118,7 @@ export default function ProductDetailPage() {
   const [selectedImage, setSelectedImage] = useState(0)
   const [selectedOptions, setSelectedOptions] = useState({}) // { Color: "Red", Size: "M" }
   const [quantity, setQuantity] = useState(1)
+  const socialProof = useSocialProof(id)
   const [wishlisted, setWishlisted] = useState(false)
   const [addedToCart, setAddedToCart] = useState(false)
   const [similarProducts, setSimilarProducts] = useState([])
@@ -297,6 +340,9 @@ export default function ProductDetailPage() {
               <StarRating rating={product.avg_rating} count={product.review_count || 0} />
             </div>
           )}
+
+          {/* Live social proof */}
+          <SocialProofStrip proof={socialProof} />
 
           {/* Express badge */}
           {product.is_express && (

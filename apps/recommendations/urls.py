@@ -7,6 +7,8 @@ from .views import (
     UserInterestView,
     PriceAlertView,
     BackInStockView,
+    RecentlyViewedView,
+    FrequentlyBoughtTogetherView,
 )
 
 
@@ -18,4 +20,6 @@ urlpatterns = [
     path("interests/", UserInterestView.as_view(), name="interests"),
     path("price-alerts/", PriceAlertView.as_view(), name="price-alerts"),
     path("back-in-stock/", BackInStockView.as_view(), name="back-in-stock"),
+    path("recently-viewed/", RecentlyViewedView.as_view(), name="recently-viewed"),
+    path("frequently-bought/<int:product_id>/", FrequentlyBoughtTogetherView.as_view(), name="frequently-bought"),
 ]

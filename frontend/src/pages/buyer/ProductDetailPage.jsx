@@ -16,6 +16,7 @@ import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
 import { ReportButton, BlockUserButton } from '@/components/shared/UserActions'
 import ReviewsSection from '@/components/buyer/ReviewsSection'
 import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
+import ProductRail from '@/components/buyer/ProductRail'
 import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
 
 // Stock urgency hook
@@ -418,12 +419,24 @@ export default function ProductDetailPage() {
             </div>
           )}
 
-          {/* Similar + recommended products */}
+          {/* Frequently bought together */}
           <div style={{ margin: '8px -16px 8px' }}>
-            <RecommendationCarousel title="Produtos semelhantes" type="similar" productId={id} />
+            <ProductRail
+              title="Comprados juntos"
+              icon="🛒"
+              endpoint={`/api/v1/recommendations/frequently-bought/${id}/`}
+            />
           </div>
+
+          {/* Recently viewed */}
           <div style={{ margin: '8px -16px 8px' }}>
-            <RecommendationCarousel title="Vistos recentemente" type="recently_viewed" />
+            <ProductRail
+              title="Vistos recentemente"
+              icon="🕒"
+              endpoint="/api/v1/recommendations/recently-viewed/"
+              params={{ exclude: id, limit: 12 }}
+              minItems={3}
+            />
           </div>
 
           {/* Bottom padding for sticky buttons */}

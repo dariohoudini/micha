@@ -322,3 +322,95 @@ class BackInStockView(APIView):
             return Response({'error': 'in_stock', 'detail': 'Product is already in stock.'}, status=400)
         _, created = BackInStockAlert.objects.get_or_create(user=request.user, product=product)
         return Response({'detail': "You'll be notified when this is back." if created else 'Already subscribed.'}, status=201 if created else 200)
+
+
+class RecentlyViewedView(APIView):
+    """GET /api/v1/recommendations/recently-viewed/?exclude=<id>&limit=N
+
+    Last N distinct products viewed by the current user.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def get(self, request):
+        from apps.recommendations.models import ProductInteraction
+        from apps.products.models import Product
+
+        exclude_id = request.query_params.get('exclude')
+        try:
+            limit = min(int(request.query_params.get('limit', 12)), 24)
+        except (TypeError, ValueError):
+            limit = 12
+
+        ix = ProductInteraction.objects.filter(
+            user=request.user, type='view'
+        ).order_by('-created_at').values_list('product_id', flat=True)
+
+        seen = []
+        for pid in ix.iterator():
+            if exclude_id and str(pid) == str(exclude_id):
+                continue
+            if pid not in seen:
+                seen.append(pid)
+                if len(seen) >= limit:
+                    break
+
+        if not seen:
+            return Response({'results': []})
+
+        products = list(Product.objects.filter(
+            pk__in=seen, is_active=True, is_archived=False
+        ).select_related('store', 'category').prefetch_related('images'))
+        by_id = {p.id: p for p in products}
+        ordered = [by_id[pid] for pid in seen if pid in by_id]
+        return Response({
+            'results': SlimProductSerializer(ordered, many=True, context={'request': request}).data,
+        })
+
+
+class FrequentlyBoughtTogetherView(APIView):
+    """GET /api/v1/recommendations/frequently-bought/<int:product_id>/
+
+    Up to 8 other products that most often appear in orders alongside
+    the given product. Cached 30 min.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, product_id):
+        from django.db.models import Count
+        from apps.products.models import Product
+        from apps.orders.models import OrderItem
+
+        cache_key = f'fbt:{product_id}:v1'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response({'results': cached})
+
+        order_ids = OrderItem.objects.filter(
+            product_id=product_id,
+        ).values_list('order_id', flat=True).distinct()
+        if not order_ids:
+            cache.set(cache_key, [], timeout=600)
+            return Response({'results': []})
+
+        co_qs = (
+            OrderItem.objects.filter(order_id__in=list(order_ids))
+            .exclude(product_id=product_id)
+            .values('product_id')
+            .annotate(count=Count('order_id', distinct=True))
+            .order_by('-count')[:24]
+        )
+        co_ids = [row['product_id'] for row in co_qs]
+        if not co_ids:
+            cache.set(cache_key, [], timeout=600)
+            return Response({'results': []})
+
+        products = list(Product.objects.filter(
+            pk__in=co_ids, is_active=True, is_archived=False
+        ).select_related('store', 'category').prefetch_related('images'))[:8]
+
+        rank = {pid: i for i, pid in enumerate(co_ids)}
+        products.sort(key=lambda p: rank.get(p.id, 999))
+
+        data = SlimProductSerializer(products, many=True, context={'request': request}).data
+        cache.set(cache_key, data, timeout=1800)
+        return Response({'results': data})

@@ -12,7 +12,7 @@ import {
 import HelperBot from '@/components/shared/HelperBot'
 import usePersonalisedFeed from '@/hooks/usePersonalisedFeed'
 import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
-import RecentlyViewed from '@/components/buyer/RecentlyViewed'
+import ProductRail from '@/components/buyer/ProductRail'
 import { usePullToRefresh, useInfiniteScroll, useScrollRestore } from '@/hooks/useUX'
 import PullToRefreshIndicator from '@/components/shared/PullToRefresh'
 import LazyImage from '@/components/ui/LazyImage'
@@ -458,7 +458,7 @@ export default function HomePage() {
         </div>
       </div>
     
-      <RecentlyViewed onPress={(p) => navigate(`/product/${p.slug || p.id}`)} />
+      <ProductRail title="Vistos recentemente" icon="🕒" endpoint="/api/v1/recommendations/recently-viewed/" minItems={3} />
       <RecommendationCarousel title="Tendências em Angola" type="trending" />
       <RecommendationCarousel title="Recomendado para si" type="personalised" />
       <HelperBot screen="home" isSeller={false} />

@@ -45,6 +45,11 @@ class CheckoutService:
         if single and single not in codes:
             codes.append(single)
         self.coupon_codes = [str(c).strip().upper() for c in codes if str(c).strip()]
+        # Loyalty store credit redemption (whole-Kz amount)
+        try:
+            self.use_store_credit = max(0, int(float(data.get('use_store_credit', 0))))
+        except (TypeError, ValueError):
+            self.use_store_credit = 0
         # Idempotency key — client generates once, retries use same key
         self.idempotency_key = data.get('idempotency_key') or str(uuid.uuid4())
 
@@ -115,10 +120,14 @@ class CheckoutService:
         # 5. Apply coupons — returns per-seller discount Decimal + applied codes
         coupon_result = self._apply_coupons(seller_items)
 
+        # 5b. Apply store credit (loyalty redemption) — splits proportionally
+        credit_result = self._apply_store_credit(seller_items, coupon_result['per_seller'])
+
         # 6. Create one order per seller, passing each seller's allocated discount
         orders = []
         for seller, items in seller_items.items():
             seller_discount = coupon_result['per_seller'].get(seller.id, Decimal('0'))
+            seller_discount += credit_result['per_seller'].get(seller.id, Decimal('0'))
             order = self._create_order(seller, items, address, seller_discount,
                                        coupon_result['codes_used'], orders)
             orders.append(order)
@@ -159,6 +168,56 @@ class CheckoutService:
             return ShippingAddress.objects.get(pk=self.address_id, user=self.user)
         except ShippingAddress.DoesNotExist:
             raise CheckoutError("Shipping address not found.")
+
+    def _apply_store_credit(self, seller_items, coupon_per_seller):
+        """Redeem the user's store_credit balance against this checkout.
+
+        Capped at min(requested, balance, sum(seller_subtotals_after_coupon)).
+        Splits proportionally across sellers based on remaining subtotal.
+        Atomically decrements the user's balance.
+        """
+        empty = {'per_seller': {}, 'amount': Decimal('0')}
+        if self.use_store_credit <= 0:
+            return empty
+
+        from django.db import transaction
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        # Compute per-seller subtotals net of coupon discount
+        remaining = {}
+        for seller, items in seller_items.items():
+            sub = sum(
+                ((it.price_at_add or it.product.price) * it.quantity for it in items),
+                Decimal('0')
+            )
+            sub_after = sub - coupon_per_seller.get(seller.id, Decimal('0'))
+            remaining[seller.id] = max(sub_after, Decimal('0'))
+        total_remaining = sum(remaining.values(), Decimal('0'))
+        if total_remaining <= 0:
+            return empty
+
+        # Lock user row, cap requested amount at current balance
+        with transaction.atomic():
+            locked = User.objects.select_for_update().get(pk=self.user.pk)
+            balance = Decimal(str(locked.store_credit or 0))
+            requested = Decimal(str(self.use_store_credit))
+            applied = min(requested, balance, total_remaining)
+            if applied <= 0:
+                return empty
+            locked.store_credit = balance - applied
+            locked.save(update_fields=['store_credit'])
+            self.user.store_credit = locked.store_credit  # keep instance fresh
+
+        # Split proportionally
+        per_seller = {}
+        for sid, rem in remaining.items():
+            if rem <= 0:
+                continue
+            share = (applied * rem / total_remaining).quantize(Decimal('0.01'))
+            per_seller[sid] = share
+
+        return {'per_seller': per_seller, 'amount': applied}
 
     def _apply_coupons(self, seller_items):
         """Validate coupon codes with stacking rules and return per-seller discounts.

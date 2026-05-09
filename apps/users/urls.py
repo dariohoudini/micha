@@ -11,7 +11,7 @@ from .views import (
     Setup2FAView, Enable2FAView, Disable2FAView,
     DataExportView,
     SessionListView, RevokeSessionView,
-    ReferralView, LoyaltyView, RedeemPointsView,
+    ReferralView, LoyaltyView, RedeemPointsView, DailyCheckinView,
 )
 
 urlpatterns = [
@@ -54,6 +54,7 @@ urlpatterns = [
     path('referral/', ReferralView.as_view(), name='referral'),
     path('loyalty/', LoyaltyView.as_view(), name='loyalty'),
     path('loyalty/redeem/', RedeemPointsView.as_view(), name='redeem-points'),
+    path('checkin/', DailyCheckinView.as_view(), name='daily-checkin'),
 
     path('accept-terms/', AcceptTermsView.as_view(), name='accept-terms'),
 

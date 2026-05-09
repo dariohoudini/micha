@@ -18,6 +18,7 @@ import PullToRefreshIndicator from '@/components/shared/PullToRefresh'
 import LazyImage from '@/components/ui/LazyImage'
 import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import FlashSaleBanner from '@/components/buyer/FlashSaleBanner'
+import DailyCheckinCard from '@/components/buyer/DailyCheckinCard'
 import CategoryPills from '@/components/buyer/CategoryPills'
 
 
@@ -393,6 +394,7 @@ export default function HomePage() {
       </div>
 
       {/* Flash sales */}
+      <DailyCheckinCard />
       <FlashSaleBanner />
 
       {/* Quiz banner */}

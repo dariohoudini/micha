@@ -501,3 +501,22 @@ class PasswordHistory(models.Model):
         )
         if old_ids:
             cls.objects.filter(id__in=old_ids).delete()
+
+
+class DailyCheckin(models.Model):
+    """One row per user per UTC date — drives the streak counter."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='daily_checkins')
+    date = models.DateField()
+    points_awarded = models.PositiveIntegerField(default=0)
+    streak_day = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'date')
+        ordering = ['-date']
+        indexes = [models.Index(fields=['user', '-date'])]
+
+    @classmethod
+    def points_for_streak(cls, streak_day):
+        """5 base + 1 per streak day (capped at 15 → so day-1=6, day-7=12, day-10+=15)."""
+        return min(15, 5 + streak_day)

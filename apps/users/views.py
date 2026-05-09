@@ -627,6 +627,67 @@ class RedeemPointsView(APIView):
                          'store_credit': str(request.user.store_credit)})
 
 
+class DailyCheckinView(APIView):
+    """GET  /api/v1/auth/checkin/   — current streak + whether today is claimable
+    POST /api/v1/auth/checkin/   — claim today's points (idempotent within the same UTC day)
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def _streak(self, user, today):
+        from apps.users.models import DailyCheckin
+        from datetime import timedelta
+        latest = DailyCheckin.objects.filter(user=user).order_by('-date').first()
+        if not latest:
+            return 0, False  # streak length, claimed_today
+        if latest.date == today:
+            return latest.streak_day, True
+        if latest.date == today - timedelta(days=1):
+            return latest.streak_day, False
+        return 0, False
+
+    def get(self, request):
+        from datetime import date
+        today = date.today()
+        streak, claimed_today = self._streak(request.user, today)
+        next_streak_day = streak + 1 if not claimed_today else streak
+        from apps.users.models import DailyCheckin
+        return Response({
+            'streak_days': streak,
+            'claimed_today': claimed_today,
+            'next_reward_points': DailyCheckin.points_for_streak(next_streak_day),
+            'points_balance': request.user.loyalty_points,
+        })
+
+    def post(self, request):
+        from apps.users.models import DailyCheckin
+        from django.db import transaction
+        from datetime import date, timedelta
+        today = date.today()
+        with transaction.atomic():
+            existing = DailyCheckin.objects.filter(user=request.user, date=today).first()
+            if existing:
+                return Response({
+                    'detail': 'Já fez check-in hoje.',
+                    'streak_days': existing.streak_day,
+                    'points_awarded': existing.points_awarded,
+                    'points_balance': request.user.loyalty_points,
+                }, status=200)
+            yesterday = DailyCheckin.objects.filter(user=request.user, date=today - timedelta(days=1)).first()
+            streak_day = (yesterday.streak_day + 1) if yesterday else 1
+            points = DailyCheckin.points_for_streak(streak_day)
+            DailyCheckin.objects.create(
+                user=request.user, date=today,
+                streak_day=streak_day, points_awarded=points,
+            )
+            request.user.add_loyalty_points(points)
+        return Response({
+            'detail': '+{} pontos!'.format(points),
+            'streak_days': streak_day,
+            'points_awarded': points,
+            'points_balance': request.user.loyalty_points,
+        }, status=201)
+
+
 class AcceptTermsView(APIView):
     """POST /api/v1/auth/accept-terms/ — Re-accept updated T&C."""
     permission_classes = [permissions.IsAuthenticated]

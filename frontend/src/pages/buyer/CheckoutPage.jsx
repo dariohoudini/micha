@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
@@ -32,8 +32,21 @@ export default function CheckoutPage() {
   const [couponLoading, setCouponLoading] = useState(false)
   const [couponError, setCouponError] = useState('')
   const [appliedCoupons, setAppliedCoupons] = useState([]) // [{code, discount_amount, scope, seller_name, ...}]
+  const [storeCredit, setStoreCredit] = useState(0)
+  const [useCredit, setUseCredit] = useState(false)
 
-  const discountAmount = appliedCoupons.reduce((sum, c) => sum + Number(c.discount_amount || 0), 0)
+  // Load buyer's loyalty balance once on mount
+  useEffect(() => {
+    client.get('/api/v1/auth/loyalty/')
+      .then(r => setStoreCredit(Number(r.data.store_credit || 0)))
+      .catch(() => {})
+  }, [])
+
+  const couponDiscount = appliedCoupons.reduce((sum, c) => sum + Number(c.discount_amount || 0), 0)
+  // Cap credit at remaining total after coupons
+  const subtotalAfterCoupons = Math.max(0, total - couponDiscount)
+  const creditApplied = useCredit ? Math.min(storeCredit, subtotalAfterCoupons) : 0
+  const discountAmount = couponDiscount + creditApplied
   const finalTotal = Math.max(0, total - discountAmount)
 
   const platformCount = appliedCoupons.filter(c => c.scope === 'platform').length
@@ -89,6 +102,7 @@ export default function CheckoutPage() {
         payment_method: payment,
         items: cartItems.map(i => ({ product: i.product?.id || i.id, quantity: i.quantity || 1 })),
         ...(appliedCoupons.length > 0 ? { coupon_codes: appliedCoupons.map(c => c.code) } : {}),
+        ...(useCredit && creditApplied > 0 ? { use_store_credit: Math.floor(creditApplied) } : {}),
       })
       useCartStore.getState().clearCart()
       client.delete('/api/v1/cart/clear/').catch(() => {})
@@ -158,6 +172,27 @@ export default function CheckoutPage() {
             </div>
           </div>
 
+          {/* Store credit (loyalty balance) */}
+          {storeCredit > 0 && (
+            <div style={{ background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ ...S, fontSize: 13, fontWeight: 600, color: '#FFF', margin: 0 }}>
+                  🪙 Usar saldo de fidelidade
+                </p>
+                <p style={{ ...S, fontSize: 11, color: '#9A9A9A', margin: '2px 0 0' }}>
+                  Disponível: <span style={{ color: '#C9A84C', fontWeight: 600 }}>{storeCredit.toLocaleString()} Kz</span>
+                  {useCredit && creditApplied > 0 && (
+                    <> · A aplicar: <span style={{ color: '#059669', fontWeight: 600 }}>−{creditApplied.toLocaleString()} Kz</span></>
+                  )}
+                </p>
+              </div>
+              <div onClick={() => setUseCredit(v => !v)}
+                style={{ width: 44, height: 24, borderRadius: 12, background: useCredit ? '#C9A84C' : '#2A2A2A', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}>
+                <div style={{ position: 'absolute', top: 3, left: useCredit ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#FFF', transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }} />
+              </div>
+            </div>
+          )}
+
           {/* Promo code */}
           <div>
             <h2 style={{ ...S, fontSize: 14, fontWeight: 700, color: '#FFFFFF', marginBottom: 4 }}>🎟️ Códigos promocionais</h2>
@@ -218,6 +253,12 @@ export default function CheckoutPage() {
                   <span style={{ ...S, fontSize: 13, color: '#059669' }}>−{fmt(c.discount_amount)}</span>
                 </div>
               ))}
+              {creditApplied > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ ...S, fontSize: 13, color: '#059669' }}>🪙 Saldo de fidelidade</span>
+                  <span style={{ ...S, fontSize: 13, color: '#059669' }}>−{fmt(creditApplied)}</span>
+                </div>
+              )}
               <div style={{ borderTop: '1px solid #1E1E1E', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ ...S, fontSize: 15, fontWeight: 700, color: '#FFF' }}>Total a pagar</span>
                 <span style={{ ...S, fontSize: 17, fontWeight: 700, color: '#C9A84C' }}>{fmt(finalTotal)}</span>

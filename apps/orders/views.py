@@ -122,6 +122,14 @@ class ConfirmDeliveryView(APIView):
             order.update_status("delivered", changed_by=request.user, note="Confirmed by buyer")
             from apps.orders.tasks import release_order_escrow
             release_order_escrow.delay(str(order.id))
+            # Loyalty cashback: 1 point per Kz spent (= 1% back, since 100 pts = 1 Kz),
+            # capped at 50 000 pts (500 Kz) per order to limit fraud impact.
+            try:
+                points = min(50000, int(order.total))
+                if points > 0:
+                    request.user.add_loyalty_points(points)
+            except Exception:
+                pass
         return Response({"detail": "Delivery confirmed."})
 
 

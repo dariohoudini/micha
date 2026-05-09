@@ -214,6 +214,33 @@ class SellerProductListView(generics.ListAPIView):
         ).select_related("store", "category").prefetch_related("images")
 
 
+def _save_price_tiers(product, tiers_payload):
+    """Replace product's price_tiers with the given list."""
+    import json
+    from apps.products.models import PriceTier
+    if isinstance(tiers_payload, str):
+        try:
+            tiers_payload = json.loads(tiers_payload)
+        except Exception:
+            return
+    if not isinstance(tiers_payload, list):
+        return
+    product.price_tiers.all().delete()
+    seen_quantities = set()
+    for t in tiers_payload:
+        try:
+            min_q = int(t.get('min_quantity'))
+            unit_price = float(t.get('unit_price'))
+        except (TypeError, ValueError):
+            continue
+        if min_q < 2 or min_q in seen_quantities or unit_price <= 0:
+            continue
+        seen_quantities.add(min_q)
+        PriceTier.objects.create(
+            product=product, min_quantity=min_q, unit_price=unit_price,
+        )
+
+
 def _save_variant_combos(product, combos_payload):
     """Replace product's variant_combos with the given list.
     combos_payload: list of dicts with options, price, quantity, sku (optional).
@@ -259,6 +286,9 @@ class ProductCreateView(generics.CreateAPIView):
         combos = self.request.data.get('variant_combos')
         if combos:
             _save_variant_combos(product, combos)
+        tiers = self.request.data.get('price_tiers')
+        if tiers:
+            _save_price_tiers(product, tiers)
 
 
 class ProductUpdateView(generics.UpdateAPIView):
@@ -272,6 +302,8 @@ class ProductUpdateView(generics.UpdateAPIView):
         product = serializer.save()
         if 'variant_combos' in self.request.data:
             _save_variant_combos(product, self.request.data.get('variant_combos'))
+        if 'price_tiers' in self.request.data:
+            _save_price_tiers(product, self.request.data.get('price_tiers'))
 
 
 class ProductImageUploadView(APIView):

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
 import VariantsBuilder from '@/components/seller/VariantsBuilder'
+import PriceTiersBuilder from '@/components/seller/PriceTiersBuilder'
 
 const CATEGORIES = ['Moda', 'Tecnologia', 'Casa & Jardim', 'Beleza', 'Alimentação', 'Desporto', 'Crianças', 'Arte & Artesanato', 'Acessórios', 'Outro']
 const CONDITIONS = [{ value: 'new', label: 'Novo' }, { value: 'used', label: 'Usado' }, { value: 'refurbished', label: 'Recondicionado' }]
@@ -30,6 +31,8 @@ export default function SellerProductNewPage() {
   })
   const [variantAxes, setVariantAxes] = useState([])
   const [variantCombos, setVariantCombos] = useState([])
+  const [priceTiers, setPriceTiers] = useState([])
+  const [hasTiers, setHasTiers] = useState(false)
 
   const discount = form.price && form.original_price && Number(form.original_price) > Number(form.price)
     ? Math.round((1 - Number(form.price) / Number(form.original_price)) * 100) : null
@@ -111,6 +114,14 @@ export default function SellerProductNewPage() {
           }))
         if (cleaned.length > 0) {
           fd.append('variant_combos', JSON.stringify(cleaned))
+        }
+      }
+      if (hasTiers && priceTiers.length > 0) {
+        const cleanedTiers = priceTiers
+          .filter(t => Number(t.min_quantity) >= 2 && Number(t.unit_price) > 0)
+          .map(t => ({ min_quantity: Number(t.min_quantity), unit_price: Number(t.unit_price) }))
+        if (cleanedTiers.length > 0) {
+          fd.append('price_tiers', JSON.stringify(cleanedTiers))
         }
       }
 
@@ -316,6 +327,30 @@ export default function SellerProductNewPage() {
                   setVariantCombos(nextCombos)
                 }}
               />
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: '14px 16px' }}>
+              <div>
+                <p style={{ ...S, fontSize: 14, fontWeight: 500, color: '#FFF' }}>Preços por quantidade?</p>
+                <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>Ex: a partir de 5 unidades, preço mais baixo (não disponível com variantes)</p>
+              </div>
+              <div onClick={() => setHasTiers(v => !v)}
+                style={{ width: 44, height: 24, borderRadius: 12, background: hasTiers ? '#C9A84C' : '#2A2A2A', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}>
+                <div style={{ position: 'absolute', top: 3, left: hasTiers ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#FFF', transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }} />
+              </div>
+            </div>
+
+            {hasTiers && !form.has_variants && (
+              <PriceTiersBuilder
+                tiers={priceTiers}
+                basePrice={form.price}
+                onChange={setPriceTiers}
+              />
+            )}
+            {hasTiers && form.has_variants && (
+              <p style={{ ...S, fontSize: 11, color: '#f59e0b', padding: '0 4px' }}>
+                ⚠️ Variantes e escalas de preço não podem ser combinadas — desactiva uma.
+              </p>
             )}
           </>}
 

@@ -72,7 +72,14 @@ class CartItem(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.pk:
-            self.price_at_add = self.variant_combo.price if self.variant_combo else self.product.price
+            if self.variant_combo:
+                self.price_at_add = self.variant_combo.price
+            else:
+                # Bulk pricing: pick the best qualifying tier for this quantity
+                from apps.products.models import PriceTier
+                self.price_at_add = PriceTier.price_for_quantity(
+                    self.product, self.quantity, self.product.price
+                )
         else:
             # Increment version on every update — detect concurrent changes
             self.version = F("version") + 1

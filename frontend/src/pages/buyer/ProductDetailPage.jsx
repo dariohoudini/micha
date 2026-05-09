@@ -260,9 +260,20 @@ export default function ProductDetailPage() {
   const hasVariants = variantAxes.length > 0
   const selectedCombo = hasVariants ? findMatchingCombo(variantCombos, selectedOptions) : null
   const variantsComplete = !hasVariants || !!selectedCombo
+  // Bulk-pricing tiers (only apply when no variant + no flash sale)
+  const priceTiers = (product?.price_tiers || []).slice().sort((a, b) => a.min_quantity - b.min_quantity)
+  const hasTiers = priceTiers.length > 0 && !selectedCombo
+
+  const tierUnitPrice = (qty) => {
+    if (!hasTiers) return null
+    const match = [...priceTiers].reverse().find(t => qty >= Number(t.min_quantity))
+    return match ? Number(match.unit_price) : null
+  }
+  const tierPrice = !flashSale && !selectedCombo ? tierUnitPrice(quantity) : null
+
   // Flash-sale price wins when no variant is selected
   const flashPrice = !selectedCombo && flashSale ? Number(flashSale.sale.sale_price) : null
-  const effectivePrice = flashPrice ?? selectedCombo?.price ?? product?.price
+  const effectivePrice = flashPrice ?? tierPrice ?? selectedCombo?.price ?? product?.price
   const effectiveStock = selectedCombo?.quantity ?? product?.quantity
 
   const handleVariantSelect = (axisName, value) => {
@@ -399,6 +410,54 @@ export default function ProductDetailPage() {
           {product.avg_rating > 0 && (
             <div style={{ marginBottom: 12 }}>
               <StarRating rating={product.avg_rating} count={product.review_count || 0} />
+            </div>
+          )}
+
+          {/* Bulk pricing tiers */}
+          {hasTiers && (
+            <div style={{ background: '#141414', border: '1px solid #1E1E1E', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600, color: '#9A9A9A', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                💰 Preços por quantidade
+              </p>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {/* Base tier (1 unit) */}
+                <div style={{
+                  padding: '8px 12px', borderRadius: 10,
+                  border: `1px solid ${quantity < (priceTiers[0]?.min_quantity || 999) ? '#C9A84C' : '#2A2A2A'}`,
+                  background: quantity < (priceTiers[0]?.min_quantity || 999) ? 'rgba(201,168,76,0.08)' : 'transparent',
+                  textAlign: 'center', minWidth: 70,
+                }}>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#9A9A9A', margin: 0 }}>1 un</p>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: '#C9A84C', margin: '2px 0 0' }}>
+                    {Number(product.price).toLocaleString()} Kz
+                  </p>
+                </div>
+                {priceTiers.map((tier, i) => {
+                  const isActive = quantity >= Number(tier.min_quantity) &&
+                    (i === priceTiers.length - 1 || quantity < Number(priceTiers[i + 1].min_quantity))
+                  const savings = Math.round((1 - Number(tier.unit_price) / Number(product.price)) * 100)
+                  return (
+                    <div key={tier.id} style={{
+                      padding: '8px 12px', borderRadius: 10,
+                      border: `1px solid ${isActive ? '#C9A84C' : '#2A2A2A'}`,
+                      background: isActive ? 'rgba(201,168,76,0.08)' : 'transparent',
+                      textAlign: 'center', minWidth: 70, position: 'relative',
+                    }}>
+                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#9A9A9A', margin: 0 }}>
+                        {tier.min_quantity}+ un
+                      </p>
+                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: '#C9A84C', margin: '2px 0 0' }}>
+                        {Number(tier.unit_price).toLocaleString()} Kz
+                      </p>
+                      {savings > 0 && (
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, color: '#059669', margin: '1px 0 0', fontWeight: 600 }}>
+                          −{savings}%
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
 

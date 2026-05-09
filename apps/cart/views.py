@@ -52,6 +52,12 @@ class AddToCartView(APIView):
                     status=400
                 )
             cart_item.quantity = new_qty
+            # Re-compute tier price for the new quantity (skip when variant set)
+            if not combo:
+                from apps.products.models import PriceTier
+                cart_item.price_at_add = PriceTier.price_for_quantity(
+                    product, new_qty, product.price
+                )
             cart_item.save()
 
         return Response(
@@ -87,6 +93,12 @@ class UpdateCartItemView(APIView):
             )
 
         item.quantity = quantity
+        # Re-compute tier price for the new quantity (skip when variant set)
+        if not item.variant_combo:
+            from apps.products.models import PriceTier
+            item.price_at_add = PriceTier.price_for_quantity(
+                item.product, quantity, item.product.price
+            )
         item.save()
         return Response(CartSerializer(cart, context={'request': request}).data)
 

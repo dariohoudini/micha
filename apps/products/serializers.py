@@ -4,8 +4,15 @@ FIX: DynamicFieldsMixin — ?fields=id,title,price returns only those fields
      Mobile apps no longer download 30 fields when they need 4
 """
 from rest_framework import serializers
-from .models import Product, Category, ProductImage, ProductQA
+from .models import Product, Category, ProductImage, ProductQA, PriceTier
 from apps.inventory.models import ProductVariantCombo
+
+
+class PriceTierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PriceTier
+        fields = ['id', 'min_quantity', 'unit_price']
+        read_only_fields = fields
 
 
 class VariantComboSerializer(serializers.ModelSerializer):
@@ -95,6 +102,7 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     tags = serializers.SlugRelatedField(many=True, slug_field="name", read_only=True)
     variant_combos = serializers.SerializerMethodField()
     variant_axes = serializers.SerializerMethodField()
+    price_tiers = PriceTierSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
@@ -108,14 +116,14 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
             "meta_title", "meta_description",
             "views", "add_to_cart_count", "wishlist_count",
             "store_name", "store_id", "category_name",
-            "tags", "images", "variant_combos", "variant_axes",
+            "tags", "images", "variant_combos", "variant_axes", "price_tiers",
             "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "slug", "discount_percentage", "is_low_stock",
             "views", "add_to_cart_count", "wishlist_count",
             "store_name", "store_id", "category_name",
-            "images", "variant_combos", "variant_axes",
+            "images", "variant_combos", "variant_axes", "price_tiers",
             "created_at", "updated_at",
         ]
 

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
 import VariantsBuilder from '@/components/seller/VariantsBuilder'
+import PriceTiersBuilder from '@/components/seller/PriceTiersBuilder'
 
 const CATEGORIES = ['Moda', 'Tecnologia', 'Casa & Jardim', 'Beleza', 'Alimentação', 'Desporto', 'Crianças', 'Arte & Artesanato', 'Acessórios', 'Outro']
 const CONDITIONS = [{ value: 'new', label: 'Novo' }, { value: 'used', label: 'Usado' }, { value: 'refurbished', label: 'Recondicionado' }]
@@ -32,6 +33,8 @@ export default function SellerProductEditPage() {
   })
   const [variantAxes, setVariantAxes] = useState([])
   const [variantCombos, setVariantCombos] = useState([])
+  const [priceTiers, setPriceTiers] = useState([])
+  const [hasTiers, setHasTiers] = useState(false)
 
   useEffect(() => {
     client.get(`/api/v1/products/${id}/`).then(r => {
@@ -73,6 +76,15 @@ export default function SellerProductEditPage() {
           price: String(c.price ?? ''),
           quantity: String(c.quantity ?? 0),
           sku: c.sku || '',
+        })))
+      }
+
+      // Hydrate price tiers
+      if (Array.isArray(p.price_tiers) && p.price_tiers.length > 0) {
+        setHasTiers(true)
+        setPriceTiers(p.price_tiers.map(t => ({
+          min_quantity: String(t.min_quantity),
+          unit_price: String(t.unit_price),
         })))
       }
     }).catch(() => {
@@ -167,6 +179,14 @@ export default function SellerProductEditPage() {
         } else if (!form.has_variants) {
           fd.append('variant_combos', JSON.stringify([]))
         }
+        if (hasTiers && !form.has_variants) {
+          const cleanedTiers = priceTiers
+            .filter(t => Number(t.min_quantity) >= 2 && Number(t.unit_price) > 0)
+            .map(t => ({ min_quantity: Number(t.min_quantity), unit_price: Number(t.unit_price) }))
+          fd.append('price_tiers', JSON.stringify(cleanedTiers))
+        } else {
+          fd.append('price_tiers', JSON.stringify([]))
+        }
         newImages.forEach((img, i) => {
           fd.append(i === 0 ? 'image' : `image_${i + 1}`, img.file, img.file.name)
         })
@@ -195,6 +215,11 @@ export default function SellerProductEditPage() {
                   quantity: Number(c.quantity || 0),
                   sku: c.sku || '',
                 }))
+            : [],
+          price_tiers: hasTiers && !form.has_variants
+            ? priceTiers
+                .filter(t => Number(t.min_quantity) >= 2 && Number(t.unit_price) > 0)
+                .map(t => ({ min_quantity: Number(t.min_quantity), unit_price: Number(t.unit_price) }))
             : [],
         })
       }
@@ -399,6 +424,30 @@ export default function SellerProductEditPage() {
                   setVariantCombos(nextCombos)
                 }}
               />
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#141414', borderRadius: 12, border: '1px solid #1E1E1E', padding: '14px 16px' }}>
+              <div>
+                <p style={{ ...S, fontSize: 14, fontWeight: 500, color: '#FFF' }}>Preços por quantidade?</p>
+                <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>Ex: a partir de 5 unidades, preço mais baixo</p>
+              </div>
+              <div onClick={() => setHasTiers(v => !v)}
+                style={{ width: 44, height: 24, borderRadius: 12, background: hasTiers ? '#C9A84C' : '#2A2A2A', position: 'relative', cursor: 'pointer', flexShrink: 0 }}>
+                <div style={{ position: 'absolute', top: 3, left: hasTiers ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#FFF', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }} />
+              </div>
+            </div>
+
+            {hasTiers && !form.has_variants && (
+              <PriceTiersBuilder
+                tiers={priceTiers}
+                basePrice={form.price}
+                onChange={setPriceTiers}
+              />
+            )}
+            {hasTiers && form.has_variants && (
+              <p style={{ ...S, fontSize: 11, color: '#f59e0b', padding: '0 4px' }}>
+                ⚠️ Variantes e escalas de preço não podem ser combinadas — desactiva uma.
+              </p>
             )}
           </>}
 

@@ -275,3 +275,36 @@ class ProductQA(models.Model):
         ordering = ['-created_at']
         indexes = [models.Index(fields=['product', 'is_published'])]
 
+
+class PriceTier(models.Model):
+    """Bulk pricing tier — "buy N+ get this unit price".
+
+    Example for a t-shirt:
+      base price = 3200 Kz
+      PriceTier(min_quantity=5, unit_price=2800)
+      PriceTier(min_quantity=10, unit_price=2400)
+    """
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='price_tiers')
+    min_quantity = models.PositiveIntegerField(help_text='Buyer must buy at least this many for this tier')
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        ordering = ['min_quantity']
+        unique_together = ('product', 'min_quantity')
+        indexes = [models.Index(fields=['product', 'min_quantity'])]
+
+    def __str__(self):
+        return f"{self.product.title} · {self.min_quantity}+ @ {self.unit_price}"
+
+    @classmethod
+    def price_for_quantity(cls, product, quantity, fallback):
+        """Return the best (lowest) tier unit_price that applies for the given quantity,
+        or `fallback` (typically product.price) when no tier qualifies."""
+        try:
+            tier = cls.objects.filter(
+                product=product, min_quantity__lte=quantity
+            ).order_by('-min_quantity').first()
+            return tier.unit_price if tier else fallback
+        except Exception:
+            return fallback
+

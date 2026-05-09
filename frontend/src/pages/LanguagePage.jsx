@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import i18n from '@/i18n'
+import client from '@/api/client'
 
 const languages = [
   {
@@ -49,6 +51,9 @@ export default function LanguagePage() {
 
   const handleContinue = () => {
     localStorage.setItem('lang', selected)
+    i18n.changeLanguage(selected)
+    // Best-effort: tell the server (silent if unauthenticated)
+    client.patch('/api/v1/auth/profile/update/', { language: selected }).catch(() => {})
     navigate('/welcome')
   }
 

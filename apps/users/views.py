@@ -382,6 +382,18 @@ class UpdateProfileView(generics.UpdateAPIView):
         profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
         return profile
 
+    def patch(self, request, *args, **kwargs):
+        # Allow updating language/currency on the User row alongside profile fields
+        ALLOWED_USER_FIELDS = {'language', 'currency', 'dark_mode'}
+        user_updates = {k: v for k, v in request.data.items() if k in ALLOWED_USER_FIELDS}
+        if user_updates:
+            for k, v in user_updates.items():
+                if k == 'language' and v not in ('pt', 'en'):
+                    continue
+                setattr(request.user, k, v)
+            request.user.save(update_fields=list(user_updates.keys()))
+        return super().patch(request, *args, **kwargs)
+
 
 class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]

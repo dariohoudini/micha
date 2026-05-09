@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { tokenStorage } from '@/api/tokenStorage'
+import i18n from '@/i18n'
+
+const syncLanguage = (user) => {
+  const lang = user?.language
+  if (lang && lang !== i18n.language) {
+    i18n.changeLanguage(lang)
+    try { localStorage.setItem('lang', lang) } catch {}
+  }
+}
 
 export const useAuthStore = create(
   persist(
@@ -16,6 +25,7 @@ export const useAuthStore = create(
         const user = tokenStorage.getUser()
         const hasRefresh = !!tokenStorage.getRefreshToken()
         if (user && hasRefresh) {
+          syncLanguage(user)
           set({ user, isAuth: true, isSeller: user.is_seller || false, isStaff: user.is_staff || false, loading: false })
         } else {
           set({ loading: false })
@@ -26,6 +36,7 @@ export const useAuthStore = create(
         tokenStorage.setAccessToken(tokens.access)
         tokenStorage.setRefreshToken(tokens.refresh)
         tokenStorage.setUser(userData)
+        syncLanguage(userData)
         set({ user: userData, isAuth: true, isSeller: userData.is_seller || false, isStaff: userData.is_staff || false })
       },
 

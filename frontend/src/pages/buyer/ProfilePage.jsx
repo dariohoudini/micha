@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import { useAuthStore } from '@/stores/authStore'
 import client from '@/api/client'
+import LanguageSwitcher from '@/components/buyer/LanguageSwitcher'
 
 const MENU_SECTIONS = [
   {
@@ -124,6 +125,11 @@ export default function ProfilePage() {
             </div>
           </div>
         )}
+
+        {/* Settings: language */}
+        <div style={{ padding: '8px 16px 0' }}>
+          <LanguageSwitcher />
+        </div>
 
         {/* Menu */}
         <div style={{ padding: '8px 16px 0' }}>

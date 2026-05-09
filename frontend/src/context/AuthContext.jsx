@@ -33,7 +33,7 @@ export function AuthProvider({ children }) {
     // Optionally call backend to blacklist token
     try {
       const { default: api } = await import('@/api/client')
-      await api.post('/auth/logout/', {
+      await api.post('/api/v1/auth/logout/', {
         refresh: tokenStorage.getRefreshToken(),
       })
     } catch {

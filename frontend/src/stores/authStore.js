@@ -32,7 +32,7 @@ export const useAuthStore = create(
       logout: async () => {
         try {
           const { default: api } = await import('@/api/client')
-          await api.post('/auth/logout/', { refresh: tokenStorage.getRefreshToken() })
+          await api.post('/api/v1/auth/logout/', { refresh: tokenStorage.getRefreshToken() })
         } catch {}
         tokenStorage.clearAll()
         set({ user: null, isAuth: false, isSeller: false, isStaff: false })

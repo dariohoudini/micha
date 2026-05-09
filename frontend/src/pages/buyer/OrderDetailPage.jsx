@@ -3,6 +3,21 @@ import { useNavigate, useParams } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import { useOrder } from '@/hooks/useQueries'
 import client from '@/api/client'
+import ReturnFilingModal from '@/components/buyer/ReturnFilingModal'
+
+const RETURN_STATUS = {
+  pending:   { label: 'Em análise',  color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
+  approved:  { label: 'Aprovada',    color: '#059669', bg: 'rgba(5,150,105,0.1)' },
+  rejected:  { label: 'Rejeitada',   color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
+  completed: { label: 'Concluída',   color: '#059669', bg: 'rgba(5,150,105,0.1)' },
+}
+const RETURN_REASON_LABELS = {
+  damaged: 'Produto danificado',
+  wrong_item: 'Item errado',
+  not_as_described: 'Não como descrito',
+  missing_parts: 'Peças em falta',
+  changed_mind: 'Mudei de ideias',
+}
 
 const TRACKING_ICONS = {
   pending:         'M12 6v6l4 2',                                                      // clock
@@ -167,6 +182,9 @@ export default function OrderDetailPage() {
   const navigate = useNavigate()
   const { data: order, isLoading, refetch } = useOrder(id)
   const [tracking, setTracking] = useState(null)
+  const [returnReq, setReturnReq] = useState(null)
+  const [returnLoaded, setReturnLoaded] = useState(false)
+  const [showReturnModal, setShowReturnModal] = useState(false)
 
   const loadTracking = useCallback(() => {
     if (!id) return
@@ -175,7 +193,16 @@ export default function OrderDetailPage() {
       .catch(() => {})
   }, [id])
 
+  const loadReturn = useCallback(() => {
+    if (!id) return
+    client.get(`/api/v1/orders/${id}/return/`)
+      .then(r => setReturnReq(r.data))
+      .catch(() => setReturnReq(null))
+      .finally(() => setReturnLoaded(true))
+  }, [id])
+
   useEffect(() => { loadTracking() }, [loadTracking])
+  useEffect(() => { loadReturn() }, [loadReturn])
 
   // Auto-poll while order is in-flight
   useEffect(() => {
@@ -332,6 +359,34 @@ export default function OrderDetailPage() {
             </div>
           </div>
 
+          {/* Return request status (when one exists) */}
+          {returnReq && (
+            <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <h3 style={{ ...S, fontSize: 14, fontWeight: 600, color: '#FFF' }}>Devolução</h3>
+                {returnReq.status && RETURN_STATUS[returnReq.status] && (
+                  <span style={{ ...S, fontSize: 11, fontWeight: 600, color: RETURN_STATUS[returnReq.status].color, background: RETURN_STATUS[returnReq.status].bg, padding: '3px 10px', borderRadius: 20 }}>
+                    {RETURN_STATUS[returnReq.status].label}
+                  </span>
+                )}
+              </div>
+              <p style={{ ...S, fontSize: 12, color: '#9A9A9A', margin: 0 }}>
+                Motivo: <span style={{ color: '#FFF' }}>{RETURN_REASON_LABELS[returnReq.reason] || returnReq.reason}</span>
+              </p>
+              {returnReq.description && (
+                <p style={{ ...S, fontSize: 12, color: '#CCC', margin: '6px 0 0', lineHeight: 1.5 }}>{returnReq.description}</p>
+              )}
+              {returnReq.photo_url && (
+                <img src={returnReq.photo_url} alt="" style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', marginTop: 8, border: '1px solid #2A2A2A' }} />
+              )}
+              {returnReq.admin_note && (
+                <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginTop: 10, padding: '8px 10px', borderLeft: '2px solid #C9A84C', background: '#0A0A0A' }}>
+                  <strong style={{ color: '#C9A84C' }}>Resposta:</strong> {returnReq.admin_note}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Actions */}
           <div style={{ display: 'flex', gap: 10 }}>
             {order.status !== 'delivered' && order.status !== 'cancelled' && (
@@ -349,6 +404,11 @@ export default function OrderDetailPage() {
                 Disputar
               </button>
             )}
+            {(order.status === 'delivered' || order.status === 'completed') && returnLoaded && !returnReq && (
+              <button onClick={() => setShowReturnModal(true)} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid #2A2A2A', background: '#141414', ...S, fontSize: 14, fontWeight: 600, color: '#FFF', cursor: 'pointer' }}>
+                Devolver
+              </button>
+            )}
             {order.status === 'pending' && (
               <button onClick={async () => {
                 try {
@@ -362,6 +422,14 @@ export default function OrderDetailPage() {
           </div>
         </div>
       </div>
+
+      {showReturnModal && (
+        <ReturnFilingModal
+          orderId={order.id}
+          onClose={() => setShowReturnModal(false)}
+          onSuccess={(data) => setReturnReq(data)}
+        />
+      )}
     </BuyerLayout>
   )
 }

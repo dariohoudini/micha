@@ -268,28 +268,65 @@ class PackingSlipView(APIView):
 
 
 class ReturnRequestCreateView(APIView):
-    """POST /api/v1/orders/<uuid>/return/ — Submit a return request."""
+    """GET /api/v1/orders/<uuid>/return/  — read existing return request.
+    POST /api/v1/orders/<uuid>/return/  — submit a return request (multipart for photo).
+    """
+    from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    VALID_REASONS = {'wrong_item', 'damaged', 'not_as_described', 'missing_parts', 'changed_mind'}
+    VALID_PICKUPS = {'pickup', 'dropoff'}
+
+    def _serialize(self, ret, request):
+        photo_url = None
+        if ret.photo:
+            try:
+                photo_url = request.build_absolute_uri(ret.photo.url)
+            except Exception:
+                photo_url = ret.photo.url
+        return {
+            'id': ret.id,
+            'status': ret.status,
+            'reason': ret.reason,
+            'description': ret.description,
+            'pickup_method': ret.pickup_method,
+            'photo_url': photo_url,
+            'admin_note': ret.admin_note,
+            'created_at': ret.created_at,
+            'updated_at': ret.updated_at,
+        }
 
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ('delivered', 'completed'):
-            return Response({'error': 'Can only return delivered orders.'}, status=400)
+            return Response({'error': 'invalid_status', 'detail': 'Só pode pedir devolução de pedidos entregues.'}, status=400)
         from apps.orders.return_models import ReturnRequest
         if ReturnRequest.objects.filter(order=order, buyer=request.user).exists():
-            return Response({'error': 'Return request already submitted.'}, status=400)
+            return Response({'error': 'duplicate', 'detail': 'Pedido de devolução já submetido.'}, status=400)
+
+        reason = (request.data.get('reason') or '').strip()
+        if reason not in self.VALID_REASONS:
+            return Response({'error': 'validation_error', 'detail': 'Motivo inválido.'}, status=400)
+
+        pickup_method = (request.data.get('pickup_method') or 'pickup').strip()
+        if pickup_method not in self.VALID_PICKUPS:
+            pickup_method = 'pickup'
+
+        description = (request.data.get('description') or '').strip()[:2000]
+        photo = request.FILES.get('photo')
+
         ret = ReturnRequest.objects.create(
             order=order,
             buyer=request.user,
-            reason=request.data.get('reason', 'other'),
-            description=request.data.get('description', ''),
-            pickup_method=request.data.get('pickup_method', 'pickup'),
+            reason=reason,
+            description=description,
+            pickup_method=pickup_method,
+            photo=photo,
         )
         return Response({
-            'id': ret.id,
-            'status': ret.status,
-            'reason': ret.reason,
-            'detail': 'Return request submitted. We will contact you within 24 hours.'
+            **self._serialize(ret, request),
+            'detail': 'Pedido de devolução submetido. Entraremos em contacto em até 24h.'
         }, status=201)
 
     def get(self, request, pk):
@@ -297,9 +334,9 @@ class ReturnRequestCreateView(APIView):
         from apps.orders.return_models import ReturnRequest
         try:
             ret = ReturnRequest.objects.get(order=order, buyer=request.user)
-            return Response({'id': ret.id, 'status': ret.status, 'reason': ret.reason, 'created_at': ret.created_at})
+            return Response(self._serialize(ret, request))
         except ReturnRequest.DoesNotExist:
-            return Response({'error': 'No return request found.'}, status=404)
+            return Response({'error': 'not_found', 'detail': 'Sem pedido de devolução.'}, status=404)
 
 
 class OrderTrackingEventSerializer(serializers.ModelSerializer):

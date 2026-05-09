@@ -80,7 +80,16 @@ class CheckoutService:
             product = item.product
             if not product.is_active or product.is_archived:
                 raise CheckoutError(f"'{product.title}' is no longer available.")
-            if product.quantity < item.quantity:
+            if item.variant_combo:
+                combo = item.variant_combo
+                if not combo.is_active:
+                    raise CheckoutError(f"'{product.title}' variant is no longer available.")
+                if combo.quantity < item.quantity:
+                    raise CheckoutError(
+                        f"'{product.title}' ({combo.label}) only has {combo.quantity} left. "
+                        f"You requested {item.quantity}."
+                    )
+            elif product.quantity < item.quantity:
                 raise CheckoutError(
                     f"'{product.title}' only has {product.quantity} left. "
                     f"You requested {item.quantity}."
@@ -106,14 +115,26 @@ class CheckoutService:
             orders.append(order)
 
         # 7. Deduct stock atomically (with row locks)
+        from apps.inventory.models import ProductVariantCombo
         for item in validated_items:
-            product = Product.objects.select_for_update(of=("self",)).get(pk=item.product.pk)
-            if product.quantity < item.quantity:
-                raise CheckoutError(f"Stock changed for '{product.title}'. Please refresh your cart.")
-            product.quantity -= item.quantity
-            if product.quantity == 0:
-                product.is_active = False
-            product.save(update_fields=['quantity', 'is_active'])
+            if item.variant_combo_id:
+                combo = ProductVariantCombo.objects.select_for_update(of=("self",)).get(pk=item.variant_combo_id)
+                if combo.quantity < item.quantity:
+                    raise CheckoutError(
+                        f"Stock changed for '{item.product.title}' ({combo.label}). Please refresh your cart."
+                    )
+                combo.quantity -= item.quantity
+                if combo.quantity == 0:
+                    combo.is_active = False
+                combo.save(update_fields=['quantity', 'is_active'])
+            else:
+                product = Product.objects.select_for_update(of=("self",)).get(pk=item.product.pk)
+                if product.quantity < item.quantity:
+                    raise CheckoutError(f"Stock changed for '{product.title}'. Please refresh your cart.")
+                product.quantity -= item.quantity
+                if product.quantity == 0:
+                    product.is_active = False
+                product.save(update_fields=['quantity', 'is_active'])
 
         # 8. Clear cart
         cart_items.delete()
@@ -218,15 +239,18 @@ class CheckoutService:
             payment_status='pending',
         )
 
-        # Create order items with price snapshot
+        # Create order items with price + variant snapshot
         order_items = []
         for item in items:
+            combo = item.variant_combo
             order_items.append(OrderItem(
                 order=order,
                 product=item.product,
-                product_title=item.product.title,  # snapshot
-                product_sku=item.product.sku or '',
-                unit_price=item.product.price,      # snapshot at checkout time
+                variant_combo=combo,
+                variant_options=(combo.options if combo else {}),
+                product_title=item.product.title,
+                product_sku=(combo.sku if combo and combo.sku else item.product.sku or ''),
+                unit_price=(combo.price if combo else item.product.price),
                 quantity=item.quantity,
             ))
         OrderItem.objects.bulk_create(order_items)

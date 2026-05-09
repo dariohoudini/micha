@@ -24,6 +24,8 @@ class AddToCartView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def post(self, request):
+        from apps.inventory.models import ProductVariantCombo
+
         serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -31,18 +33,22 @@ class AddToCartView(APIView):
         product = get_object_or_404(Product, pk=data['product_id'])
         cart, _ = Cart.objects.get_or_create(user=request.user)
 
+        combo = None
+        combo_id = data.get('variant_combo_id')
+        if combo_id:
+            combo = get_object_or_404(ProductVariantCombo, pk=combo_id, product=product, is_active=True)
+
         cart_item, created = CartItem.objects.get_or_create(
-            cart=cart, product=product,
-            defaults={
-                'quantity': data['quantity'],
-            }
+            cart=cart, product=product, variant_combo=combo,
+            defaults={'quantity': data['quantity']},
         )
 
         if not created:
             new_qty = cart_item.quantity + data['quantity']
-            if new_qty > product.quantity:
+            available = combo.quantity if combo else product.quantity
+            if new_qty > available:
                 return Response(
-                    {"detail": f"Only {product.quantity} items available."},
+                    {"detail": f"Apenas {available} unidades disponíveis."},
                     status=400
                 )
             cart_item.quantity = new_qty
@@ -73,9 +79,10 @@ class UpdateCartItemView(APIView):
             return Response({'error': 'Quantity must be at least 1.'}, status=400)
 
         quantity = int(quantity)
-        if quantity > item.product.quantity:
+        available = item.variant_combo.quantity if item.variant_combo else item.product.quantity
+        if quantity > available:
             return Response(
-                {"detail": f"Only {item.product.quantity} items available."},
+                {"detail": f"Apenas {available} unidades disponíveis."},
                 status=400
             )
 

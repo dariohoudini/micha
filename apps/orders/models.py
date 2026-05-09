@@ -131,6 +131,16 @@ class Order(models.Model):
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey("products.Product", on_delete=models.PROTECT, related_name="order_items", db_index=True)
+    variant_combo = models.ForeignKey(
+        "inventory.ProductVariantCombo",
+        on_delete=models.SET_NULL,
+        related_name="order_items",
+        null=True, blank=True,
+    )
+    variant_options = models.JSONField(
+        default=dict, blank=True,
+        help_text='Snapshot of variant options at purchase time, e.g. {"Color": "Red", "Size": "M"}',
+    )
     product_title = models.CharField(max_length=200)
     product_sku = models.CharField(max_length=100, blank=True)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)

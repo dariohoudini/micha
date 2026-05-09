@@ -5,6 +5,22 @@ FIX: DynamicFieldsMixin — ?fields=id,title,price returns only those fields
 """
 from rest_framework import serializers
 from .models import Product, Category, ProductImage, ProductQA
+from apps.inventory.models import ProductVariantCombo
+
+
+class VariantComboSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductVariantCombo
+        fields = ["id", "options", "price", "quantity", "sku", "image_url", "is_active"]
+        read_only_fields = fields
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        req = self.context.get("request")
+        return req.build_absolute_uri(obj.image.url) if req else obj.image.url
 
 
 class DynamicFieldsMixin:
@@ -77,10 +93,11 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     store_id = serializers.IntegerField(source="store.id", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True, default="")
     tags = serializers.SlugRelatedField(many=True, slug_field="name", read_only=True)
+    variant_combos = serializers.SerializerMethodField()
+    variant_axes = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        # FIX: Explicit fields — no __all__
         fields = [
             "id", "title", "slug", "description", "brand", "condition", "sale_type",
             "price", "compare_at_price", "cost_price", "discount_percentage",
@@ -91,14 +108,32 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
             "meta_title", "meta_description",
             "views", "add_to_cart_count", "wishlist_count",
             "store_name", "store_id", "category_name",
-            "tags", "images", "created_at", "updated_at",
+            "tags", "images", "variant_combos", "variant_axes",
+            "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "slug", "discount_percentage", "is_low_stock",
             "views", "add_to_cart_count", "wishlist_count",
             "store_name", "store_id", "category_name",
-            "images", "created_at", "updated_at",
+            "images", "variant_combos", "variant_axes",
+            "created_at", "updated_at",
         ]
+
+    def get_variant_combos(self, obj):
+        combos = obj.variant_combos.filter(is_active=True)
+        return VariantComboSerializer(combos, many=True, context=self.context).data
+
+    def get_variant_axes(self, obj):
+        """Derive axes from active combos. Returns ordered list of {name, values[]}.
+        e.g. [{"name": "Color", "values": ["Red", "Blue"]}, {"name": "Size", "values": ["M", "L"]}]
+        """
+        axes = {}  # preserve insertion order via dict
+        for combo in obj.variant_combos.filter(is_active=True):
+            for k, v in (combo.options or {}).items():
+                axes.setdefault(k, [])
+                if v not in axes[k]:
+                    axes[k].append(v)
+        return [{"name": k, "values": v} for k, v in axes.items()]
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):

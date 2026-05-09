@@ -34,19 +34,30 @@ class Cart(models.Model):
 class CartItem(models.Model):
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="cart_items", db_index=True)
+    variant_combo = models.ForeignKey(
+        "inventory.ProductVariantCombo",
+        on_delete=models.CASCADE,
+        related_name="cart_items",
+        null=True, blank=True,
+        help_text="Set when product has variants and user picked one",
+    )
     quantity = models.PositiveIntegerField(default=1)
     price_at_add = models.DecimalField(max_digits=10, decimal_places=2)
 
-    # FIX: Optimistic locking — detect concurrent modifications
-    # If two tabs both read version=3 and both try to update,
-    # the second update fails with a version mismatch error
+    # Optimistic locking — detect concurrent modifications
     version = models.PositiveIntegerField(default=1)
 
     added_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("cart", "product")
+        # Same product can appear multiple times if different variant combos chosen
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cart", "product", "variant_combo"],
+                name="cart_unique_product_variant",
+            ),
+        ]
         indexes = [models.Index(fields=["cart", "product"])]
 
     @property
@@ -56,11 +67,12 @@ class CartItem(models.Model):
     @property
     def price_changed(self):
         """True if seller changed price since item was added."""
-        return self.product.price != self.price_at_add
+        current = self.variant_combo.price if self.variant_combo else self.product.price
+        return current != self.price_at_add
 
     def save(self, *args, **kwargs):
         if not self.pk:
-            self.price_at_add = self.product.price
+            self.price_at_add = self.variant_combo.price if self.variant_combo else self.product.price
         else:
             # Increment version on every update — detect concurrent changes
             self.version = F("version") + 1

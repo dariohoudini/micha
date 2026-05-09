@@ -7,6 +7,7 @@ User = settings.AUTH_USER_MODEL
 
 
 class ProductVariant(models.Model):
+    """Legacy single-axis variant (kept for back-compat). New code should use ProductVariantCombo."""
     product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="variants")
     name = models.CharField(max_length=100)
     value = models.CharField(max_length=100)
@@ -20,6 +21,36 @@ class ProductVariant(models.Model):
 
     def __str__(self):
         return f"{self.product.title} — {self.name}: {self.value}"
+
+
+class ProductVariantCombo(models.Model):
+    """One buyable SKU = a specific combination of option values.
+
+    Example for a t-shirt: options = {"Color": "Red", "Size": "M"}
+    Each combo has its own price, stock, optional image (e.g. swatch), and SKU.
+    Frontend derives axes (Color, Size) by inspecting all combos for a product.
+    """
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="variant_combos")
+    options = models.JSONField(default=dict, help_text='e.g. {"Color": "Red", "Size": "M"}')
+    price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Absolute price for this combo")
+    quantity = models.PositiveIntegerField(default=0)
+    sku = models.CharField(max_length=100, blank=True)
+    image = models.ImageField(upload_to="variant_images/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["product", "is_active"])]
+        ordering = ["id"]
+
+    def __str__(self):
+        opts = ", ".join(f"{k}: {v}" for k, v in (self.options or {}).items())
+        return f"{self.product.title} — {opts}"
+
+    @property
+    def label(self):
+        return " / ".join(str(v) for v in (self.options or {}).values())
 
 
 class StockReservation(models.Model):

@@ -50,16 +50,17 @@ function CountdownUnit({ value, label }) {
 
 function FlashSaleCard({ sale }) {
   const navigate = useNavigate()
-  const { h, m, s, expired } = useCountdown(sale.ends_at)
+  const { h, m, s, expired } = useCountdown(sale.end_time || sale.ends_at)
   if (expired) return null
 
-  const discount = sale.discount_percentage || sale.discount_pct || 0
-  const name = sale.name || sale.product?.name || 'Flash Sale'
-  const image = sale.product?.image_url || sale.image_url
+  const discount = Math.round(sale.discount_percentage || sale.discount_pct || 0)
+  const name = sale.product_title || sale.name || sale.product?.name || 'Flash Sale'
+  const image = sale.product_thumbnail || sale.product?.image_url || sale.image_url
+  const productId = sale.product_id || sale.product?.id
 
   return (
     <button
-      onClick={() => sale.product?.id ? navigate(`/product/${sale.product.id}`) : null}
+      onClick={() => productId ? navigate(`/product/${productId}`) : null}
       style={{
         width: 200, flexShrink: 0, borderRadius: 14, overflow: 'hidden',
         background: 'linear-gradient(135deg, #1a0a00, #2a1500)',
@@ -91,14 +92,14 @@ function FlashSaleCard({ sale }) {
           {name}
         </p>
 
-        {sale.product?.price != null && (
+        {sale.sale_price != null && (
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
             <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>
-              {fmt(sale.product.price)}
+              {fmt(sale.sale_price)}
             </span>
-            {sale.product.original_price && (
+            {sale.original_price && Number(sale.original_price) > Number(sale.sale_price) && (
               <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: '#9A9A9A', textDecoration: 'line-through' }}>
-                {fmt(sale.product.original_price)}
+                {fmt(sale.original_price)}
               </span>
             )}
           </div>

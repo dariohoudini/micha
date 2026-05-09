@@ -19,6 +19,64 @@ import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import ProductRail from '@/components/buyer/ProductRail'
 import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
 
+// Live flash sale lookup for this product
+function useFlashSaleForProduct(productId) {
+  const [sale, setSale] = useState(null)
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!productId) return
+    let cancelled = false
+    client.get('/api/v1/promotions/flash-sales/')
+      .then(r => {
+        if (cancelled) return
+        const list = r.data.results || r.data || []
+        const match = list.find(s => String(s.product_id) === String(productId))
+        if (match) setSale(match)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [productId])
+  useEffect(() => {
+    if (!sale) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [sale])
+  if (!sale) return null
+  const endMs = new Date(sale.end_time).getTime()
+  const remaining = endMs - now
+  if (remaining <= 0) return null
+  return { sale, remaining }
+}
+
+function FlashSaleBadge({ flash }) {
+  if (!flash) return null
+  const totalSec = Math.floor(flash.remaining / 1000)
+  const hours = Math.floor(totalSec / 3600)
+  const minutes = Math.floor((totalSec % 3600) / 60)
+  const seconds = totalSec % 60
+  const pad = (n) => String(n).padStart(2, '0')
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 10, padding: '10px 14px', borderRadius: 12,
+      background: 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)',
+      marginBottom: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 16 }}>⚡</span>
+        <div>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: '#FFF', margin: 0 }}>
+            Venda Flash · −{Math.round(flash.sale.discount_percentage || 0)}%
+          </p>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: 'rgba(255,255,255,0.8)', margin: 0 }}>
+            Termina em {pad(hours)}:{pad(minutes)}:{pad(seconds)}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Live social-proof signals (viewing now / sold recently / in carts / low stock)
 function useSocialProof(productId) {
   const [proof, setProof] = useState(null)
@@ -119,6 +177,7 @@ export default function ProductDetailPage() {
   const [selectedOptions, setSelectedOptions] = useState({}) // { Color: "Red", Size: "M" }
   const [quantity, setQuantity] = useState(1)
   const socialProof = useSocialProof(id)
+  const flashSale = useFlashSaleForProduct(id)
   const [wishlisted, setWishlisted] = useState(false)
   const [addedToCart, setAddedToCart] = useState(false)
   const [similarProducts, setSimilarProducts] = useState([])
@@ -201,7 +260,9 @@ export default function ProductDetailPage() {
   const hasVariants = variantAxes.length > 0
   const selectedCombo = hasVariants ? findMatchingCombo(variantCombos, selectedOptions) : null
   const variantsComplete = !hasVariants || !!selectedCombo
-  const effectivePrice = selectedCombo?.price ?? product?.price
+  // Flash-sale price wins when no variant is selected
+  const flashPrice = !selectedCombo && flashSale ? Number(flashSale.sale.sale_price) : null
+  const effectivePrice = flashPrice ?? selectedCombo?.price ?? product?.price
   const effectiveStock = selectedCombo?.quantity ?? product?.quantity
 
   const handleVariantSelect = (axisName, value) => {
@@ -340,6 +401,9 @@ export default function ProductDetailPage() {
               <StarRating rating={product.avg_rating} count={product.review_count || 0} />
             </div>
           )}
+
+          {/* Flash sale badge */}
+          <FlashSaleBadge flash={flashSale} />
 
           {/* Live social proof */}
           <SocialProofStrip proof={socialProof} />

@@ -27,18 +27,32 @@ class CouponSerializer(serializers.ModelSerializer):
 
 
 class FlashSaleSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(source='product.id', read_only=True)
     product_title = serializers.ReadOnlyField(source='product.title')
+    product_slug = serializers.ReadOnlyField(source='product.slug')
+    product_thumbnail = serializers.SerializerMethodField()
     discount_percentage = serializers.ReadOnlyField()
     is_live = serializers.ReadOnlyField()
 
     class Meta:
         model = FlashSale
         fields = [
-            'id', 'product', 'product_title', 'sale_price',
-            'original_price', 'discount_percentage',
+            'id', 'product', 'product_id', 'product_title', 'product_slug',
+            'product_thumbnail',
+            'sale_price', 'original_price', 'discount_percentage',
             'start_time', 'end_time', 'is_active', 'is_live', 'created_at',
         ]
         read_only_fields = ['id', 'created_at']
+
+    def get_product_thumbnail(self, obj):
+        try:
+            img = obj.product.images.first()
+            if img and img.image:
+                req = self.context.get('request')
+                return req.build_absolute_uri(img.image.url) if req else img.image.url
+        except Exception:
+            pass
+        return None
 
 
 # ── Coupon Views ──────────────────────────────────────────────
@@ -107,7 +121,7 @@ class LiveFlashSalesView(generics.ListAPIView):
         now = timezone.now()
         return FlashSale.objects.filter(
             is_active=True, start_time__lte=now, end_time__gte=now
-        ).select_related('product')
+        ).select_related('product').prefetch_related('product__images').order_by('end_time')
 
 
 class SellerFlashSaleView(generics.ListCreateAPIView):

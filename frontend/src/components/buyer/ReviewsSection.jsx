@@ -42,12 +42,13 @@ function RatingBar({ stars, count, total }) {
   )
 }
 
-function ReviewCard({ review, onHelpful, onReport }) {
+function ReviewCard({ review, onHelpful, onReport, onPhotoClick }) {
   const [expanded, setExpanded] = useState(false)
   const text = review.comment || review.text || ''
   const needsClamp = text.length > 180
   const display = (!expanded && needsClamp) ? text.slice(0, 180) + '…' : text
   const date = review.created_at ? new Date(review.created_at).toLocaleDateString('pt-AO', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+  const photos = review.photos || []
 
   return (
     <div style={{ paddingBottom: 16, borderBottom: '1px solid #1E1E1E', marginBottom: 16 }}>
@@ -88,19 +89,22 @@ function ReviewCard({ review, onHelpful, onReport }) {
       )}
 
       {/* Photos */}
-      {review.images?.length > 0 && (
+      {photos.length > 0 && (
         <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', scrollbarWidth: 'none' }}>
-          {review.images.map((img, i) => (
-            <img key={i} src={img.url || img} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: '1px solid #2A2A2A' }} />
+          {photos.map((p, i) => (
+            <button key={p.id || i} onClick={() => onPhotoClick?.(photos, i)}
+              style={{ background: 'none', border: '1px solid #2A2A2A', borderRadius: 8, padding: 0, cursor: 'pointer', flexShrink: 0 }}>
+              <img src={p.image_url || p.image} alt="" style={{ width: 72, height: 72, borderRadius: 7, objectFit: 'cover', display: 'block' }} />
+            </button>
           ))}
         </div>
       )}
 
       {/* Seller reply */}
-      {review.reply && (
+      {review.seller_reply && (
         <div style={{ marginTop: 10, background: '#141414', borderRadius: 10, padding: '10px 12px', borderLeft: '3px solid #C9A84C' }}>
           <p style={{ ...S, fontSize: 11, fontWeight: 600, color: '#C9A84C', marginBottom: 4 }}>Resposta do vendedor</p>
-          <p style={{ ...S, fontSize: 12, color: '#CCCCCC', lineHeight: 1.5 }}>{review.reply}</p>
+          <p style={{ ...S, fontSize: 12, color: '#CCCCCC', lineHeight: 1.5 }}>{review.seller_reply}</p>
         </div>
       )}
 
@@ -124,8 +128,23 @@ function WriteReviewModal({ productId, onClose, onSuccess }) {
   const [rating, setRating] = useState(0)
   const [title, setTitle] = useState('')
   const [comment, setComment] = useState('')
+  const [photos, setPhotos] = useState([]) // { file, preview }
   const [error, setError] = useState('')
   const qc = useQueryClient()
+
+  const onPickPhotos = (e) => {
+    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'))
+    const room = 6 - photos.length
+    const next = files.slice(0, room).map(file => ({ file, preview: URL.createObjectURL(file) }))
+    setPhotos(p => [...p, ...next])
+    e.target.value = ''
+  }
+  const removePhoto = (idx) => {
+    setPhotos(p => {
+      URL.revokeObjectURL(p[idx].preview)
+      return p.filter((_, i) => i !== idx)
+    })
+  }
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -136,6 +155,7 @@ function WriteReviewModal({ productId, onClose, onSuccess }) {
       fd.append('rating', rating)
       fd.append('title', title)
       fd.append('comment', comment)
+      photos.forEach(p => fd.append('uploaded_photos', p.file))
       return reviewsAPI.createProductReview(fd)
     },
     onSuccess: () => {
@@ -168,6 +188,26 @@ function WriteReviewModal({ productId, onClose, onSuccess }) {
         <textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="Partilha a tua experiência…" rows={4}
           style={{ background: '#1E1E1E', border: '1px solid #2A2A2A', borderRadius: 10, padding: '10px 14px', ...S, fontSize: 13, color: '#FFF', outline: 'none', resize: 'none', lineHeight: 1.5 }} />
 
+        {/* Photo upload */}
+        <div>
+          <p style={{ ...S, fontSize: 11, color: '#9A9A9A', marginBottom: 6 }}>Fotos {photos.length > 0 && `(${photos.length}/6)`}</p>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {photos.map((p, i) => (
+              <div key={i} style={{ position: 'relative', width: 60, height: 60 }}>
+                <img src={p.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid #2A2A2A' }} />
+                <button type="button" onClick={() => removePhoto(i)}
+                  style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#dc2626', border: 'none', color: '#FFF', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0 }}>×</button>
+              </div>
+            ))}
+            {photos.length < 6 && (
+              <label style={{ width: 60, height: 60, border: '1px dashed #2A2A2A', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#9A9A9A', fontSize: 22 }}>
+                +
+                <input type="file" accept="image/*" multiple onChange={onPickPhotos} style={{ display: 'none' }} />
+              </label>
+            )}
+          </div>
+        </div>
+
         {error && <p style={{ ...S, fontSize: 12, color: '#ef4444' }}>{error}</p>}
 
         <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
@@ -179,16 +219,45 @@ function WriteReviewModal({ productId, onClose, onSuccess }) {
   )
 }
 
+function PhotoLightbox({ photos, startIndex = 0, onClose }) {
+  const [idx, setIdx] = useState(startIndex)
+  const photo = photos[idx]
+  if (!photo) return null
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.95)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <button onClick={(e) => { e.stopPropagation(); onClose() }}
+        style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', right: 16, width: 36, height: 36, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', color: '#FFF', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+      <img src={photo.image_url || photo.image} alt="" onClick={e => e.stopPropagation()}
+        style={{ maxWidth: '92%', maxHeight: '80%', objectFit: 'contain' }} />
+      {photos.length > 1 && (
+        <>
+          <button onClick={(e) => { e.stopPropagation(); setIdx((idx - 1 + photos.length) % photos.length) }}
+            style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 40, height: 40, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', color: '#FFF', fontSize: 24, cursor: 'pointer' }}>‹</button>
+          <button onClick={(e) => { e.stopPropagation(); setIdx((idx + 1) % photos.length) }}
+            style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', width: 40, height: 40, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', color: '#FFF', fontSize: 24, cursor: 'pointer' }}>›</button>
+          <p style={{ position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', ...S, fontSize: 12, color: '#9A9A9A' }}>{idx + 1} / {photos.length}</p>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function ReviewsSection({ productId }) {
   const [sort, setSort] = useState('recent')
   const [filterRating, setFilterRating] = useState(0)
+  const [withPhotos, setWithPhotos] = useState(false)
   const [showWrite, setShowWrite] = useState(false)
+  const [lightbox, setLightbox] = useState(null) // { photos, startIndex }
   const isAuth = useAuthStore(s => s.isAuth)
   const qc = useQueryClient()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['reviews', productId, sort, filterRating],
-    queryFn: () => reviewsAPI.getProductReviews(productId, { ordering: sort === 'recent' ? '-created_at' : sort === 'helpful' ? '-helpful_count' : 'rating', rating: filterRating || undefined }),
+    queryKey: ['reviews', productId, sort, filterRating, withPhotos],
+    queryFn: () => reviewsAPI.getProductReviews(productId, {
+      ordering: sort === 'recent' ? '-created_at' : sort === 'helpful' ? 'helpful' : sort === 'rating-low' ? 'rating' : '-rating',
+      rating: filterRating || undefined,
+      has_photos: withPhotos ? 1 : undefined,
+    }),
     enabled: !!productId,
     select: r => r.data,
   })
@@ -206,9 +275,13 @@ export default function ReviewsSection({ productId }) {
 
   const reviews = data?.results || data || []
   const summary = ratingData.data || {}
-  const totalCount = summary.count || data?.count || reviews.length
-  const avgRating = summary.average || 0
-  const breakdown = summary.breakdown || {}
+  const totalCount = summary.total_reviews ?? data?.count ?? reviews.length
+  const avgRating = summary.average_rating || 0
+  const breakdown = summary.rating_distribution || {}
+  const withPhotosCount = summary.with_photos_count || 0
+  const allPhotos = reviews.flatMap(r => (r.photos || [])).slice(0, 12)
+
+  const openLightbox = (photos, startIndex) => setLightbox({ photos, startIndex })
 
   return (
     <div>
@@ -228,6 +301,21 @@ export default function ReviewsSection({ productId }) {
         </div>
       </div>
 
+      {/* Buyer-photo gallery rail */}
+      {allPhotos.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ ...S, fontSize: 12, color: '#9A9A9A', marginBottom: 8 }}>📸 Fotos de compradores</p>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', scrollbarWidth: 'none' }}>
+            {allPhotos.map((p, i) => (
+              <button key={p.id || i} onClick={() => openLightbox(allPhotos, i)}
+                style={{ background: 'none', border: '1px solid #2A2A2A', borderRadius: 8, padding: 0, cursor: 'pointer', flexShrink: 0 }}>
+                <img src={p.image_url || p.image} alt="" style={{ width: 76, height: 76, borderRadius: 7, objectFit: 'cover', display: 'block' }} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Filters + sort */}
       <div style={{ display: 'flex', gap: 6, overflowX: 'auto', scrollbarWidth: 'none', marginBottom: 16 }}>
         {[0, 5, 4, 3].map(n => (
@@ -236,8 +324,14 @@ export default function ReviewsSection({ productId }) {
             {n === 0 ? 'Todas' : `${n}★`}
           </button>
         ))}
+        {withPhotosCount > 0 && (
+          <button onClick={() => setWithPhotos(p => !p)}
+            style={{ padding: '5px 12px', borderRadius: 20, flexShrink: 0, border: `1px solid ${withPhotos ? '#C9A84C' : '#2A2A2A'}`, background: withPhotos ? 'rgba(201,168,76,0.1)' : '#141414', ...S, fontSize: 12, color: withPhotos ? '#C9A84C' : '#9A9A9A', cursor: 'pointer' }}>
+            📸 Com fotos ({withPhotosCount})
+          </button>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
-          {[{ v: 'recent', l: 'Recentes' }, { v: 'helpful', l: 'Úteis' }, { v: 'rating', l: 'Nota' }].map(o => (
+          {[{ v: 'recent', l: 'Recentes' }, { v: 'helpful', l: 'Úteis' }, { v: 'rating', l: '5★ → 1★' }, { v: 'rating-low', l: '1★ → 5★' }].map(o => (
             <button key={o.v} onClick={() => setSort(o.v)}
               style={{ padding: '5px 12px', borderRadius: 20, border: `1px solid ${sort === o.v ? '#C9A84C' : '#2A2A2A'}`, background: sort === o.v ? 'rgba(201,168,76,0.1)' : '#141414', ...S, fontSize: 11, color: sort === o.v ? '#C9A84C' : '#9A9A9A', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               {o.l}
@@ -275,11 +369,12 @@ export default function ReviewsSection({ productId }) {
         </div>
       ) : (
         reviews.map(r => (
-          <ReviewCard key={r.id} review={r} onHelpful={(id) => markHelpful.mutate(id)} />
+          <ReviewCard key={r.id} review={r} onHelpful={(id) => markHelpful.mutate(id)} onPhotoClick={openLightbox} />
         ))
       )}
 
       {showWrite && <WriteReviewModal productId={productId} onClose={() => setShowWrite(false)} />}
+      {lightbox && <PhotoLightbox photos={lightbox.photos} startIndex={lightbox.startIndex} onClose={() => setLightbox(null)} />}
     </div>
   )
 }

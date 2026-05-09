@@ -14,9 +14,17 @@ User = get_user_model()
 
 
 class ReviewPhotoSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ReviewPhoto
-        fields = ['id', 'image', 'uploaded_at']
+        fields = ['id', 'image', 'image_url', 'uploaded_at']
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        req = self.context.get('request')
+        return req.build_absolute_uri(obj.image.url) if req else obj.image.url
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -151,27 +159,77 @@ class ProductReviewCreateView(generics.CreateAPIView):
 
 
 class ProductReviewListView(generics.ListAPIView):
+    """GET /api/v1/reviews/product/<id>/
+
+    Filters:
+      rating       - 1..5 (only that rating)
+      has_photos   - 1/true → only reviews with photos
+    Ordering:
+      ordering=-created_at (default), helpful (= -helpful_count), rating, -rating
+    """
     serializer_class = ProductReviewSerializer
     permission_classes = [AllowAny]
 
     def get_queryset(self):
-        return ProductReview.objects.filter(
+        from django.db.models import Count
+        qs = ProductReview.objects.filter(
             product_id=self.kwargs['product_id']
-        ).prefetch_related('photos', 'helpful_votes')
+        ).prefetch_related('photos', 'helpful_votes').annotate(_photo_count=Count('photos'))
+
+        params = self.request.query_params
+
+        rating = params.get('rating')
+        if rating:
+            try:
+                r = int(rating)
+                if 1 <= r <= 5:
+                    qs = qs.filter(rating=r)
+            except (TypeError, ValueError):
+                pass
+
+        if params.get('has_photos') in ('1', 'true', 'True'):
+            qs = qs.filter(_photo_count__gt=0)
+
+        ordering = params.get('ordering', '-created_at')
+        allowed = {
+            '-created_at': '-created_at',
+            'helpful': '-helpful_count',
+            '-helpful_count': '-helpful_count',
+            'rating': 'rating',
+            '-rating': '-rating',
+        }
+        return qs.order_by(allowed.get(ordering, '-created_at'))
 
 
 class ProductRatingView(APIView):
+    """GET /api/v1/reviews/product/<id>/rating/
+
+    Returns avg rating, total, rating distribution {1..5}, and with_photos count.
+    """
     permission_classes = [AllowAny]
 
     def get(self, request, product_id):
         from apps.products.models import Product
+        from django.db.models import Count
         product = get_object_or_404(Product, pk=product_id)
-        result = ProductReview.objects.filter(product=product).aggregate(avg=Avg('rating'))
-        total = ProductReview.objects.filter(product=product).count()
+        base = ProductReview.objects.filter(product=product)
+
+        agg = base.aggregate(avg=Avg('rating'))
+        total = base.count()
+
+        # Rating distribution
+        dist = {i: 0 for i in range(1, 6)}
+        for row in base.values('rating').annotate(count=Count('id')):
+            dist[row['rating']] = row['count']
+
+        with_photos_count = base.annotate(_pc=Count('photos')).filter(_pc__gt=0).count()
+
         return Response({
             "product_id": product_id,
-            "average_rating": round(result['avg'] or 0, 2),
+            "average_rating": round(agg['avg'] or 0, 2),
             "total_reviews": total,
+            "rating_distribution": dist,
+            "with_photos_count": with_photos_count,
         })
 
 

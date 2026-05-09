@@ -8,13 +8,13 @@ export const reviewsAPI = {
   }),
   getProductRating: (productId) => client.get(`/api/v1/reviews/product/${productId}/rating/`),
   flagReview: (reviewId, reason) => client.post(`/api/v1/reviews/product/${reviewId}/flag/`, { reason }),
-  voteHelpful: (reviewId) => client.post(`/api/v1/reviews/${reviewId}/helpful/`),
+  voteHelpful: (reviewId) => client.post(`/api/v1/reviews/product/${reviewId}/helpful/`),
 
   // Seller reviews
   getSellerReviews: (sellerId, params = {}) => client.get(`/api/v1/reviews/seller/${sellerId}/`, { params }),
   createSellerReview: (data) => client.post('/api/v1/reviews/create/', data),
   getSellerRating: (sellerId) => client.get(`/api/v1/reviews/seller/${sellerId}/rating/`),
-  replyToReview: (reviewId, reply) => client.post(`/api/v1/reviews/${reviewId}/reply/`, { reply }),
+  replyToReview: (reviewId, reply) => client.post(`/api/v1/reviews/product/${reviewId}/reply/`, { reply }),
 }
 
 export default reviewsAPI

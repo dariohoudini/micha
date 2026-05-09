@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'apps.ledger',
     'apps.outbox',
+    'apps.risk',
     'apps.users',
     'apps.verification',
     'apps.stores',

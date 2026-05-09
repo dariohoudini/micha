@@ -95,6 +95,14 @@ export default function CheckoutPage() {
     setLoading(true)
     setError(null)
     try {
+      // Compute device fingerprint (cached in localStorage). Failing this is
+      // not fatal — backend treats missing fingerprint as a missing signal.
+      let fingerprint = ''
+      try {
+        const { getFingerprint } = await import('@/api/fingerprint')
+        fingerprint = await getFingerprint()
+      } catch { /* ignore */ }
+
       const res = await client.post('/api/v1/orders/checkout/', {
         delivery_address: [address.street, address.neighbourhood, address.municipality, address.province].filter(Boolean).join(', '),
         delivery_province: address.province,
@@ -103,13 +111,19 @@ export default function CheckoutPage() {
         items: cartItems.map(i => ({ product: i.product?.id || i.id, quantity: i.quantity || 1 })),
         ...(appliedCoupons.length > 0 ? { coupon_codes: appliedCoupons.map(c => c.code) } : {}),
         ...(useCredit && creditApplied > 0 ? { use_store_credit: Math.floor(creditApplied) } : {}),
+        ...(fingerprint ? { fingerprint } : {}),
       })
       useCartStore.getState().clearCart()
       client.delete('/api/v1/cart/clear/').catch(() => {})
       const orderId = res.data?.id || res.data?.order_id || res.data?.orders?.[0] || null
       navigate('/order-confirmed', { state: { orderId, total: finalTotal } })
     } catch (err) {
-      setError(err.response?.data?.detail || err.response?.data?.error || 'Erro ao processar pedido.')
+      const errCode = err.response?.data?.error
+      if (errCode === 'risk_blocked') {
+        setError(err.response?.data?.detail || 'Não conseguimos processar este pedido. Contacte o suporte.')
+      } else {
+        setError(err.response?.data?.detail || errCode || 'Erro ao processar pedido.')
+      }
     } finally { setLoading(false) }
   }
 

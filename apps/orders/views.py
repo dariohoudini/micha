@@ -60,15 +60,105 @@ class CheckoutView(APIView):
 
     def post(self, request):
         from .checkout import CheckoutService, CheckoutError
+        from apps.risk.service import assess as risk_assess, record_fingerprint, is_blocking
+        from apps.risk.models import RiskAction
+
+        # ── 1. Risk pre-assessment ─────────────────────────────────────
+        # Compute the proposed total from the user's cart so the rules see
+        # the real order_amount before we even create the Order rows.
+        try:
+            from apps.cart.models import Cart
+            cart = Cart.objects.filter(user=request.user).prefetch_related('items').first()
+            cart_total = float(cart.total) if cart else 0
+        except Exception:
+            cart_total = 0
+
+        fingerprint = (request.data.get('fingerprint') or '').strip()[:128]
+        ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', ''))
+        if ',' in ip:
+            ip = ip.split(',')[0].strip()
+        ip = ip[:45] if ip else None
+
+        if fingerprint:
+            try:
+                record_fingerprint(user=request.user, fingerprint=fingerprint, ip=ip)
+            except Exception:
+                pass
+
+        try:
+            assessment = risk_assess(
+                'order',
+                ref_type='order', ref_id='pending',
+                user=request.user,
+                context={
+                    'order_amount': cart_total,
+                    'fingerprint': fingerprint,
+                    'ip': ip,
+                    'user_agent': (request.META.get('HTTP_USER_AGENT') or '')[:200],
+                    'payment_method': request.data.get('payment_method', ''),
+                },
+            )
+        except Exception as e:
+            # Risk system must never crash checkout. Log + proceed at default ALLOW.
+            log_security_event('risk_assess_error', request=request, details={'error': str(e)[:200]})
+            assessment = None
+
+        if assessment and assessment.action == RiskAction.BLOCK:
+            log_security_event('checkout_blocked_by_risk', request=request, details={
+                'score': assessment.score,
+                'reasons': assessment.reasons,
+            })
+            return Response({
+                'error': 'risk_blocked',
+                'detail': 'Não conseguimos processar este pedido. Contacte o suporte.',
+            }, status=403)
+
+        # ── 2. Run checkout ────────────────────────────────────────────
         try:
             service = CheckoutService(user=request.user, data=request.data)
             orders = service.execute()
-            return Response({"detail": "Order placed.", "orders": [str(o.id) for o in orders]}, status=201)
         except CheckoutError as e:
             return Response({'error': 'checkout_failed', "detail": str(e)}, status=400)
         except Exception as e:
             log_security_event("checkout_error", request=request, details={"error": str(e)[:200]})
             return Response({'error': 'server_error', "detail": "Checkout failed."}, status=500)
+
+        # ── 3. Stamp the score on every created order + emit fraud event
+        if assessment and orders:
+            try:
+                from .models import Order as _Order
+                from apps.outbox.service import publish
+                first_id = str(orders[0].id)
+                # Link the assessment to the first order for forensic traceability
+                assessment.ref_id = first_id
+                assessment.save(update_fields=['ref_id'])
+                # Stamp on all orders
+                _Order.objects.filter(pk__in=[o.pk for o in orders]).update(
+                    fraud_score=assessment.score,
+                    fraud_action=assessment.action,
+                )
+                # Notify ops queue for non-allow outcomes
+                if assessment.action != RiskAction.ALLOW:
+                    publish(
+                        topic='fraud.flagged',
+                        payload={
+                            'order_ids': [str(o.id) for o in orders],
+                            'user_id': request.user.id,
+                            'score': assessment.score,
+                            'action': assessment.action,
+                            'reasons': assessment.reasons,
+                        },
+                        dedupe_key=f'fraud.flagged:{first_id}',
+                        ref_type='order', ref_id=first_id,
+                    )
+            except Exception as e:
+                log_security_event('risk_persist_error', request=request, details={'error': str(e)[:200]})
+
+        return Response({
+            "detail": "Order placed.",
+            "orders": [str(o.id) for o in orders],
+            **({"risk_score": assessment.score, "risk_action": assessment.action} if assessment else {}),
+        }, status=201)
 
 
 class MyOrderListView(generics.ListAPIView):

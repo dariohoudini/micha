@@ -209,6 +209,32 @@ class CheckoutService:
             locked.save(update_fields=['store_credit'])
             self.user.store_credit = locked.store_credit  # keep instance fresh
 
+            # Source of truth: post to ledger.
+            # The buyer's store_credit account is debited; the platform refund pool
+            # is credited (the platform now "owes" itself this redeemed credit, which
+            # offsets the platform's earlier outlay when the credit was first awarded).
+            try:
+                from apps.ledger.service import transfer
+                from apps.ledger.models import Account, AccountType
+                transfer(
+                    from_account=Account.for_user(
+                        self.user, AccountType.USER_STORE_CREDIT, currency='AOA'
+                    ),
+                    to_account=Account.platform(
+                        AccountType.PLATFORM_REFUND_POOL, currency='AOA'
+                    ),
+                    amount=applied,
+                    journal_key=f'checkout:{self.idempotency_key}:store_credit',
+                    ref_type='checkout',
+                    ref_id=self.idempotency_key,
+                    description=f'Store-credit redemption {applied} Kz',
+                    user=self.user,
+                )
+            except Exception:
+                # Ledger posting failure must not break checkout (legacy column already updated).
+                # Reconciliation cron will surface the drift.
+                pass
+
         # Split proportionally
         per_seller = {}
         for sid, rem in remaining.items():

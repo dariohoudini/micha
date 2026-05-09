@@ -674,6 +674,8 @@ class DailyCheckinView(APIView):
         from apps.users.models import DailyCheckin
         from django.db import transaction
         from datetime import date, timedelta
+        from apps.ledger.service import transfer
+        from apps.ledger.models import Account, AccountType
         today = date.today()
         with transaction.atomic():
             existing = DailyCheckin.objects.filter(user=request.user, date=today).first()
@@ -691,7 +693,20 @@ class DailyCheckinView(APIView):
                 user=request.user, date=today,
                 streak_day=streak_day, points_awarded=points,
             )
+            # Cached counter (existing read paths still work)
             request.user.add_loyalty_points(points)
+            # Source of truth: post to ledger.
+            # Loyalty points are tracked in cents-equivalent (1 point = 1 cent here for accounting).
+            transfer(
+                from_account=Account.platform(AccountType.PLATFORM_LOYALTY_FUND, currency='PTS'),
+                to_account=Account.for_user(request.user, AccountType.USER_LOYALTY_POINTS, currency='PTS'),
+                amount_cents=points,  # 1 unit = 1 point in PTS currency
+                journal_key=f'checkin:{request.user.id}:{today.isoformat()}',
+                ref_type='checkin',
+                ref_id=str(request.user.id),
+                description=f'Daily check-in day {streak_day}',
+                user=request.user,
+            )
         return Response({
             'detail': '+{} pontos!'.format(points),
             'streak_days': streak_day,

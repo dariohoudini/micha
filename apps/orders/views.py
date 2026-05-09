@@ -127,7 +127,20 @@ class ConfirmDeliveryView(APIView):
             try:
                 points = min(50000, int(order.total))
                 if points > 0:
-                    request.user.add_loyalty_points(points)
+                    request.user.add_loyalty_points(points)  # cached counter
+                    # Source of truth: ledger
+                    from apps.ledger.service import transfer
+                    from apps.ledger.models import Account, AccountType
+                    transfer(
+                        from_account=Account.platform(AccountType.PLATFORM_LOYALTY_FUND, currency='PTS'),
+                        to_account=Account.for_user(request.user, AccountType.USER_LOYALTY_POINTS, currency='PTS'),
+                        amount_cents=points,
+                        journal_key=f'order:{order.id}:cashback',
+                        ref_type='order',
+                        ref_id=str(order.id),
+                        description=f'Cashback ({points} pts) for order {order.id}',
+                        user=request.user,
+                    )
             except Exception:
                 pass
         return Response({"detail": "Delivery confirmed."})

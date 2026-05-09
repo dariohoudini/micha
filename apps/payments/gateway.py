@@ -546,6 +546,20 @@ class PaymentProcessor:
         wallet, _ = SellerWallet.objects.get_or_create(seller=order.seller)
         wallet.hold(seller_earnings, f'Earnings from order {str(order.id)[:8]}')
 
+        # Source-of-truth: post the 3-line journal
+        # (buyer payment in, seller earnings to escrow, platform commission to revenue)
+        try:
+            from apps.ledger.service import record_payment_received
+            record_payment_received(
+                order=order,
+                gross_amount=payment.amount,
+                commission_amount=platform_fee,
+            )
+        except Exception as e:
+            logger.error('Ledger posting failed for payment_received', extra={
+                'order_id': str(order.id), 'error': str(e),
+            })
+
         logger.info('Seller earnings held in escrow', extra={
             'seller_id': str(order.seller.id),
             'amount': str(seller_earnings),

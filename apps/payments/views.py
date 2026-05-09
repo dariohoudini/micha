@@ -191,6 +191,11 @@ class RequestPayoutView(APIView):
         with transaction.atomic():
             payout = PayoutRequest.objects.create(seller=request.user, bank_account=bank, amount=amount)
             wallet.debit(float(amount), f"Payout request {payout.id}", reference=str(payout.id))
+            try:
+                from apps.ledger.service import record_payout_debit
+                record_payout_debit(seller=request.user, amount=amount, payout_id=payout.id)
+            except Exception:
+                pass
 
         log_security_event("payout_requested", request=request,
                            details={"amount": str(amount), "user_id": request.user.id})
@@ -219,6 +224,11 @@ class AdminPayoutActionView(APIView):
             elif action == "rejected":
                 wallet, _ = SellerWallet.objects.get_or_create(seller=payout.seller)
                 wallet.credit(float(payout.amount), "Payout rejected — refunded", reference=str(payout.id))
+                try:
+                    from apps.ledger.service import record_payout_reverse
+                    record_payout_reverse(seller=payout.seller, amount=payout.amount, payout_id=payout.id)
+                except Exception:
+                    pass
             payout.save()
         from apps.admin_actions.models import AdminActionLog
         AdminActionLog.log(request, f"{action}_payout", payout.seller,

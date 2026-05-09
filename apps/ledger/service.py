@@ -105,6 +105,89 @@ def post(journal_key, lines, *, ref_type='', ref_id='', description='', user=Non
     return journal, True
 
 
+def record_payment_received(*, order, gross_amount, commission_amount, idempotency_key=None):
+    """At payment confirmation: split gross between seller-pending and platform-revenue.
+
+    Posting (AOA, in cents):
+        DR EXTERNAL_CLEARING       gross
+        CR SELLER_PENDING          gross − commission
+        CR PLATFORM_REVENUE        commission
+
+    Returns: (journal, created)
+    """
+    from .models import Account, AccountType
+    journal_key = idempotency_key or f'order:{order.id}:payment'
+
+    gross_cents = _to_cents(gross_amount)
+    commission_cents = _to_cents(commission_amount)
+    seller_cents = gross_cents - commission_cents
+    if seller_cents < 0:
+        raise LedgerError('Commission cannot exceed gross')
+
+    lines = [
+        (Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA'), gross_cents, 'debit'),
+        (Account.for_user(order.seller, AccountType.SELLER_PENDING, currency='AOA'), seller_cents, 'credit'),
+    ]
+    if commission_cents > 0:
+        lines.append(
+            (Account.platform(AccountType.PLATFORM_REVENUE, currency='AOA'), commission_cents, 'credit')
+        )
+
+    journal, created = post(
+        journal_key, lines,
+        ref_type='order', ref_id=str(order.id),
+        description=f'Payment received for order {str(order.id)[:8]}',
+        user=order.buyer,
+    )
+    return journal, created
+
+
+def record_escrow_release(*, order, amount, idempotency_key=None):
+    """Move escrow → wallet on delivery.
+
+    Posting (AOA, in cents):
+        DR SELLER_PENDING          amount
+        CR SELLER_WALLET           amount
+    """
+    from .models import Account, AccountType
+    return transfer(
+        from_account=Account.for_user(order.seller, AccountType.SELLER_PENDING, currency='AOA'),
+        to_account=Account.for_user(order.seller, AccountType.SELLER_WALLET, currency='AOA'),
+        amount=amount,
+        journal_key=idempotency_key or f'order:{order.id}:escrow_release',
+        ref_type='order', ref_id=str(order.id),
+        description=f'Escrow released for order {str(order.id)[:8]}',
+    )
+
+
+def record_payout_debit(*, seller, amount, payout_id, idempotency_key=None):
+    """Seller requests payout: SELLER_WALLET → EXTERNAL_CLEARING."""
+    from .models import Account, AccountType
+    return transfer(
+        from_account=Account.for_user(seller, AccountType.SELLER_WALLET, currency='AOA'),
+        to_account=Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA'),
+        amount=amount,
+        journal_key=idempotency_key or f'payout:{payout_id}:debit',
+        ref_type='payout', ref_id=str(payout_id),
+        description=f'Payout {payout_id} to bank',
+        user=seller,
+    )
+
+
+def record_payout_reverse(*, seller, amount, payout_id, idempotency_key=None):
+    """Payout was rejected: EXTERNAL_CLEARING → SELLER_WALLET (refund the debit)."""
+    from .models import Account, AccountType
+    return transfer(
+        from_account=Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA'),
+        to_account=Account.for_user(seller, AccountType.SELLER_WALLET, currency='AOA'),
+        amount=amount,
+        journal_key=idempotency_key or f'payout:{payout_id}:reverse',
+        ref_type='payout', ref_id=str(payout_id),
+        description=f'Payout {payout_id} reversed',
+        user=seller,
+    )
+
+
 def transfer(from_account, to_account, *, amount=None, amount_cents=None, journal_key,
              ref_type='', ref_id='', description='', user=None):
     """Move money / units from `from_account` to `to_account`.

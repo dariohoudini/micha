@@ -45,7 +45,7 @@ def release_order_escrow(order_id):
             escrow.released_at = timezone.now()
             escrow.save()
             wallet, _ = SellerWallet.objects.get_or_create(seller=escrow.order.seller)
-            # Use select_for_update to prevent race condition
+            # Cached counters (legacy read paths)
             from apps.payments.models import SellerWallet
             locked_wallet = SellerWallet.objects.select_for_update(of=('self',)).get(pk=wallet.pk)
             locked_wallet.balance += escrow.amount
@@ -58,6 +58,12 @@ def release_order_escrow(order_id):
                 description=f'Escrow released for order {order_id}',
                 balance_after=wallet.balance,
             )
+            # Source of truth: post to ledger (idempotent on order_id)
+            try:
+                from apps.ledger.service import record_escrow_release
+                record_escrow_release(order=escrow.order, amount=escrow.amount)
+            except Exception:
+                pass
         except Escrow.DoesNotExist:
             pass
         return f"Escrow released for order {order_id}"

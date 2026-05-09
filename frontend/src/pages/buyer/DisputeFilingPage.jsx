@@ -39,7 +39,7 @@ export default function DisputeFilingPage() {
       data.append('description', description)
       photos.forEach(p => data.append('photos', p))
 
-      await client.post('/api/v1/disputes/file/', data, {
+      await client.post('/api/v1/disputes/open/', data, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       setSubmitted(true)

@@ -2,6 +2,95 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import { useOrder } from '@/hooks/useQueries'
+import client from '@/api/client'
+
+const TRACKING_ICONS = {
+  pending:         'M12 6v6l4 2',                                                      // clock
+  confirmed:       'M20 6L9 17l-5-5',                                                  // check
+  processing:      'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83', // sun
+  shipped:         'M5 8h14M5 8a2 2 0 1 0 0-4h14a2 2 0 1 0 0 4M5 8l1 12h12L19 8',     // box
+  in_transit:      'M3 17h18M5 17V9l3-3h8l3 3v8',                                      // truck-ish
+  out_for_delivery:'M3 9l9-6 9 6M3 9v12h6V14h6v7h6V9',                                 // truck delivery (house+arrow vibe)
+  arrived:         'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z',                   // pin
+  delivered:       'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 0 0 1 1h3m10-11l2 2m-2-2v10a1 1 0 0 0-1 1h-3', // home
+  completed:       'M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4l-10 10-3-3',               // double-check
+  cancelled:       'M18 6L6 18M6 6l12 12',
+  refunded:        'M3 12a9 9 0 1 0 9-9M3 12l3-3M3 12l3 3',
+  update:          'M12 6v6l4 2',
+}
+const TRACKING_LABELS = {
+  pending: 'Pedido recebido',
+  confirmed: 'Confirmado pelo vendedor',
+  processing: 'Em preparação',
+  shipped: 'Enviado',
+  in_transit: 'Em trânsito',
+  out_for_delivery: 'Saiu para entrega',
+  arrived: 'Chegou ao destino',
+  delivered: 'Entregue',
+  completed: 'Concluído',
+  cancelled: 'Cancelado',
+  refunded: 'Reembolsado',
+  update: 'Atualização',
+}
+
+function fmtRelative(date) {
+  const d = new Date(date)
+  return d.toLocaleString('pt-AO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+function TrackingTimeline({ events = [], status }) {
+  if (!events.length) return null
+  // Show newest first (server returns oldest-first, so reverse)
+  const ordered = [...events].reverse()
+  const current = ordered[0]
+  const isError = status === 'cancelled' || status === 'refunded'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {ordered.map((ev, i) => {
+        const first = i === 0
+        const iconPath = TRACKING_ICONS[ev.code] || TRACKING_ICONS.update
+        const label = ev.description || TRACKING_LABELS[ev.code] || ev.code
+        const dotColor = first ? (isError ? '#ef4444' : '#C9A84C') : '#2A2A2A'
+        const lineColor = first && isError ? '#ef4444' : (first ? '#C9A84C' : '#2A2A2A')
+        return (
+          <div key={ev.id || i} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 34 }}>
+              <div style={{
+                width: 34, height: 34, borderRadius: '50%',
+                background: first ? (isError ? 'rgba(239,68,68,0.15)' : 'rgba(201,168,76,0.15)') : '#1E1E1E',
+                border: `2px solid ${dotColor}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: first ? `0 0 0 4px ${isError ? 'rgba(239,68,68,0.12)' : 'rgba(201,168,76,0.12)'}` : 'none',
+                flexShrink: 0,
+              }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={first ? (isError ? '#ef4444' : '#C9A84C') : '#9A9A9A'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d={iconPath} />
+                </svg>
+              </div>
+              {i < ordered.length - 1 && (
+                <div style={{ flex: 1, width: 2, background: lineColor, margin: '4px 0', minHeight: 16 }} />
+              )}
+            </div>
+            <div style={{ paddingTop: 6, paddingBottom: i < ordered.length - 1 ? 16 : 0, flex: 1 }}>
+              <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: first ? 700 : 500, color: first ? '#FFF' : '#CCC', marginBottom: 2 }}>
+                {label}
+              </p>
+              {ev.location && (
+                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: '#9A9A9A' }}>📍 {ev.location}</p>
+              )}
+              {ev.occurred_at && (
+                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: first ? '#C9A84C' : '#9A9A9A', marginTop: 2 }}>
+                  {fmtRelative(ev.occurred_at)}
+                </p>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 const fmt = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
@@ -77,6 +166,24 @@ export default function OrderDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { data: order, isLoading, refetch } = useOrder(id)
+  const [tracking, setTracking] = useState(null)
+
+  const loadTracking = useCallback(() => {
+    if (!id) return
+    client.get(`/api/v1/orders/${id}/tracking/`)
+      .then(r => setTracking(r.data))
+      .catch(() => {})
+  }, [id])
+
+  useEffect(() => { loadTracking() }, [loadTracking])
+
+  // Auto-poll while order is in-flight
+  useEffect(() => {
+    if (!order) return
+    if (!LIVE_STATUSES.includes(order.status)) return
+    const handle = setInterval(loadTracking, 30000)
+    return () => clearInterval(handle)
+  }, [order?.status, loadTracking])
 
   // Live polling while order is in-progress
   useEffect(() => {
@@ -154,8 +261,15 @@ export default function OrderDetailPage() {
 
           {/* Timeline */}
           <div style={{ background: '#141414', borderRadius: 16, border: '1px solid #1E1E1E', padding: 20 }}>
-            <h3 style={{ ...S, fontSize: 14, fontWeight: 600, color: '#FFF', marginBottom: 20 }}>Rastreio do pedido</h3>
-            <OrderTimeline status={order.status} timestamps={timestamps} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ ...S, fontSize: 14, fontWeight: 600, color: '#FFF' }}>Rastreio do pedido</h3>
+              {tracking?.tracking_number && (
+                <span style={{ ...S, fontSize: 11, color: '#9A9A9A' }}>#{tracking.tracking_number}</span>
+              )}
+            </div>
+            {tracking?.events?.length > 0
+              ? <TrackingTimeline events={tracking.events} status={order.status} />
+              : <OrderTimeline status={order.status} timestamps={timestamps} />}
           </div>
 
           {/* Items */}

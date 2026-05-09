@@ -5,6 +5,7 @@ from .views import (
     CancelOrderView, ConfirmDeliveryView,
     SellerOrderListView, UpdateOrderStatusView,
     RequestRefundView, InvoiceView, PackingSlipView,
+    OrderTrackingView,
 )
 
 
@@ -20,4 +21,5 @@ urlpatterns = [
     path("<uuid:pk>/packing-slip/", PackingSlipView.as_view(), name="packing-slip"),
     path("seller/", SellerOrderListView.as_view(), name="seller-orders"),
     path("<uuid:pk>/return/", ReturnRequestCreateView.as_view(), name="return-request"),
+    path("<uuid:pk>/tracking/", OrderTrackingView.as_view(), name="order-tracking"),
 ]

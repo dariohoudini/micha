@@ -12,7 +12,7 @@ from rest_framework.throttling import UserRateThrottle
 
 from apps.users.permissions import IsNotSuspended, IsBuyerOfOrder, IsSellerOrSuperuser
 from middleware.security import log_security_event
-from .models import Order, OrderItem, Refund
+from .models import Order, OrderItem, Refund, OrderTrackingEvent
 
 
 class CheckoutThrottle(UserRateThrottle):
@@ -300,3 +300,57 @@ class ReturnRequestCreateView(APIView):
             return Response({'id': ret.id, 'status': ret.status, 'reason': ret.reason, 'created_at': ret.created_at})
         except ReturnRequest.DoesNotExist:
             return Response({'error': 'No return request found.'}, status=404)
+
+
+class OrderTrackingEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderTrackingEvent
+        fields = ['id', 'code', 'description', 'location', 'occurred_at']
+        read_only_fields = ['id', 'occurred_at']
+
+
+class OrderTrackingView(APIView):
+    """GET  /api/v1/orders/<uuid:pk>/tracking/  — buyer or seller views events.
+    POST /api/v1/orders/<uuid:pk>/tracking/  — seller adds a manual checkpoint.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def _get_order(self, request, pk):
+        from django.db.models import Q
+        return get_object_or_404(
+            Order.objects.filter(Q(buyer=request.user) | Q(seller=request.user)),
+            pk=pk,
+        )
+
+    def get(self, request, pk):
+        order = self._get_order(request, pk)
+        qs = order.tracking_events.all()
+        if order.buyer_id == request.user.id and order.seller_id != request.user.id:
+            qs = qs.filter(is_visible_to_buyer=True)
+        serializer = OrderTrackingEventSerializer(qs, many=True)
+        return Response({
+            'order_id': str(order.id),
+            'status': order.status,
+            'tracking_number': order.tracking_number or '',
+            'events': serializer.data,
+        })
+
+    def post(self, request, pk):
+        order = self._get_order(request, pk)
+        # Only the seller (or staff) can add manual events
+        if order.seller_id != request.user.id and not request.user.is_staff:
+            return Response({'error': 'forbidden', 'detail': 'Apenas o vendedor pode adicionar eventos.'}, status=403)
+        code = (request.data.get('code') or '').strip()[:30]
+        description = (request.data.get('description') or '').strip()[:300]
+        location = (request.data.get('location') or '').strip()[:120]
+        if not (code or description):
+            return Response({'error': 'validation_error', 'detail': 'code or description is required.'}, status=400)
+        event = OrderTrackingEvent.objects.create(
+            order=order,
+            code=code or 'update',
+            description=description,
+            location=location,
+            is_visible_to_buyer=bool(request.data.get('is_visible_to_buyer', True)),
+            created_by=request.user,
+        )
+        return Response(OrderTrackingEventSerializer(event).data, status=201)

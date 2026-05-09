@@ -123,6 +123,14 @@ class Order(models.Model):
                 order=self, from_status=old, to_status=new_status,
                 changed_by=changed_by, note=note,
             )
+            # Auto-create a buyer-visible tracking event for every status change
+            OrderTrackingEvent.objects.create(
+                order=self,
+                code=new_status,
+                description=note or OrderTrackingEvent.DEFAULT_DESCRIPTIONS.get(new_status, new_status),
+                location="",
+                is_visible_to_buyer=True,
+            )
 
     def __str__(self):
         return f"Order {self.id} — {self.buyer.email}"
@@ -174,6 +182,42 @@ class OrderStatusLog(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["order", "-created_at"])]
+
+
+class OrderTrackingEvent(models.Model):
+    """A single checkpoint in the order's journey, like AliExpress tracking timeline.
+
+    Auto-created on every status change; sellers can also POST manual events
+    (e.g., "Saiu do armazém em Luanda — 14:30").
+    """
+    DEFAULT_DESCRIPTIONS = {
+        "pending":    "Pedido recebido",
+        "confirmed":  "Pedido confirmado pelo vendedor",
+        "processing": "Pedido em preparação",
+        "shipped":    "Pedido enviado",
+        "delivered":  "Pedido entregue",
+        "completed":  "Pedido concluído",
+        "cancelled":  "Pedido cancelado",
+        "refunded":   "Pedido reembolsado",
+    }
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="tracking_events")
+    code = models.CharField(
+        max_length=30,
+        help_text="Status code or custom (e.g. 'shipped', 'in_transit', 'out_for_delivery', 'arrived_hub')",
+    )
+    description = models.CharField(max_length=300, blank=True)
+    location = models.CharField(max_length=120, blank=True, help_text='e.g. "Luanda - Kilamba"')
+    is_visible_to_buyer = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="tracking_events_created")
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["occurred_at"]
+        indexes = [models.Index(fields=["order", "-occurred_at"])]
+
+    def __str__(self):
+        return f"{self.order_id} · {self.code} @ {self.occurred_at}"
 
 
 class Payment(models.Model):

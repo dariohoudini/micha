@@ -266,13 +266,19 @@ class CheckoutService:
             currency='AOA',
         )
 
-        # Log initial status
-        from apps.orders.models import OrderStatusLog
+        # Log initial status + buyer-visible tracking event
+        from apps.orders.models import OrderStatusLog, OrderTrackingEvent
         OrderStatusLog.objects.create(
             order=order,
             from_status='',
             to_status='pending',
             note='Order created at checkout',
+        )
+        OrderTrackingEvent.objects.create(
+            order=order,
+            code='pending',
+            description=OrderTrackingEvent.DEFAULT_DESCRIPTIONS['pending'],
+            is_visible_to_buyer=True,
         )
 
         return order

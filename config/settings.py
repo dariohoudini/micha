@@ -104,6 +104,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'middleware.logging_middleware.RequestIDMiddleware',
     'apps.telemetry.middleware.MetricsMiddleware',
+    'apps.telemetry.query_audit.QueryAuditMiddleware',
     'middleware.security_hardening.SecurityHardeningMiddleware',
     'middleware.security_hardening.FileUploadSecurityMiddleware',
     'middleware.terms_version.TermsVersionMiddleware',

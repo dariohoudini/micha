@@ -547,6 +547,16 @@ class ProductGroupListView(generics.ListAPIView):
             ).order_by('price').select_related('store').prefetch_related('images').first()
 
             if best:
+                # Use prefetched images cache; .first() / .exists() would
+                # each issue their own query (N+1 across all groups).
+                cached_imgs = list(best.images.all())
+                first_img = cached_imgs[0] if cached_imgs else None
+                image_url = None
+                if first_img and first_img.image:
+                    try:
+                        image_url = request.build_absolute_uri(first_img.image.url)
+                    except Exception:
+                        image_url = None
                 data.append({
                     'group_id': g.id,
                     'title': g.title,
@@ -554,9 +564,7 @@ class ProductGroupListView(generics.ListAPIView):
                     'best_price': g.best_price,
                     'seller_count': g.seller_count,
                     'best_seller': best.store.name if best.store else '',
-                    'image': request.build_absolute_uri(
-                        (best.images.first().image.url if best.images.exists() else None)
-                    ) if best.images.exists() else None,
+                    'image': image_url,
                     'slug': best.slug,
                 })
 
@@ -672,7 +680,9 @@ class ProductGroupSuggestView(APIView):
             best = offers.first()
             best_image = None
             try:
-                img = best.images.first()
+                # Prefetched on the offers queryset above; .first() bypasses cache.
+                cached_imgs = list(best.images.all())
+                img = cached_imgs[0] if cached_imgs else None
                 if img and img.image:
                     best_image = request.build_absolute_uri(img.image.url)
             except Exception:

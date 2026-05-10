@@ -14,7 +14,20 @@ class CartView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def get(self, request):
+        from django.db.models import Prefetch
+        from apps.products.models import Product
         cart, _ = Cart.objects.get_or_create(user=request.user)
+        # Prefetch the items + product + product images + variant_combo so
+        # the serializer doesn't N+1 across the cart.
+        cart = (
+            Cart.objects
+            .filter(pk=cart.pk)
+            .prefetch_related(
+                Prefetch('items__product', queryset=Product.objects.prefetch_related('images')),
+                'items__variant_combo',
+            )
+            .first()
+        )
         serializer = CartSerializer(cart, context={'request': request})
         return Response(serializer.data)
 

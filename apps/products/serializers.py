@@ -91,7 +91,11 @@ class ProductListSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_thumbnail(self, obj):
-        img = obj.images.first()
+        # Use the prefetched list — `.first()` would issue a fresh LIMIT 1
+        # query per row, defeating the prefetch_related and triggering
+        # an N+1 across the whole product list.
+        cached = obj.images.all()
+        img = next(iter(cached), None) if hasattr(cached, '__iter__') else None
         if img:
             if img.thumbnail_url:
                 return img.thumbnail_url

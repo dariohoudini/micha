@@ -23,7 +23,9 @@ class CartItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'added_at']
 
     def get_product_image(self, obj):
-        first_image = obj.product.images.first()
+        # Use prefetched cache; .first() would N+1 across the cart.
+        cached = list(obj.product.images.all())
+        first_image = cached[0] if cached else None
         if first_image:
             request = self.context.get('request')
             if request and first_image.image:

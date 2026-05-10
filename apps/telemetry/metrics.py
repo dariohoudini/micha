@@ -138,3 +138,9 @@ http_request_latency = Histogram(
     ['route'],
     buckets=(0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
 )
+http_db_queries = Histogram(
+    'micha_http_db_queries',
+    'DB queries executed per HTTP request — N+1 detector.',
+    ['route'],
+    buckets=(1, 5, 10, 25, 50, 100, 250, 500),
+)

@@ -521,16 +521,26 @@ class ProductGroupListView(generics.ListAPIView):
 
 class ProductGroupOffersView(generics.ListAPIView):
     """
-    GET /api/products/groups/<group_id>/offers/
-    All sellers offering the same product — buyer picks best deal.
+    GET /api/v1/products/groups/<group_id>/offers/
+    All sellers offering the same canonical product, sorted by price.
+
+    ?exclude=<product_id>  excludes one offer (used on PDP "other sellers" rail)
     """
     permission_classes = [AllowAny]
     serializer_class = ProductListSerializer
+    pagination_class = None
 
     def get_queryset(self):
-        return Product.active.filter(
+        qs = Product.active.filter(
             product_group_id=self.kwargs['group_id']
-        ).order_by('price')
+        ).select_related('store', 'category').prefetch_related('images').order_by('price')
+        exclude_id = self.request.query_params.get('exclude')
+        if exclude_id:
+            try:
+                qs = qs.exclude(pk=int(exclude_id))
+            except (TypeError, ValueError):
+                pass
+        return qs[:20]  # bound the result; nobody scrolls past 20 offers
 
 
 class PriceAlertView(APIView):

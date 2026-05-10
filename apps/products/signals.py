@@ -1,17 +1,18 @@
 """
-Keep `Product.search_vector` fresh.
+Product signals.
 
 Triggers:
-  * Product post_save  → re-index (covers create + edit of any text field)
-  * tags m2m_changed   → re-index (tag list changed)
+  * Product post_save     → re-index search_vector (Postgres only)
+                          → assign product_group if not set (SPU/SKU model)
+  * tags m2m_changed      → re-index search_vector
 """
 import logging
 
 from django.db import connection, transaction
-from django.db.models.signals import m2m_changed, post_save
+from django.db.models.signals import m2m_changed, post_save, pre_save
 from django.dispatch import receiver
 
-from .models import Product
+from .models import Product, ProductGroup
 from .search import update_search_vector
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,34 @@ def _safe_update(product_pk):
         update_search_vector(product)
     except Exception:
         logger.exception(f'search_vector update failed for product {product_pk}')
+
+
+@receiver(pre_save, sender=Product)
+def assign_product_group(sender, instance, **kwargs):
+    """SPU/SKU plumbing: every Product gets canonicalised to a ProductGroup
+    keyed by (title, brand, category). Sellers listing the same item for
+    sale all share the group. Recomputes the group when the title or brand
+    changes (rare but cheap).
+    """
+    try:
+        # Existing product whose discriminator changed → re-canonicalise
+        if instance.pk:
+            try:
+                old = Product.objects.only('title', 'brand', 'category_id', 'product_group_id').get(pk=instance.pk)
+            except Product.DoesNotExist:
+                old = None
+            if old and (old.title == instance.title and old.brand == (instance.brand or '')
+                        and old.category_id == instance.category_id and instance.product_group_id):
+                return  # nothing relevant changed
+        group, _ = ProductGroup.find_or_create(
+            title=instance.title,
+            brand=instance.brand or '',
+            category=instance.category,
+        )
+        instance.product_group = group
+    except Exception:
+        # Auto-grouping must never block a product save
+        logger.exception('assign_product_group failed; product saved without group')
 
 
 @receiver(post_save, sender=Product)

@@ -17,6 +17,7 @@ import { ReportButton, BlockUserButton } from '@/components/shared/UserActions'
 import ReviewsSection from '@/components/buyer/ReviewsSection'
 import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import ProductRail from '@/components/buyer/ProductRail'
+import OtherOffersRail from '@/components/buyer/OtherOffersRail'
 import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
 
 // Live flash sale lookup for this product
@@ -497,6 +498,30 @@ export default function ProductDetailPage() {
           {/* Live social proof */}
           <SocialProofStrip proof={socialProof} />
 
+          {/* SPU/SKU: "Available from N other sellers" pill */}
+          {product.product_group_id && product.other_offers_count > 0 && (
+            <button
+              onClick={() => {
+                const el = document.getElementById('other-offers-rail')
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '6px 12px', borderRadius: 20,
+                border: '1px solid rgba(59,130,246,0.3)',
+                background: 'rgba(59,130,246,0.08)',
+                cursor: 'pointer', marginBottom: 16,
+                fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#60a5fa',
+              }}>
+              🏬 Mais {product.other_offers_count} {product.other_offers_count === 1 ? 'loja oferece' : 'lojas oferecem'} este produto
+              {product.other_offers_best_price && Number(product.other_offers_best_price) < Number(effectivePrice) && (
+                <span style={{ fontWeight: 700, marginLeft: 4 }}>
+                  desde {Number(product.other_offers_best_price).toLocaleString()} Kz
+                </span>
+              )}
+            </button>
+          )}
+
           {/* Express badge */}
           {product.is_express && (
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.3)', borderRadius: 8, padding: '6px 12px', marginBottom: 16 }}>
@@ -622,6 +647,17 @@ export default function ProductDetailPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Other sellers offering the same product (SPU/SKU) */}
+          {product.product_group_id && product.other_offers_count > 0 && (
+            <div id="other-offers-rail" style={{ margin: '8px -16px 8px' }}>
+              <OtherOffersRail
+                groupId={product.product_group_id}
+                currentProductId={product.id}
+                currentPrice={Number(effectivePrice)}
+              />
             </div>
           )}
 

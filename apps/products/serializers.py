@@ -103,6 +103,9 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     variant_combos = serializers.SerializerMethodField()
     variant_axes = serializers.SerializerMethodField()
     price_tiers = PriceTierSerializer(many=True, read_only=True)
+    product_group_id = serializers.IntegerField(read_only=True, allow_null=True)
+    other_offers_count = serializers.SerializerMethodField()
+    other_offers_best_price = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -117,6 +120,7 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
             "views", "add_to_cart_count", "wishlist_count",
             "store_name", "store_id", "category_name",
             "tags", "images", "variant_combos", "variant_axes", "price_tiers",
+            "product_group_id", "other_offers_count", "other_offers_best_price",
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -124,6 +128,7 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
             "views", "add_to_cart_count", "wishlist_count",
             "store_name", "store_id", "category_name",
             "images", "variant_combos", "variant_axes", "price_tiers",
+            "product_group_id", "other_offers_count", "other_offers_best_price",
             "created_at", "updated_at",
         ]
 
@@ -142,6 +147,20 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
                 if v not in axes[k]:
                     axes[k].append(v)
         return [{"name": k, "values": v} for k, v in axes.items()]
+
+    def _other_offers_qs(self, obj):
+        if not obj.product_group_id:
+            return Product.objects.none()
+        return Product.active.filter(
+            product_group_id=obj.product_group_id,
+        ).exclude(pk=obj.pk)
+
+    def get_other_offers_count(self, obj):
+        return self._other_offers_qs(obj).count()
+
+    def get_other_offers_best_price(self, obj):
+        from django.db.models import Min
+        return self._other_offers_qs(obj).aggregate(p=Min('price'))['p']
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):

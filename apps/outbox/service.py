@@ -22,12 +22,24 @@ from .models import OutboxEvent
 
 
 def publish(*, topic, payload=None, dedupe_key, ref_type='', ref_id='',
-            max_attempts=10):
-    """Insert an outbox row in the current transaction. Returns (event, created)."""
+            max_attempts=10, delay_seconds=0):
+    """Insert an outbox row in the current transaction.
+
+    `delay_seconds` schedules the event for future dispatch (used for
+    retry-after-N-minutes patterns). Defaults to 0 = available immediately.
+
+    Returns (event, created).
+    """
     if not topic:
         raise ValueError('topic is required')
     if not dedupe_key:
         raise ValueError('dedupe_key is required for idempotency')
+
+    from datetime import timedelta
+    from django.utils import timezone
+    next_attempt_at = timezone.now()
+    if delay_seconds and delay_seconds > 0:
+        next_attempt_at = next_attempt_at + timedelta(seconds=int(delay_seconds))
 
     event, created = OutboxEvent.objects.get_or_create(
         dedupe_key=dedupe_key,
@@ -37,6 +49,7 @@ def publish(*, topic, payload=None, dedupe_key, ref_type='', ref_id='',
             'ref_type': ref_type,
             'ref_id': str(ref_id)[:80] if ref_id else '',
             'max_attempts': max_attempts,
+            'next_attempt_at': next_attempt_at,
         },
     )
     if created:

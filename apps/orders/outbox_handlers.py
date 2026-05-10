@@ -142,6 +142,39 @@ def on_protection_completed(payload):
         order.save(update_fields=['protection_state', 'protection_deadline_at'])
 
 
+@handler('order.delivery_confirmed')
+def on_order_delivery_confirmed(payload):
+    """Buyer (or auto-action) marked delivered — release escrow → seller wallet.
+
+    Idempotent: release_order_escrow itself is keyed on
+    Escrow(order_id, status='holding'), so re-running is a no-op once
+    the escrow has been released.
+    """
+    order_id = payload.get('order_id')
+    if not order_id:
+        return
+    from apps.orders.tasks import release_order_escrow
+    try:
+        release_order_escrow(order_id)
+    except Exception:
+        logger.exception(f'release_order_escrow failed for {order_id}')
+        raise  # outbox retry
+
+
+@handler('order.shipped')
+def on_order_shipped(payload):
+    """Send the buyer their shipping notification (push + in-app)."""
+    order_id = payload.get('order_id')
+    if not order_id:
+        return
+    from apps.orders.tasks import send_shipping_notification
+    try:
+        send_shipping_notification(order_id)
+    except Exception:
+        logger.exception(f'send_shipping_notification failed for {order_id}')
+        raise
+
+
 @handler('order.payment_confirmed')
 def on_order_payment_confirmed(payload):
     """Send the buyer their order confirmation.

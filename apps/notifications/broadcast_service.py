@@ -182,12 +182,19 @@ class BroadcastSendView(APIView):
         if broadcast.status == 'sent':
             return Response({'error': 'Este broadcast já foi enviado.'}, status=400)
 
-        # Queue the send task
-        from .broadcast_tasks import send_broadcast_task
-        send_broadcast_task.delay(str(broadcast.id))
-
-        broadcast.status = 'scheduled'
-        broadcast.save()
+        # Outbox: durable intent. Survives broker outage; dispatcher
+        # picks it up and runs send_broadcast_task inline.
+        from django.db import transaction as _tx
+        from apps.outbox.service import publish as _ob_publish
+        with _tx.atomic():
+            broadcast.status = 'scheduled'
+            broadcast.save()
+            _ob_publish(
+                topic='broadcast.queued',
+                payload={'broadcast_id': str(broadcast.id)},
+                dedupe_key=f'broadcast.queued:{broadcast.id}',
+                ref_type='broadcast', ref_id=str(broadcast.id),
+            )
 
         return Response({
             'status': 'sending',

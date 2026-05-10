@@ -223,8 +223,14 @@ class ConfirmDeliveryView(APIView):
             return Response({'error': 'invalid_status', "detail": "Order must be shipped first."}, status=400)
         with transaction.atomic():
             order.update_status("delivered", changed_by=request.user, note="Confirmed by buyer")
-            from apps.orders.tasks import release_order_escrow
-            release_order_escrow.delay(str(order.id))
+            # Outbox: durable intent. The handler kicks release_order_escrow.
+            from apps.outbox.service import publish as _ob_publish
+            _ob_publish(
+                topic='order.delivery_confirmed',
+                payload={'order_id': str(order.id)},
+                dedupe_key=f'order.delivery_confirmed:{order.id}',
+                ref_type='order', ref_id=str(order.id),
+            )
             # Loyalty cashback: 1 point per Kz spent (= 1% back, since 100 pts = 1 Kz),
             # capped at 50 000 pts (500 Kz) per order to limit fraud impact.
             try:
@@ -279,8 +285,13 @@ class UpdateOrderStatusView(APIView):
                 order.save(update_fields=["tracking_number"])
             order.update_status(new_status, changed_by=request.user)
             if new_status == "shipped":
-                from apps.orders.tasks import send_shipping_notification
-                send_shipping_notification.delay(str(order.id))
+                from apps.outbox.service import publish as _ob_publish
+                _ob_publish(
+                    topic='order.shipped',
+                    payload={'order_id': str(order.id), 'tracking_number': tracking or ''},
+                    dedupe_key=f'order.shipped:{order.id}',
+                    ref_type='order', ref_id=str(order.id),
+                )
         return Response({"detail": f"Order updated to {new_status}."})
 
 

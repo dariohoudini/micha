@@ -614,20 +614,37 @@ class PaymentProcessor:
             return 10.0
 
     def _post_payment_tasks(self, order, payment):
-        """Trigger async tasks after successful payment."""
+        """Legacy hook — superseded by outbox publish in confirm_payment.
+        Left in place for any code path that still calls it explicitly."""
         try:
-            from apps.orders.tasks import send_order_confirmation
-            send_order_confirmation.delay(str(order.id))
-        except Exception as e:
-            logger.error(f'Post-payment task error: {e}')
-
-    def _schedule_payment_retry(self, payment):
-        """Schedule automatic retry for failed payment."""
-        try:
-            from apps.payments.tasks import retry_failed_payment
-            retry_failed_payment.apply_async(
-                args=[str(payment.id)],
-                countdown=300,  # retry after 5 minutes
+            from apps.outbox.service import publish
+            publish(
+                topic='order.payment_confirmed',
+                payload={'order_id': str(order.id), 'payment_id': str(payment.id)},
+                dedupe_key=f'order.payment_confirmed:{order.id}',
+                ref_type='order', ref_id=str(order.id),
             )
         except Exception as e:
-            logger.debug(f'Could not schedule payment retry: {e}')
+            logger.error(f'Outbox publish failed in _post_payment_tasks: {e}')
+
+    def _schedule_payment_retry(self, payment):
+        """Schedule a payment retry 5 minutes from now via the outbox.
+
+        Replaces a Celery countdown task. Outbox `delay_seconds` survives a
+        broker outage; the dispatcher will run the handler when its
+        next_attempt_at is reached.
+        """
+        try:
+            from apps.outbox.service import publish
+            publish(
+                topic='payment.retry_scheduled',
+                payload={'payment_id': str(payment.id)},
+                # Use payment.id + a coarse retry-bucket so multiple retries
+                # within the same 5-min window collapse to one attempt.
+                dedupe_key=f'payment.retry_scheduled:{payment.id}:{int(timezone.now().timestamp() // 300)}',
+                ref_type='payment', ref_id=str(payment.id),
+                delay_seconds=300,
+                max_attempts=3,
+            )
+        except Exception as e:
+            logger.debug(f'Could not schedule payment retry via outbox: {e}')

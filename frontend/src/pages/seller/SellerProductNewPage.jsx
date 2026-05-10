@@ -4,6 +4,7 @@ import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
 import VariantsBuilder from '@/components/seller/VariantsBuilder'
 import PriceTiersBuilder from '@/components/seller/PriceTiersBuilder'
+import SimilarOffersPanel from '@/components/seller/SimilarOffersPanel'
 
 const CATEGORIES = ['Moda', 'Tecnologia', 'Casa & Jardim', 'Beleza', 'Alimentação', 'Desporto', 'Crianças', 'Arte & Artesanato', 'Acessórios', 'Outro']
 const CONDITIONS = [{ value: 'new', label: 'Novo' }, { value: 'used', label: 'Usado' }, { value: 'refurbished', label: 'Recondicionado' }]
@@ -257,6 +258,21 @@ export default function SellerProductNewPage() {
                 ))}
               </div>
             </Field>
+
+            {/* SPU/SKU: surface existing canonicals so seller can list as another offer */}
+            {form.name && form.category && (
+              <SimilarOffersPanel
+                title={form.name}
+                brand={form.brand || ''}
+                categorySlug={(form.category || '').toLowerCase().replace(/\s+&\s+|\s+/g, '-')}
+                onUseCanonical={(group) => {
+                  // Pre-fill title + brand to the canonical strings so the
+                  // pre_save fingerprint hits the same group on submit.
+                  setForm(f => ({ ...f, name: group.title, brand: group.brand || f.brand || '' }))
+                  showToast?.(`A listar como nova oferta em "${group.title}"`)
+                }}
+              />
+            )}
 
             <div>
               <label style={{ ...S, fontSize: 12, fontWeight: 500, color: '#9A9A9A', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Estado</label>

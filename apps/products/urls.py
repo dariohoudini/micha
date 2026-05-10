@@ -6,7 +6,7 @@ from .views import (
     SellerProductListView, ProductCreateView, ProductUpdateView,
     ProductImageUploadView, BulkProductCreateView,
     ProductCompareView, ProductQAListCreateView, ProductQAAnswerView, ProductDuplicateView,
-    ProductGroupListView, ProductGroupOffersView,
+    ProductGroupListView, ProductGroupSuggestView, ProductGroupOffersView,
 )
 
 urlpatterns = [
@@ -18,6 +18,7 @@ urlpatterns = [
     path("my/", SellerProductListView.as_view(), name="my-products"),
     path("create/", ProductCreateView.as_view(), name="create"),
     path("groups/", ProductGroupListView.as_view(), name="product-groups"),
+    path("groups/suggest/", ProductGroupSuggestView.as_view(), name="product-group-suggest"),
     path("<slug:slug>/price-alert/", PriceAlertView.as_view(), name="price-alert"),
     path("groups/<int:group_id>/offers/", ProductGroupOffersView.as_view(), name="product-group-offers"),
     path("<slug:slug>/", ProductDetailView.as_view(), name="detail"),

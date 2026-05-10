@@ -550,6 +550,93 @@ class ProductGroupListView(generics.ListAPIView):
         return Response(data)
 
 
+class ProductGroupSuggestView(APIView):
+    """GET /api/v1/products/groups/suggest/?title=…&brand=…&category=<slug>
+
+    Help sellers avoid forking the catalog. Returns canonical ProductGroups
+    that the proposed listing would join — the seller can then choose to
+    list as another offer on this canonical product, or proceed to create
+    a brand-new SPU.
+
+    Returns at most 5 candidates with seller_count + cheapest current offer.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Q as _Q
+        from .models import ProductGroup
+        import hashlib
+
+        title = (request.query_params.get('title') or '').strip()
+        brand = (request.query_params.get('brand') or '').strip()
+        category_slug = (request.query_params.get('category') or '').strip()
+
+        if not title or len(title) < 4:
+            return Response({'results': []})
+
+        category = None
+        if category_slug:
+            category = Category.objects.filter(slug=category_slug).first()
+
+        # Pass 1: exact-fingerprint match (deterministic; covers every
+        # variant the normaliser handles). This is the same key the
+        # pre_save signal will compute, so a hit here = same group on save.
+        candidates = []
+        raw = (
+            f'{ProductGroup._normalize_title(title)}|'
+            f'{ProductGroup._normalize_brand(brand)}|'
+            f'{category.id if category else 0}'
+        )
+        target_fp = hashlib.sha256(raw.encode()).hexdigest()[:64]
+        grp = ProductGroup.objects.filter(fingerprint=target_fp).first()
+        if grp:
+            candidates.append(grp)
+
+        # Pass 2: prefix match in same category — surfaces near-matches
+        # the seller might want to inspect even if not an exact route.
+        if len(candidates) < 5:
+            words = [w for w in ProductGroup._normalize_title(title).split() if len(w) >= 3]
+            extra_qs = ProductGroup.objects.exclude(pk__in=[g.pk for g in candidates])
+            if category:
+                extra_qs = extra_qs.filter(category=category)
+            if words:
+                extra_qs = extra_qs.filter(title__icontains=words[0])
+            candidates.extend(list(extra_qs[:5 - len(candidates)]))
+
+        # Annotate each with seller stats
+        results = []
+        for group in candidates:
+            offers = (
+                Product.active.filter(product_group=group)
+                .select_related('store').prefetch_related('images')
+                .order_by('price')
+            )
+            seller_count = offers.count()
+            if seller_count == 0:
+                continue
+            best = offers.first()
+            best_image = None
+            try:
+                img = best.images.first()
+                if img and img.image:
+                    best_image = request.build_absolute_uri(img.image.url)
+            except Exception:
+                pass
+            results.append({
+                'group_id': group.id,
+                'title': group.title,
+                'brand': group.brand or '',
+                'category_slug': group.category.slug if group.category_id else None,
+                'seller_count': seller_count,
+                'best_price': str(best.price),
+                'best_offer_id': best.id,
+                'best_offer_slug': best.slug,
+                'best_offer_image': best_image,
+            })
+
+        return Response({'results': results})
+
+
 class ProductGroupOffersView(generics.ListAPIView):
     """
     GET /api/v1/products/groups/<group_id>/offers/

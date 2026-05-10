@@ -86,11 +86,55 @@ class ProductGroup(models.Model):
     def __str__(self):
         return self.title
 
+    # Brand alias map — sellers spell brands inconsistently. Anything in a
+    # group canonicalises to the first entry. Add entries as we observe drift.
+    BRAND_ALIASES = {
+        'apple':       ['apple', 'apple inc', 'apple inc.'],
+        'samsung':     ['samsung', 'samsung electronics'],
+        'xiaomi':      ['xiaomi', 'mi', 'redmi'],
+        'huawei':      ['huawei', 'honor'],
+        'lg':          ['lg', 'lg electronics'],
+        'sony':        ['sony', 'sony group'],
+        'nike':        ['nike', 'nike inc'],
+        'adidas':      ['adidas', 'adidas ag'],
+        'puma':        ['puma', 'puma se'],
+    }
+
+    @classmethod
+    def _normalize_title(cls, title: str) -> str:
+        """Aggressive normalisation: lowercase, fold diacritics, collapse whitespace,
+        strip punctuation. So "iPhone  15-Pro!" and "iphone 15 pro" hit the same key."""
+        import re
+        import unicodedata
+        if not title:
+            return ''
+        s = unicodedata.normalize('NFKD', title.lower())
+        s = ''.join(c for c in s if not unicodedata.combining(c))
+        # Replace any non-alphanumeric with single space, collapse runs
+        s = re.sub(r'[^a-z0-9]+', ' ', s)
+        return ' '.join(s.split())
+
+    @classmethod
+    def _normalize_brand(cls, brand: str) -> str:
+        """Map common variants to a canonical brand name. Falls back to
+        normalised input when no alias hit."""
+        norm = cls._normalize_title(brand)
+        if not norm:
+            return ''
+        for canonical, aliases in cls.BRAND_ALIASES.items():
+            if norm in aliases:
+                return canonical
+        return norm
+
     @classmethod
     def find_or_create(cls, title, brand, category):
-        """Find existing group by fingerprint or create new one."""
+        """Find existing group by deterministic normalised fingerprint or create new."""
         import hashlib
-        raw = f"{title.lower().strip()}|{brand.lower().strip()}|{category.id if category else 0}"
+        raw = (
+            f'{cls._normalize_title(title)}|'
+            f'{cls._normalize_brand(brand or "")}|'
+            f'{category.id if category else 0}'
+        )
         fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:64]
         group, created = cls.objects.get_or_create(
             fingerprint=fingerprint,

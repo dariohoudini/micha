@@ -71,6 +71,13 @@ class ProductListSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
     store_name = serializers.CharField(source="store.name", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True, default="")
     thumbnail = serializers.SerializerMethodField()
+    # Optional SPU/SKU annotations (only present when ?collapse=group is used)
+    product_group_id = serializers.IntegerField(read_only=True, allow_null=True)
+    seller_count = serializers.IntegerField(source="_seller_count", read_only=True, default=None)
+    group_best_price = serializers.DecimalField(
+        source="_group_best_price", max_digits=10, decimal_places=2,
+        read_only=True, allow_null=True, default=None,
+    )
 
     class Meta:
         model = Product
@@ -79,6 +86,7 @@ class ProductListSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
             "discount_percentage", "quantity", "condition", "sale_type",
             "store_name", "category_name", "is_featured", "is_boosted",
             "views", "created_at", "thumbnail",
+            "product_group_id", "seller_count", "group_best_price",
         ]
         read_only_fields = fields
 

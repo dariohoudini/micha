@@ -101,6 +101,37 @@ class ProductListView(generics.ListAPIView):
             "popular": "-views",
             "-rating": "-_avg_rating" if needs_rating else "-views",
         }
+        # SPU collapse: when ?collapse=group is set, return one card per
+        # ProductGroup (the cheapest active offer in the group) so the buyer
+        # sees one row per real product instead of N near-duplicates from N
+        # sellers. Products without a group (legacy) keep their own row.
+        if params.get('collapse') == 'group':
+            from django.db.models import OuterRef, Subquery, Min, Count
+            cheapest_per_group = (
+                Product.active
+                .filter(product_group=OuterRef('product_group'))
+                .order_by('price')
+                .values('pk')[:1]
+            )
+            qs = qs.filter(
+                Q(pk=Subquery(cheapest_per_group)) | Q(product_group__isnull=True)
+            ).annotate(
+                _seller_count=Count(
+                    'product_group__seller_listings',
+                    filter=Q(
+                        product_group__seller_listings__is_active=True,
+                        product_group__seller_listings__is_archived=False,
+                    ),
+                ),
+                _group_best_price=Min(
+                    'product_group__seller_listings__price',
+                    filter=Q(
+                        product_group__seller_listings__is_active=True,
+                        product_group__seller_listings__is_archived=False,
+                    ),
+                ),
+            )
+
         # When a search query is active and caller didn't explicitly choose an
         # ordering, sort by relevance rank rather than by creation date.
         if search and "ordering" not in params:

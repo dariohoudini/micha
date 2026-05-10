@@ -58,14 +58,25 @@ function ProductCard({ product }) {
       </div>
       <div style={{ padding: '8px 10px 12px', flex: 1 }}>
         <p style={{ ...S, fontSize: 12, color: '#FFF', fontWeight: 500, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: 1.4 }}>
-          {product.name}
+          {product.title || product.name}
         </p>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' }}>
-          <span style={{ ...S, fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>{fmt(product.price)}</span>
+          <span style={{ ...S, fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>
+            {product.seller_count > 1 && product.group_best_price
+              ? `desde ${fmt(product.group_best_price)}`
+              : fmt(product.price)}
+          </span>
           {discount > 0 && product.original_price && (
             <span style={{ ...S, fontSize: 10, color: '#9A9A9A', textDecoration: 'line-through' }}>{fmt(product.original_price)}</span>
           )}
         </div>
+        {product.seller_count > 1 && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, padding: '1px 6px', borderRadius: 4, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)' }}>
+            <span style={{ ...S, fontSize: 9, fontWeight: 700, color: '#60a5fa', letterSpacing: '0.02em' }}>
+              🏬 {product.seller_count} lojas
+            </span>
+          </div>
+        )}
         {product.avg_rating > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 4 }}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="#C9A84C"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
@@ -265,7 +276,7 @@ export default function ExplorePage() {
   ].filter(Boolean).length
 
   const buildParams = useCallback((pg = 1) => {
-    const params = { ordering: sort, limit: 20, page: pg }
+    const params = { ordering: sort, limit: 20, page: pg, collapse: 'group' }
     if (query.trim()) params.search = query.trim()
     if (category !== '🛍️ Todos') params.category = category.replace(/^.+\s/, '')
     if (filters.minPrice) params.min_price = filters.minPrice

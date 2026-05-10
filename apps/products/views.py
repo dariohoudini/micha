@@ -380,6 +380,19 @@ class ProductImageUploadView(APIView):
             alt_text=request.data.get("alt_text", ""),
         )
 
+        # Compute perceptual hash from the source upload — drives the
+        # SPU/SKU image-similarity match in ProductGroupSuggestView.
+        # Only set if the product doesn't already have one (first image wins).
+        if not product.image_hash:
+            try:
+                from .perceptual_hash import compute_dhash
+                image_file.seek(0)
+                phash = compute_dhash(image_file)
+                if phash:
+                    Product.objects.filter(pk=product.pk).update(image_hash=phash)
+            except Exception:
+                pass
+
         # Bust product schema cache
         cache.delete(f"schema:product:{product.pk}")
 
@@ -570,8 +583,11 @@ class ProductGroupSuggestView(APIView):
         title = (request.query_params.get('title') or '').strip()
         brand = (request.query_params.get('brand') or '').strip()
         category_slug = (request.query_params.get('category') or '').strip()
+        image_hash = (request.query_params.get('image_hash') or '').strip()[:32]
 
-        if not title or len(title) < 4:
+        # Allow image-hash-only searches when the seller has uploaded an image
+        # but not yet typed a meaningful title.
+        if (not title or len(title) < 4) and not image_hash:
             return Response({'results': []})
 
         category = None
@@ -582,19 +598,20 @@ class ProductGroupSuggestView(APIView):
         # variant the normaliser handles). This is the same key the
         # pre_save signal will compute, so a hit here = same group on save.
         candidates = []
-        raw = (
-            f'{ProductGroup._normalize_title(title)}|'
-            f'{ProductGroup._normalize_brand(brand)}|'
-            f'{category.id if category else 0}'
-        )
-        target_fp = hashlib.sha256(raw.encode()).hexdigest()[:64]
-        grp = ProductGroup.objects.filter(fingerprint=target_fp).first()
-        if grp:
-            candidates.append(grp)
+        if title and len(title) >= 4:
+            raw = (
+                f'{ProductGroup._normalize_title(title)}|'
+                f'{ProductGroup._normalize_brand(brand)}|'
+                f'{category.id if category else 0}'
+            )
+            target_fp = hashlib.sha256(raw.encode()).hexdigest()[:64]
+            grp = ProductGroup.objects.filter(fingerprint=target_fp).first()
+            if grp:
+                candidates.append(grp)
 
         # Pass 2: prefix match in same category — surfaces near-matches
         # the seller might want to inspect even if not an exact route.
-        if len(candidates) < 5:
+        if title and len(title) >= 4 and len(candidates) < 5:
             words = [w for w in ProductGroup._normalize_title(title).split() if len(w) >= 3]
             extra_qs = ProductGroup.objects.exclude(pk__in=[g.pk for g in candidates])
             if category:
@@ -602,6 +619,44 @@ class ProductGroupSuggestView(APIView):
             if words:
                 extra_qs = extra_qs.filter(title__icontains=words[0])
             candidates.extend(list(extra_qs[:5 - len(candidates)]))
+
+        # Pass 3: visually-similar match via perceptual hash. Catches the
+        # case where two sellers use different titles for the same item but
+        # the same product photo (manufacturer / press image / re-uploaded
+        # competitor listing). Hamming distance ≤ 5 = "essentially same".
+        if image_hash and len(image_hash) == 16 and len(candidates) < 5:
+            from .perceptual_hash import hamming_distance as _hd
+            seen_group_ids = {g.id for g in candidates}
+            # Pull the candidate set first (bounded by category + non-empty
+            # hash) then compute Hamming distance in Python — small set,
+            # cheap loop, no need for SQL bit ops.
+            # Use the base manager + values_list to dodge ActiveProductManager's
+            # select_related (which conflicts with .only(...)). Same effective
+            # filter: active + non-archived.
+            visual_pairs = (
+                Product.objects
+                .filter(is_active=True, is_archived=False)
+                .exclude(image_hash='').exclude(image_hash__isnull=True)
+                .exclude(product_group__isnull=True)
+            )
+            if category:
+                visual_pairs = visual_pairs.filter(category=category)
+            visual_pairs = visual_pairs.values_list('image_hash', 'product_group_id')[:500]
+            close = []
+            close_seen = set()
+            for img_hash, gid in visual_pairs:
+                if gid in seen_group_ids or gid in close_seen:
+                    continue
+                if _hd(image_hash, img_hash) <= 5:
+                    close.append(gid)
+                    close_seen.add(gid)
+                    if len(close) + len(candidates) >= 5:
+                        break
+            if close:
+                visual_groups = list(
+                    ProductGroup.objects.filter(pk__in=close).order_by('-updated_at')[:5 - len(candidates)]
+                )
+                candidates.extend(visual_groups)
 
         # Annotate each with seller stats
         results = []

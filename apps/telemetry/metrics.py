@@ -1,0 +1,140 @@
+"""
+Prometheus metrics catalogue for MICHA.
+
+Convention: micha_<domain>_<unit>_<verb>
+
+Counters increment forever (Prometheus computes rates from them).
+Gauges show "current value" — refreshed by scheduled jobs.
+Histograms record latency / value distributions.
+
+All metric names are stable contracts — once a dashboard is wired to a
+metric, renaming breaks it. Add new ones; don't rename old ones.
+"""
+from prometheus_client import Counter, Gauge, Histogram
+
+
+# ── Orders / commerce ───────────────────────────────────────────────
+orders_created = Counter(
+    'micha_orders_created_total',
+    'Orders created at checkout (any payment status).',
+    ['payment_method'],
+)
+orders_status_transitions = Counter(
+    'micha_orders_status_transitions_total',
+    'Order.status transitions.',
+    ['from_status', 'to_status'],
+)
+checkout_blocked_by_risk = Counter(
+    'micha_checkout_blocked_by_risk_total',
+    'Checkouts blocked by the fraud engine.',
+)
+
+# ── Payments ────────────────────────────────────────────────────────
+payments_confirmed = Counter(
+    'micha_payments_confirmed_total',
+    'Successful payment confirmations.',
+    ['method'],
+)
+payments_failed = Counter(
+    'micha_payments_failed_total',
+    'Failed payments.',
+    ['method', 'reason'],
+)
+payment_confirm_latency = Histogram(
+    'micha_payment_confirm_latency_seconds',
+    'Time from payment.confirm() entry to commit.',
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+)
+
+# ── Buyer Protection ───────────────────────────────────────────────
+protection_lapsed = Counter(
+    'micha_protection_lapsed_total',
+    'Orders auto-actioned due to protection deadline lapse.',
+    ['from_state'],
+)
+
+# ── Refunds / Returns ───────────────────────────────────────────────
+refunds_issued = Counter(
+    'micha_refunds_issued_total',
+    'Refunds posted (any source).',
+    ['source', 'destination'],  # source: protection|return|admin; dest: store_credit|gateway
+)
+refunds_amount_kz = Counter(
+    'micha_refunds_amount_kz_total',
+    'Sum of Kz refunded.',
+    ['source', 'destination'],
+)
+
+# ── Risk engine ─────────────────────────────────────────────────────
+risk_assessments = Counter(
+    'micha_risk_assessments_total',
+    'Risk assessments computed.',
+    ['scope', 'action'],  # scope: order|signup; action: allow|flag|hold|block
+)
+
+# ── Ledger ──────────────────────────────────────────────────────────
+ledger_journals_posted = Counter(
+    'micha_ledger_journals_posted_total',
+    'Ledger journals successfully posted.',
+    ['ref_type'],
+)
+ledger_imbalance_cents = Gauge(
+    'micha_ledger_imbalance_cents',
+    'Σ credits − Σ debits per currency (must be 0; otherwise alert).',
+    ['currency'],
+)
+
+# ── Outbox ──────────────────────────────────────────────────────────
+outbox_published = Counter(
+    'micha_outbox_published_total',
+    'Outbox events published (publish() calls that created a row).',
+    ['topic'],
+)
+outbox_dispatched = Counter(
+    'micha_outbox_dispatched_total',
+    'Outbox events successfully dispatched (handler returned).',
+    ['topic'],
+)
+outbox_dispatch_failed = Counter(
+    'micha_outbox_dispatch_failed_total',
+    'Outbox events whose handler raised.',
+    ['topic'],
+)
+outbox_pending = Gauge(
+    'micha_outbox_pending',
+    'Current count of OutboxEvent in pending or retrying state.',
+)
+outbox_dead = Gauge(
+    'micha_outbox_dead',
+    'Current count of OutboxEvent in dead state (max attempts reached).',
+)
+outbox_dispatch_latency = Histogram(
+    'micha_outbox_dispatch_latency_seconds',
+    'Time inside dispatch_one() — handler execution + DB write.',
+    buckets=(0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30),
+)
+
+# ── Search ──────────────────────────────────────────────────────────
+search_queries = Counter(
+    'micha_search_queries_total',
+    'Search query executions.',
+    ['has_results'],  # 'yes' | 'no'
+)
+search_latency = Histogram(
+    'micha_search_latency_seconds',
+    'Time to compute a search results page.',
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1),
+)
+
+# ── HTTP ────────────────────────────────────────────────────────────
+http_requests = Counter(
+    'micha_http_requests_total',
+    'HTTP requests served.',
+    ['method', 'route', 'status'],
+)
+http_request_latency = Histogram(
+    'micha_http_request_latency_seconds',
+    'Wall time per HTTP request.',
+    ['route'],
+    buckets=(0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+)

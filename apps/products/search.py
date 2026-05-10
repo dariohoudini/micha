@@ -84,6 +84,16 @@ def _is_postgres() -> bool:
     return connection.vendor == 'postgresql'
 
 
+def _record_search_metric(start, has_results: bool):
+    try:
+        import time as _time
+        from apps.telemetry.metrics import search_queries, search_latency
+        search_queries.labels(has_results='yes' if has_results else 'no').inc()
+        search_latency.observe(_time.monotonic() - start)
+    except Exception:
+        pass
+
+
 def search_products(queryset, raw_query: str):
     """Filter `queryset` by `raw_query` with relevance ranking.
 
@@ -97,6 +107,8 @@ def search_products(queryset, raw_query: str):
     Returns the filtered queryset (annotated with `_rank` on Postgres so
     callers can `order_by('-_rank')`).
     """
+    import time as _time
+    _start = _time.monotonic()
     primary, expanded = normalize_query(raw_query)
     if not primary:
         return queryset
@@ -116,12 +128,19 @@ def search_products(queryset, raw_query: str):
             # Older Postgres or restricted role — fall back to plain
             sq = SearchQuery(' '.join(all_terms))
 
-        return (
+        result = (
             queryset
             .annotate(_rank=SearchRank(F('search_vector'), sq))
             .filter(search_vector=sq)
             .order_by('-_rank')
         )
+        # Note: has_results determined at iteration time. We approximate by checking exists()
+        # cheaply; the rank index makes this fast.
+        try:
+            _record_search_metric(_start, result.exists())
+        except Exception:
+            pass
+        return result
 
     # SQLite fallback (dev only). LIKE on raw fields can't fold diacritics
     # at DB level, so we filter in Python after fetching candidate rows.
@@ -134,6 +153,7 @@ def search_products(queryset, raw_query: str):
             if term in haystack:
                 matches.append(p)
                 break
+    _record_search_metric(_start, bool(matches))
     if not matches:
         return queryset.none()
     return queryset.filter(pk__in=[p.pk for p in matches])

@@ -37,6 +37,9 @@ def _next_retry_delay(attempts):
 
 def dispatch_one(event):
     """Run handlers for a single event. Caller already holds the row lock."""
+    import time as _time
+    from apps.telemetry import metrics as _m
+
     handlers = get_handlers(event.topic)
     if not handlers:
         # No handler is *not* an error — silently mark dispatched. New topics
@@ -45,8 +48,13 @@ def dispatch_one(event):
         event.status = EventStatus.DISPATCHED
         event.dispatched_at = timezone.now()
         event.save(update_fields=['status', 'dispatched_at', 'updated_at'])
+        try:
+            _m.outbox_dispatched.labels(topic=event.topic).inc()
+        except Exception:
+            pass
         return True
 
+    _start = _time.monotonic()
     try:
         for fn in handlers:
             fn(event.payload)
@@ -68,6 +76,11 @@ def dispatch_one(event):
         event.save(update_fields=[
             'status', 'attempts', 'last_error', 'next_attempt_at', 'updated_at'
         ])
+        try:
+            _m.outbox_dispatch_failed.labels(topic=event.topic).inc()
+            _m.outbox_dispatch_latency.observe(_time.monotonic() - _start)
+        except Exception:
+            pass
         return False
 
     # Success
@@ -78,6 +91,11 @@ def dispatch_one(event):
     event.save(update_fields=[
         'status', 'attempts', 'last_error', 'dispatched_at', 'updated_at'
     ])
+    try:
+        _m.outbox_dispatched.labels(topic=event.topic).inc()
+        _m.outbox_dispatch_latency.observe(_time.monotonic() - _start)
+    except Exception:
+        pass
     return True
 
 

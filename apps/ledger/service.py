@@ -102,6 +102,13 @@ def post(journal_key, lines, *, ref_type='', ref_id='', description='', user=Non
         for account, amount_cents, direction, line_desc in normalised
     ])
 
+    # Telemetry
+    try:
+        from apps.telemetry.metrics import ledger_journals_posted
+        ledger_journals_posted.labels(ref_type=ref_type or 'unknown').inc()
+    except Exception:
+        pass
+
     return journal, True
 
 
@@ -249,7 +256,7 @@ def record_refund_to_buyer(*, order, amount, refund_id, destination='store_credi
     else:
         dst = Account.platform(AccountType.EXTERNAL_CLEARING, currency='AOA')
 
-    return transfer(
+    result = transfer(
         from_account=src, to_account=dst,
         amount=amount,
         journal_key=idempotency_key or f'refund:{refund_id}:{destination}',
@@ -257,6 +264,23 @@ def record_refund_to_buyer(*, order, amount, refund_id, destination='store_credi
         description=f'Refund {refund_id} ({destination}) for order {str(order.id)[:8]}',
         user=order.buyer,
     )
+    # Telemetry: only count NEW refund posts (idempotent re-posts shouldn't double-count)
+    journal, created, amount_cents = result
+    if created:
+        try:
+            from apps.telemetry.metrics import refunds_issued, refunds_amount_kz
+            # Source heuristic from the refund_id prefix (e.g. "protection-…", "ret-…")
+            rid = str(refund_id)
+            source = 'protection' if rid.startswith('protection') else (
+                'return' if rid.startswith('ret') else 'admin'
+            )
+            refunds_issued.labels(source=source, destination=destination).inc()
+            refunds_amount_kz.labels(source=source, destination=destination).inc(
+                float(amount_cents) / 100.0
+            )
+        except Exception:
+            pass
+    return result
 
 
 def record_payout_reverse(*, seller, amount, payout_id, idempotency_key=None):

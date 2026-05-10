@@ -108,6 +108,11 @@ class CheckoutView(APIView):
                 'score': assessment.score,
                 'reasons': assessment.reasons,
             })
+            try:
+                from apps.telemetry.metrics import checkout_blocked_by_risk
+                checkout_blocked_by_risk.inc()
+            except Exception:
+                pass
             return Response({
                 'error': 'risk_blocked',
                 'detail': 'Não conseguimos processar este pedido. Contacte o suporte.',
@@ -122,6 +127,14 @@ class CheckoutView(APIView):
         except Exception as e:
             log_security_event("checkout_error", request=request, details={"error": str(e)[:200]})
             return Response({'error': 'server_error', "detail": "Checkout failed."}, status=500)
+
+        # Telemetry: orders_created counter, labelled by payment method
+        try:
+            from apps.telemetry.metrics import orders_created
+            for o in orders:
+                orders_created.labels(payment_method=getattr(o, 'payment_method', '') or 'unknown').inc()
+        except Exception:
+            pass
 
         # ── 3. Stamp the score on every created order + emit fraud event
         if assessment and orders:

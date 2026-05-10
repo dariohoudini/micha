@@ -389,6 +389,13 @@ class PaymentProcessor:
                     'order_id': str(order.id), 'error': str(e),
                 })
 
+        # Telemetry
+        try:
+            from apps.telemetry.metrics import payments_confirmed
+            payments_confirmed.labels(method=getattr(payment, 'method', '') or 'unknown').inc()
+        except Exception:
+            pass
+
         # Log and mark idempotent
         self.logger.log(payment, 'confirmed', gateway_data)
         IdempotencyGuard.mark_processed(gateway_reference, 'confirmed')

@@ -174,6 +174,11 @@ def enforce_buyer_protection(batch_size=200):
                     dedupe_key=f'{topic}:{order.id}',
                     ref_type='order', ref_id=str(order.id),
                 )
+            try:
+                from apps.telemetry.metrics import protection_lapsed
+                protection_lapsed.labels(from_state=order.protection_state).inc()
+            except Exception:
+                pass
             fired += 1
         except Exception:
             pass

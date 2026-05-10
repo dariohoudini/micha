@@ -196,6 +196,15 @@ class Order(models.Model):
                 order=self, from_status=old, to_status=new_status,
                 changed_by=changed_by, note=note,
             )
+            # Telemetry — track every transition so we can chart funnel + lapses
+            try:
+                from apps.telemetry.metrics import orders_status_transitions
+                orders_status_transitions.labels(
+                    from_status=old or 'new',
+                    to_status=new_status,
+                ).inc()
+            except Exception:
+                pass
             # Auto-create a buyer-visible tracking event for every status change
             OrderTrackingEvent.objects.create(
                 order=self,

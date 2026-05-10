@@ -39,4 +39,10 @@ def publish(*, topic, payload=None, dedupe_key, ref_type='', ref_id='',
             'max_attempts': max_attempts,
         },
     )
+    if created:
+        try:
+            from apps.telemetry.metrics import outbox_published
+            outbox_published.labels(topic=topic).inc()
+        except Exception:
+            pass
     return event, created

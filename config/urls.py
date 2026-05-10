@@ -9,6 +9,7 @@ ADMIN_URL = getattr(settings, "ADMIN_URL", "admin/")
 urlpatterns = [
     path(ADMIN_URL, admin.site.urls),
     path("health/", HealthCheckView.as_view(), name="health"),
+    path("metrics", include("apps.telemetry.urls")),
     path("robots.txt", robots_txt, name="robots-txt"),
     path("sitemap.xml", sitemap_xml, name="sitemap"),
 

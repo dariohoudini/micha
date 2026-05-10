@@ -56,7 +56,7 @@ def assess(scope: str, *, ref_type: str, ref_id, user=None, context: Optional[di
         if k in ('order_amount', 'fingerprint', 'ip', 'user_agent', 'address_id', 'payment_method')
     }
 
-    return RiskAssessment.objects.create(
+    assessment = RiskAssessment.objects.create(
         user=user,
         ref_type=ref_type,
         ref_id=str(ref_id)[:80] if ref_id else '',
@@ -65,6 +65,13 @@ def assess(scope: str, *, ref_type: str, ref_id, user=None, context: Optional[di
         reasons=reasons,
         context=safe_context,
     )
+    # Telemetry
+    try:
+        from apps.telemetry.metrics import risk_assessments
+        risk_assessments.labels(scope=scope, action=action).inc()
+    except Exception:
+        pass
+    return assessment
 
 
 def record_fingerprint(*, user, fingerprint: str, ip: Optional[str] = None):

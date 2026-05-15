@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
 from apps.users.permissions import IsNotSuspended, IsBuyerOfOrder, IsSellerOrSuperuser
+from apps.idempotency.decorators import idempotent
 from middleware.security import log_security_event
 from .models import Order, OrderItem, Refund, OrderTrackingEvent
 
@@ -58,6 +59,10 @@ class CheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     throttle_classes = [CheckoutThrottle]
 
+    # Idempotency-Key header is honoured but not required (yet) — flipping
+    # required=True is a frontend-coordinated change. For now: clients that
+    # send a key get safe retry; legacy clients still work.
+    @idempotent(required=False)
     def post(self, request):
         from .checkout import CheckoutService, CheckoutError
         from apps.risk.service import assess as risk_assess, record_fingerprint, is_blocking

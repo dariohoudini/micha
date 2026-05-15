@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'apps.ledger',
     'apps.outbox',
     'apps.risk',
+    'apps.idempotency',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -338,6 +339,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'users.delete_scheduled_accounts',
         'schedule': 86400,
         'options': {'queue': 'default'},
+    },
+
+    # ── Idempotency ───────────────────────────────────────────
+    'sweep-expired-idempotency-keys': {
+        'task': 'idempotency.sweep_expired',
+        'schedule': 3600,  # hourly — 24h TTL, no need to be aggressive
+        'options': {'queue': 'low'},
     },
 
     # ── Cart ──────────────────────────────────────────────────

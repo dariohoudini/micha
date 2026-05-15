@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.outbox',
     'apps.risk',
     'apps.idempotency',
+    'apps.webhooks',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -346,6 +347,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'idempotency.sweep_expired',
         'schedule': 3600,  # hourly — 24h TTL, no need to be aggressive
         'options': {'queue': 'low'},
+    },
+
+    # ── Webhooks ──────────────────────────────────────────────
+    'sweep-webhook-retries': {
+        'task': 'webhooks.sweep_retries',
+        'schedule': 60,  # every minute — picks up due retries fast
+        'options': {'queue': 'default'},
     },
 
     # ── Cart ──────────────────────────────────────────────────

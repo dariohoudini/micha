@@ -121,6 +121,7 @@ export default function AdminOpsQueuePage() {
             { label: 'Devoluções pendentes', n: t.pending_returns || 0, color: BLUE },
             { label: 'Drift do ledger', n: t.ledger_drift || 0, color: '#FF0000' },
             { label: 'Alertas recentes', n: t.recent_alerts || 0, color: G },
+            { label: 'Webhooks falhando', n: t.webhook_failures || 0, color: AMBER },
           ].map(s => (
             <div key={s.label} style={{ flex: '1 1 120px', minWidth: 120, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 10 }}>
               <p style={{ ...S, fontSize: 10, color: MUTED, margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.label}</p>
@@ -232,6 +233,24 @@ export default function AdminOpsQueuePage() {
                   </div>
                   <p style={{ ...S, fontSize: 12, color: TEXT, margin: 0 }}>{r.reason} · {r.buyer_email}</p>
                   {r.description && <p style={{ ...S, fontSize: 11, color: MUTED, margin: '4px 0 0' }}>{r.description}</p>}
+                </div>
+              ))}
+        </Section>
+
+        {/* Webhook failures */}
+        <Section title="🪝 Webhooks com falhas" count={t.webhook_failures || 0} color={AMBER}>
+          {(data.webhook_failures || []).length === 0
+            ? <Empty>Todos os webhooks dos vendedores estão saudáveis.</Empty>
+            : data.webhook_failures.map(w => (
+                <div key={w.id} style={{ padding: 10, background: '#0A0A0A', borderRadius: 10, marginBottom: 6, border: `1px solid ${BORDER}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ ...S, fontSize: 11, fontWeight: 700, color: w.is_active ? AMBER : RED, padding: '2px 8px', borderRadius: 4, background: `${w.is_active ? AMBER : RED}22` }}>
+                      {w.is_active ? `${w.consecutive_failures} falhas` : 'desativado'}
+                    </span>
+                    <span style={{ ...S, fontSize: 11, color: TEXT, fontWeight: 500 }}>{w.seller_email || '—'}</span>
+                    <span style={{ ...S, fontSize: 10, color: MUTED, marginLeft: 'auto' }}>{relTime(w.last_failure_at)}</span>
+                  </div>
+                  <p style={{ ...S, fontSize: 11, color: MUTED, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.url}</p>
                 </div>
               ))}
         </Section>

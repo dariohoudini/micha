@@ -474,6 +474,7 @@ class OpsQueueView(APIView):
       pending_returns — ReturnRequest rows still in 'pending' state, with SLA
       ledger_drift    — currencies whose Σ credits ≠ Σ debits
       recent_alerts   — last 10 ops.alert outbox events
+      webhook_failures — Seller webhooks auto-disabled by failure threshold
     """
     permission_classes = [IsAdminUser]
 
@@ -486,14 +487,38 @@ class OpsQueueView(APIView):
             except Exception:
                 return []
         out = {
-            'fraud_holds':     _safe(self._fraud_holds),
-            'dead_events':     _safe(self._dead_events),
-            'pending_returns': _safe(self._pending_returns),
-            'ledger_drift':    _safe(self._ledger_drift),
-            'recent_alerts':   _safe(self._recent_alerts),
+            'fraud_holds':      _safe(self._fraud_holds),
+            'dead_events':      _safe(self._dead_events),
+            'pending_returns':  _safe(self._pending_returns),
+            'ledger_drift':     _safe(self._ledger_drift),
+            'recent_alerts':    _safe(self._recent_alerts),
+            'webhook_failures': _safe(self._webhook_failures),
         }
         out['totals'] = {k: len(v) for k, v in out.items()}
         return Response(out)
+
+    def _webhook_failures(self):
+        try:
+            from apps.webhooks.models import SellerWebhook
+        except Exception:
+            return []
+        # Hooks auto-disabled by the failure-threshold guard, or active hooks
+        # with a recent failure streak — both are worth a human's attention.
+        rows = (
+            SellerWebhook.objects
+            .filter(consecutive_failures__gte=3)
+            .select_related('seller')
+            .order_by('-consecutive_failures', '-last_failure_at')[:25]
+        )
+        return [{
+            'id': h.id,
+            'seller_email': h.seller.email if h.seller_id else None,
+            'url': h.url,
+            'is_active': h.is_active,
+            'consecutive_failures': h.consecutive_failures,
+            'last_failure_at': h.last_failure_at,
+            'last_success_at': h.last_success_at,
+        } for h in rows]
 
     def _fraud_holds(self):
         try:

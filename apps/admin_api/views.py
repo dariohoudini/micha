@@ -456,3 +456,210 @@ class AdminRevenueChartView(APIView):
             pass
 
         return Response({'data': data, 'period': period})
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Operational Queue — single pane of glass for things needing humans
+# ──────────────────────────────────────────────────────────────────────
+class OpsQueueView(APIView):
+    """GET /api/v1/admin-api/ops-queue/
+
+    Aggregates every queue across the platform that automated systems
+    can't close on their own. Designed to be the operator's home page:
+    one screen, every escalation, every action accessible.
+
+    Sections:
+      fraud_holds     — RiskAssessment rows with action='hold' (recent)
+      dead_events     — OutboxEvent rows whose handler exhausted retries
+      pending_returns — ReturnRequest rows still in 'pending' state, with SLA
+      ledger_drift    — currencies whose Σ credits ≠ Σ debits
+      recent_alerts   — last 10 ops.alert outbox events
+    """
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        # Each section is fault-isolated — a missing table or query bug in
+        # one queue must never blank the whole ops dashboard.
+        def _safe(fn):
+            try:
+                return fn()
+            except Exception:
+                return []
+        out = {
+            'fraud_holds':     _safe(self._fraud_holds),
+            'dead_events':     _safe(self._dead_events),
+            'pending_returns': _safe(self._pending_returns),
+            'ledger_drift':    _safe(self._ledger_drift),
+            'recent_alerts':   _safe(self._recent_alerts),
+        }
+        out['totals'] = {k: len(v) for k, v in out.items()}
+        return Response(out)
+
+    def _fraud_holds(self):
+        try:
+            from apps.risk.models import RiskAssessment, RiskAction
+        except Exception:
+            return []
+        rows = (
+            RiskAssessment.objects
+            .filter(action__in=(RiskAction.HOLD, RiskAction.BLOCK))
+            .select_related('user')
+            .order_by('-created_at')[:25]
+        )
+        return [{
+            'id': r.id,
+            'user_id': r.user_id,
+            'user_email': r.user.email if r.user_id else None,
+            'ref_type': r.ref_type, 'ref_id': r.ref_id,
+            'score': r.score, 'action': r.action,
+            'reasons': r.reasons,
+            'created_at': r.created_at,
+        } for r in rows]
+
+    def _dead_events(self):
+        try:
+            from apps.outbox.models import OutboxEvent, EventStatus
+        except Exception:
+            return []
+        rows = (
+            OutboxEvent.objects
+            .filter(status=EventStatus.DEAD)
+            .order_by('-updated_at')[:25]
+        )
+        return [{
+            'id': r.id, 'topic': r.topic,
+            'ref_type': r.ref_type, 'ref_id': r.ref_id,
+            'attempts': r.attempts,
+            'last_error': (r.last_error or '')[:300],
+            'created_at': r.created_at, 'updated_at': r.updated_at,
+        } for r in rows]
+
+    def _pending_returns(self):
+        try:
+            from apps.orders.return_models import ReturnRequest
+        except Exception:
+            return []
+        rows = (
+            ReturnRequest.objects
+            .filter(status='pending')
+            .select_related('order', 'buyer')
+            .order_by('created_at')[:25]
+        )
+        now = timezone.now()
+        return [{
+            'id': r.id, 'order_id': str(r.order_id),
+            'buyer_email': r.buyer.email if r.buyer_id else None,
+            'reason': r.reason,
+            'description': (r.description or '')[:200],
+            'created_at': r.created_at,
+            'age_hours': round((now - r.created_at).total_seconds() / 3600, 1),
+        } for r in rows]
+
+    def _ledger_drift(self):
+        try:
+            from apps.ledger.models import LedgerEntry
+            from collections import defaultdict
+        except Exception:
+            return []
+        per_currency = defaultdict(lambda: {'d': 0, 'c': 0})
+        rows = (
+            LedgerEntry.objects
+            .values('account__currency')
+            .annotate(d=Sum('debit_cents'), c=Sum('credit_cents'))
+        )
+        drift = []
+        for row in rows:
+            cur = row['account__currency'] or 'AOA'
+            d, c = row['d'] or 0, row['c'] or 0
+            diff = c - d
+            if diff != 0:
+                drift.append({
+                    'currency': cur,
+                    'imbalance_cents': diff,
+                    'imbalance_human': f'{diff/100:+.2f}',
+                    'credits': c, 'debits': d,
+                })
+        return drift
+
+    def _recent_alerts(self):
+        try:
+            from apps.outbox.models import OutboxEvent
+        except Exception:
+            return []
+        rows = (
+            OutboxEvent.objects
+            .filter(topic='ops.alert')
+            .order_by('-created_at')[:10]
+        )
+        return [{
+            'id': r.id,
+            'metric': r.payload.get('metric'),
+            'severity': r.payload.get('severity'),
+            'message': r.payload.get('message', ''),
+            'details': r.payload.get('details', {}),
+            'created_at': r.created_at,
+            'status': r.status,
+        } for r in rows]
+
+
+class OpsQueueActionView(APIView):
+    """POST /api/v1/admin-api/ops-queue/<kind>/<id>/action/
+
+    Operator actions on a queue item. Supported kinds:
+      dead_event    body {action: "requeue"|"discard"}
+      fraud_hold    body {action: "approve"|"reject"}
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, kind, item_id):
+        action = (request.data.get('action') or '').strip()
+        if kind == 'dead_event':
+            return self._dead_event(item_id, action)
+        if kind == 'fraud_hold':
+            return self._fraud_hold(item_id, action, request)
+        return Response({'error': 'unknown_kind'}, status=400)
+
+    def _dead_event(self, item_id, action):
+        from apps.outbox.models import OutboxEvent, EventStatus
+        ev = OutboxEvent.objects.filter(pk=item_id).first()
+        if not ev:
+            return Response({'error': 'not_found'}, status=404)
+        if action == 'requeue':
+            ev.status = EventStatus.PENDING
+            ev.attempts = 0
+            ev.last_error = ''
+            ev.next_attempt_at = timezone.now()
+            ev.save(update_fields=['status', 'attempts', 'last_error', 'next_attempt_at', 'updated_at'])
+            return Response({'detail': f'Event {ev.id} requeued.'})
+        if action == 'discard':
+            ev.status = EventStatus.DISPATCHED
+            ev.dispatched_at = timezone.now()
+            ev.save(update_fields=['status', 'dispatched_at', 'updated_at'])
+            return Response({'detail': f'Event {ev.id} discarded.'})
+        return Response({'error': 'invalid_action'}, status=400)
+
+    def _fraud_hold(self, item_id, action, request):
+        try:
+            from apps.risk.models import RiskAssessment, RiskAction
+        except Exception:
+            return Response({'error': 'risk_unavailable'}, status=500)
+        ra = RiskAssessment.objects.filter(pk=item_id).first()
+        if not ra:
+            return Response({'error': 'not_found'}, status=404)
+        if action == 'approve':
+            ra.action = RiskAction.ALLOW
+            ra.reasons = (ra.reasons or []) + [{
+                'rule': 'manual_override', 'delta': -ra.score,
+                'reason': f'Approved by operator {request.user.email}',
+            }]
+            ra.save(update_fields=['action', 'reasons'])
+            return Response({'detail': f'Risk assessment {ra.id} approved.'})
+        if action == 'reject':
+            ra.action = RiskAction.BLOCK
+            ra.reasons = (ra.reasons or []) + [{
+                'rule': 'manual_override', 'delta': 100 - ra.score,
+                'reason': f'Blocked by operator {request.user.email}',
+            }]
+            ra.save(update_fields=['action', 'reasons'])
+            return Response({'detail': f'Risk assessment {ra.id} blocked.'})
+        return Response({'error': 'invalid_action'}, status=400)

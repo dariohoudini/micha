@@ -14,4 +14,6 @@ urlpatterns = [
     path('products/', views.AdminProductsListView.as_view()),
     path('products/<uuid:product_id>/action/', views.AdminProductActionView.as_view()),
     path('revenue/', views.AdminRevenueChartView.as_view()),
+    path('ops-queue/', views.OpsQueueView.as_view()),
+    path('ops-queue/<str:kind>/<int:item_id>/action/', views.OpsQueueActionView.as_view()),
 ]

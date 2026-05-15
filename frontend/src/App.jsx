@@ -66,6 +66,7 @@ const AdminSettingsPage     = lazy(() => import('@/pages/admin/AdminSettingsPage
 const AdminChatPage         = lazy(() => import('@/pages/admin/AdminChatPage'))
 const AdminFraudPage        = lazy(() => import('@/pages/admin/AdminFraudPage'))
 const AdminMonitoringPage   = lazy(() => import('@/pages/admin/AdminMonitoringPage'))
+const AdminOpsQueuePage     = lazy(() => import('@/pages/admin/AdminOpsQueuePage'))
 
 function PageLoader() {
   return (
@@ -222,6 +223,7 @@ export default function App() {
             <Route path="/admin/chat"          element={<A><AdminChatPage /></A>} />
             <Route path="/admin/fraud"         element={<A><AdminFraudPage /></A>} />
             <Route path="/admin/monitoring"    element={<A><AdminMonitoringPage /></A>} />
+            <Route path="/admin/ops"           element={<A><AdminOpsQueuePage /></A>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

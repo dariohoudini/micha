@@ -183,3 +183,51 @@ def enforce_buyer_protection(batch_size=200):
         except Exception:
             pass
     return f'Emitted {fired} protection-lapse event(s).'
+
+
+@shared_task(name='orders.enforce_return_deadlines')
+def enforce_return_deadlines(batch_size: int = 200):
+    """SLA enforcement for returns.
+
+    Two deadline classes:
+      • Seller didn't respond within SELLER_RESPONSE_HOURS to a 'pending'
+        return  → auto_approve (favours the buyer; flags the seller for ops).
+      • Buyer didn't act within PICKUP_DEADLINE_DAYS of an 'approved' return
+        → cancel (so stock isn't held forever).
+    """
+    from apps.orders.return_models import ReturnRequest, ReturnStatus
+    from apps.orders import return_service
+
+    now = timezone.now()
+    auto_approved = 0
+    cancelled = 0
+
+    # Seller SLA misses → auto-approve
+    stale_pending = (
+        ReturnRequest.objects
+        .filter(status=ReturnStatus.PENDING,
+                seller_response_deadline_at__lte=now)
+        .order_by('seller_response_deadline_at')[:batch_size]
+    )
+    for rr in stale_pending:
+        try:
+            return_service.system_auto_approve(rr)
+            auto_approved += 1
+        except Exception:
+            pass
+
+    # Buyer pickup window lapsed → cancel
+    stale_approved = (
+        ReturnRequest.objects
+        .filter(status__in=(ReturnStatus.APPROVED, ReturnStatus.AUTO_APPROVED),
+                pickup_deadline_at__lte=now)
+        .order_by('pickup_deadline_at')[:batch_size]
+    )
+    for rr in stale_approved:
+        try:
+            return_service.system_cancel_for_pickup_timeout(rr)
+            cancelled += 1
+        except Exception:
+            pass
+
+    return {'auto_approved': auto_approved, 'cancelled': cancelled}

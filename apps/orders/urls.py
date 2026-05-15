@@ -7,6 +7,7 @@ from .views import (
     RequestRefundView, InvoiceView, PackingSlipView,
     OrderTrackingView,
     SellerReturnListView, SellerReturnActionView,
+    BuyerReturnActionView, AdminReturnOverrideView,
 )
 
 
@@ -23,6 +24,8 @@ urlpatterns = [
     path("seller/", SellerOrderListView.as_view(), name="seller-orders"),
     path("returns/seller/", SellerReturnListView.as_view(), name="seller-returns"),
     path("returns/<int:pk>/", SellerReturnActionView.as_view(), name="seller-return-action"),
+    path("returns/<int:pk>/buyer-action/", BuyerReturnActionView.as_view(), name="buyer-return-action"),
+    path("returns/<int:pk>/admin-override/", AdminReturnOverrideView.as_view(), name="admin-return-override"),
     path("<uuid:pk>/return/", ReturnRequestCreateView.as_view(), name="return-request"),
     path("<uuid:pk>/tracking/", OrderTrackingView.as_view(), name="order-tracking"),
 ]

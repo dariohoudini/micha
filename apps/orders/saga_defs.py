@@ -180,3 +180,148 @@ register(SagaDef(
         SagaStep('emit_reaped_event',      _emit_reaped_event,       None),
     ],
 ))
+
+
+# ─── return_completion saga ────────────────────────────────────────────────
+# When a seller (or admin override) marks a return ``completed``, this saga
+# does the three things that MUST happen atomically-with-compensation:
+#   1. Restock the returned items   (compensable)
+#   2. Refund the buyer             (compensable)
+#   3. Stamp the return row with the resulting amounts (no comp)
+#
+# If step 2 (refund) fails mid-way, step 1 (restock) is rolled back so we
+# don't end up with inventory restored but no refund issued — that would be
+# a quiet payout to the seller. If a compensation itself fails the saga
+# flips to NEEDS_ATTENTION and surfaces in the ops queue.
+
+def _return_restock_items(payload, saga):
+    """Put inventory back. Records what we restored so the compensation can
+    undo precisely if a later step fails."""
+    from apps.orders.return_models import ReturnRequest
+    from apps.orders.models import OrderItem
+    from apps.products.models import Product
+    from apps.inventory.models import ProductVariantCombo
+
+    rr = ReturnRequest.objects.select_related('order').get(pk=payload['return_id'])
+    if rr.restocked:
+        payload['restocked_items'] = []  # idempotent re-run; nothing to do
+        return
+
+    restored = []
+    for it in OrderItem.objects.filter(order=rr.order):
+        qty = int(it.quantity or 0)
+        if qty <= 0:
+            continue
+        if it.variant_combo_id:
+            ProductVariantCombo.objects.filter(pk=it.variant_combo_id).update(
+                quantity=models_F('quantity') + qty, is_active=True,
+            )
+            restored.append({'kind': 'combo', 'id': it.variant_combo_id, 'qty': qty})
+        elif it.product_id:
+            Product.objects.filter(pk=it.product_id).update(
+                quantity=models_F('quantity') + qty, is_active=True,
+            )
+            restored.append({'kind': 'product', 'id': str(it.product_id), 'qty': qty})
+    payload['restocked_items'] = restored
+    ReturnRequest.objects.filter(pk=rr.pk).update(restocked=True)
+
+
+def _return_restock_compensation(payload, saga):
+    """Undo the restock — re-subtract what we put back."""
+    from apps.products.models import Product
+    from apps.inventory.models import ProductVariantCombo
+    from apps.orders.return_models import ReturnRequest
+    for entry in payload.get('restocked_items', []) or []:
+        qty = int(entry.get('qty', 0))
+        if entry['kind'] == 'combo':
+            ProductVariantCombo.objects.filter(pk=entry['id']).update(
+                quantity=models_F('quantity') - qty,
+            )
+        else:
+            Product.objects.filter(pk=entry['id']).update(
+                quantity=models_F('quantity') - qty,
+            )
+    ReturnRequest.objects.filter(pk=payload['return_id']).update(restocked=False)
+
+
+def _return_issue_refund(payload, saga):
+    """Issue the refund through the ledger (single source of truth) and
+    bump the buyer's cached store_credit balance if that's the destination."""
+    from apps.orders.return_models import ReturnRequest
+    from apps.orders.models import Order
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    rr = ReturnRequest.objects.select_related('order').get(pk=payload['return_id'])
+    order = rr.order
+    amount = Decimal(str(order.total or 0))
+    if amount <= 0:
+        payload['refunded_amount'] = '0'
+        return
+
+    try:
+        from apps.ledger.service import record_refund_to_buyer
+        record_refund_to_buyer(
+            order=order, amount=amount,
+            refund_id=f'return:{rr.id}',
+            destination=rr.refund_destination,
+        )
+    except Exception:
+        # Re-raise so the saga compensates the restock.
+        raise
+
+    if rr.refund_destination == 'store_credit':
+        User.objects.filter(pk=order.buyer_id).update(
+            store_credit=models_F('store_credit') + amount,
+        )
+    payload['refunded_amount'] = str(amount)
+    payload['refund_destination'] = rr.refund_destination
+    ReturnRequest.objects.filter(pk=rr.pk).update(refunded_amount=amount)
+
+
+def _return_refund_compensation(payload, saga):
+    """Reverse the refund. Bumps the user balance back down and posts a
+    compensating ledger journal so the books stay balanced."""
+    refunded = Decimal(payload.get('refunded_amount') or '0')
+    if refunded <= 0:
+        return
+    from apps.orders.return_models import ReturnRequest
+    from apps.orders.models import Order
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    rr = ReturnRequest.objects.select_related('order').get(pk=payload['return_id'])
+    if payload.get('refund_destination') == 'store_credit':
+        User.objects.filter(pk=rr.order.buyer_id).update(
+            store_credit=models_F('store_credit') - refunded,
+        )
+    # Best-effort journal reversal — if this fails we still surface via the
+    # ledger drift detector in the ops queue.
+    try:
+        from apps.ledger.service import record_payout_reverse
+        record_payout_reverse(
+            order=rr.order, amount=refunded,
+            reason_id=f'return-undo:{rr.id}',
+        )
+    except Exception as e:
+        log.warning('refund compensation ledger reversal failed: %s', e)
+    ReturnRequest.objects.filter(pk=rr.pk).update(refunded_amount=0)
+
+
+def _return_finalise(payload, saga):
+    """No-op finaliser — kept as a step so the saga has a clean "completed"
+    boundary distinct from refund. Useful hook for future additions
+    (notification email, tax adjustment, etc.) without restructuring."""
+    log.info('return %s completed: refund=%s, restocked=%s',
+             payload.get('return_id'), payload.get('refunded_amount'),
+             bool(payload.get('restocked_items')))
+
+
+register(SagaDef(
+    name='return_completion',
+    max_lifetime_seconds=60 * 60,
+    steps=[
+        SagaStep('restock_items', _return_restock_items, _return_restock_compensation),
+        SagaStep('issue_refund',  _return_issue_refund,  _return_refund_compensation),
+        SagaStep('finalise',      _return_finalise,      None),
+    ],
+))

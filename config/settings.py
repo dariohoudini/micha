@@ -392,6 +392,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 3600,
         'options': {'queue': 'high'},
     },
+    'enforce-return-deadlines': {
+        'task': 'orders.enforce_return_deadlines',
+        'schedule': 1800,  # every 30 min — SLA windows are in hours/days
+        'options': {'queue': 'default'},
+    },
 
     # ── Payments ──────────────────────────────────────────────
     'release-held-earnings': {

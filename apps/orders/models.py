@@ -331,3 +331,8 @@ class Refund(models.Model):
     admin_note = models.TextField(blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+# Import return models so they're registered with the orders app on startup.
+# Done as the last line to avoid circular imports with return_models.py.
+from apps.orders.return_models import ReturnRequest, ReturnEvent  # noqa: E402, F401

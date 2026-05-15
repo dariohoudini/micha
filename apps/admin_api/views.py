@@ -580,25 +580,47 @@ class OpsQueueView(APIView):
         } for r in rows]
 
     def _pending_returns(self):
+        """Returns that need a human now: escalated (buyer disputed a rejection),
+        plus pending ones approaching their seller-SLA deadline."""
         try:
-            from apps.orders.return_models import ReturnRequest
+            from apps.orders.return_models import ReturnRequest, ReturnStatus
         except Exception:
             return []
+        # Escalated returns: top priority. Plus any pending ones whose deadline
+        # is within the next 6h (so ops can nudge sellers before auto-approve).
+        from datetime import timedelta
+        now = timezone.now()
+        cutoff = now + timedelta(hours=6)
         rows = (
             ReturnRequest.objects
-            .filter(status='pending')
+            .filter(
+                status__in=(ReturnStatus.ESCALATED, ReturnStatus.PENDING),
+            )
             .select_related('order', 'buyer')
-            .order_by('created_at')[:25]
+            .order_by('seller_response_deadline_at')[:25]
         )
-        now = timezone.now()
-        return [{
-            'id': r.id, 'order_id': str(r.order_id),
-            'buyer_email': r.buyer.email if r.buyer_id else None,
-            'reason': r.reason,
-            'description': (r.description or '')[:200],
-            'created_at': r.created_at,
-            'age_hours': round((now - r.created_at).total_seconds() / 3600, 1),
-        } for r in rows]
+        # Filter in Python (small N) — escalated always shown; pending shown only
+        # if within the urgency cutoff. Avoids a complex OR query.
+        out = []
+        for r in rows:
+            if r.status == ReturnStatus.ESCALATED:
+                priority = 'escalated'
+            elif r.seller_response_deadline_at and r.seller_response_deadline_at <= cutoff:
+                priority = 'sla_warning'
+            else:
+                continue
+            out.append({
+                'id': r.id, 'order_id': str(r.order_id),
+                'buyer_email': r.buyer.email if r.buyer_id else None,
+                'reason': r.reason,
+                'description': (r.description or '')[:200],
+                'status': r.status,
+                'priority': priority,
+                'seller_deadline_at': r.seller_response_deadline_at,
+                'created_at': r.created_at,
+                'age_hours': round((now - r.created_at).total_seconds() / 3600, 1),
+            })
+        return out
 
     def _ledger_drift(self):
         try:

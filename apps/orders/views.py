@@ -556,9 +556,15 @@ def _serialize_return(ret, request):
         'reason': ret.reason,
         'description': ret.description,
         'pickup_method': ret.pickup_method,
+        'refund_destination': getattr(ret, 'refund_destination', 'store_credit'),
         'photo_url': photo_url,
         'status': ret.status,
         'admin_note': ret.admin_note,
+        'seller_response_deadline_at': getattr(ret, 'seller_response_deadline_at', None),
+        'pickup_deadline_at': getattr(ret, 'pickup_deadline_at', None),
+        'escalation_deadline_at': getattr(ret, 'escalation_deadline_at', None),
+        'refunded_amount': str(getattr(ret, 'refunded_amount', 0) or 0),
+        'restocked': bool(getattr(ret, 'restocked', False)),
         'created_at': ret.created_at,
         'updated_at': ret.updated_at,
     }
@@ -583,60 +589,115 @@ class SellerReturnListView(APIView):
         })
 
 
-class SellerReturnActionView(APIView):
-    """PATCH /api/v1/orders/returns/<id>/  — seller approves / rejects / completes a return."""
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
+_SELLER_ACTION_MAP = {
+    'approved':  'seller_approve',
+    'rejected':  'seller_reject',
+    'completed': 'seller_complete',
+}
 
-    VALID_TRANSITIONS = {
-        'pending':   {'approved', 'rejected'},
-        'approved':  {'completed', 'rejected'},
-        'rejected':  set(),
-        'completed': set(),
-    }
+
+class SellerReturnActionView(APIView):
+    """PATCH /api/v1/orders/returns/<id>/  — seller approves / rejects / completes a return.
+
+    All transitions go through return_service so the state machine is enforced,
+    audit events are recorded, and the completion saga fires (refund + restock
+    in one atomic-with-compensation unit).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
 
     def patch(self, request, pk):
         from apps.orders.return_models import ReturnRequest
+        from apps.orders import return_service
+
         ret = get_object_or_404(
             ReturnRequest.objects.select_related('order'),
             pk=pk, order__seller=request.user,
         )
         new_status = (request.data.get('status') or '').strip()
-        if new_status not in {'approved', 'rejected', 'completed'}:
-            return Response({'error': 'validation_error', 'detail': 'Status inválido.'}, status=400)
-        allowed = self.VALID_TRANSITIONS.get(ret.status, set())
-        if new_status not in allowed:
-            return Response({
-                'error': 'invalid_transition',
-                'detail': f'Não é possível ir de {ret.status} para {new_status}.',
-            }, status=400)
+        action_name = _SELLER_ACTION_MAP.get(new_status)
+        if action_name is None:
+            return Response(
+                {'error': 'validation_error', 'detail': 'Status inválido.'},
+                status=400,
+            )
 
-        admin_note = (request.data.get('admin_note') or '').strip()[:2000]
-        ret.status = new_status
-        if admin_note:
-            ret.admin_note = admin_note
-        ret.save(update_fields=['status', 'admin_note', 'updated_at'])
+        note = (request.data.get('admin_note') or '').strip()[:2000]
+        if note:
+            ret.admin_note = note
+            ret.save(update_fields=['admin_note', 'updated_at'])
 
-        # When the return is marked completed, refund the buyer (default: store credit)
-        if new_status == 'completed':
-            try:
-                from apps.ledger.service import record_refund_to_buyer
-                # Cap refund at order total in case of stale data
-                refund_amount = min(ret.order.total, ret.order.total)  # placeholder for partial logic
-                record_refund_to_buyer(
-                    order=ret.order,
-                    amount=refund_amount,
-                    refund_id=ret.id,
-                    destination='store_credit',
+        try:
+            action = getattr(return_service, action_name)
+            ret = action(ret, actor=request.user, note=note)
+        except return_service.TransitionError as e:
+            return Response(
+                {'error': 'invalid_transition', 'detail': str(e)},
+                status=400,
+            )
+
+        return Response(_serialize_return(ret, request))
+
+
+class BuyerReturnActionView(APIView):
+    """PATCH /api/v1/orders/returns/<id>/buyer-action/  — buyer withdraws or escalates."""
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def patch(self, request, pk):
+        from apps.orders.return_models import ReturnRequest
+        from apps.orders import return_service
+
+        ret = get_object_or_404(
+            ReturnRequest.objects.select_related('order'),
+            pk=pk, buyer=request.user,
+        )
+        action = (request.data.get('action') or '').strip()
+        note = (request.data.get('note') or '').strip()[:500]
+
+        try:
+            if action == 'withdraw':
+                ret = return_service.buyer_withdraw(ret, actor=request.user, note=note)
+            elif action == 'escalate':
+                ret = return_service.buyer_escalate(ret, actor=request.user, note=note)
+            else:
+                return Response(
+                    {'error': 'validation_error',
+                     'detail': 'action must be "withdraw" or "escalate".'},
+                    status=400,
                 )
-                # Also bump the cached User.store_credit so existing read paths stay consistent
-                from django.contrib.auth import get_user_model
-                from django.db.models import F
-                User = get_user_model()
-                User.objects.filter(pk=ret.order.buyer_id).update(
-                    store_credit=F('store_credit') + refund_amount,
-                )
-            except Exception:
-                # Drift will be surfaced by reconcile_ledger; do not block the status change.
-                pass
+        except return_service.TransitionError as e:
+            return Response(
+                {'error': 'invalid_transition', 'detail': str(e)},
+                status=400,
+            )
 
+        return Response(_serialize_return(ret, request))
+
+
+class AdminReturnOverrideView(APIView):
+    """POST /api/v1/orders/returns/<id>/admin-override/  — force any transition.
+
+    Bypasses the state machine guard but still records the change in the
+    audit trail with admin_override=True.
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def post(self, request, pk):
+        from apps.orders.return_models import ReturnRequest, ReturnStatus
+        from apps.orders import return_service
+
+        ret = get_object_or_404(ReturnRequest, pk=pk)
+        new_status = (request.data.get('status') or '').strip()
+        valid = {s.value for s in ReturnStatus}
+        if new_status not in valid:
+            return Response(
+                {'error': 'validation_error',
+                 'detail': f'status must be one of {sorted(valid)}'},
+                status=400,
+            )
+        note = (request.data.get('note') or '').strip()[:500]
+        ret = return_service.transition(
+            ret, new_status,
+            actor=request.user, actor_role='admin',
+            note=note, admin_override=True,
+        )
         return Response(_serialize_return(ret, request))

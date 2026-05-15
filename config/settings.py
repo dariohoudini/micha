@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.risk',
     'apps.idempotency',
     'apps.webhooks',
+    'apps.sagas',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -353,6 +354,23 @@ CELERY_BEAT_SCHEDULE = {
     'sweep-webhook-retries': {
         'task': 'webhooks.sweep_retries',
         'schedule': 60,  # every minute — picks up due retries fast
+        'options': {'queue': 'default'},
+    },
+
+    # ── Sagas ─────────────────────────────────────────────────
+    'advance-waiting-sagas': {
+        'task': 'sagas.advance_waiting',
+        'schedule': 60,
+        'options': {'queue': 'default'},
+    },
+    'abandon-overdue-sagas': {
+        'task': 'sagas.abandon_overdue',
+        'schedule': 300,  # every 5 min
+        'options': {'queue': 'default'},
+    },
+    'reap-abandoned-checkouts': {
+        'task': 'sagas.reap_abandoned_checkouts',
+        'schedule': 600,  # every 10 min — grace=30min by default
         'options': {'queue': 'default'},
     },
 

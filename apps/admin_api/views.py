@@ -493,9 +493,29 @@ class OpsQueueView(APIView):
             'ledger_drift':     _safe(self._ledger_drift),
             'recent_alerts':    _safe(self._recent_alerts),
             'webhook_failures': _safe(self._webhook_failures),
+            'stuck_sagas':      _safe(self._stuck_sagas),
         }
         out['totals'] = {k: len(v) for k, v in out.items()}
         return Response(out)
+
+    def _stuck_sagas(self):
+        """Sagas in NEEDS_ATTENTION — compensation itself failed; humans must look."""
+        try:
+            from apps.sagas.models import Saga, SagaStatus
+        except Exception:
+            return []
+        rows = (
+            Saga.objects
+            .filter(status=SagaStatus.NEEDS_ATTENTION)
+            .order_by('-updated_at')[:25]
+        )
+        return [{
+            'id': s.id, 'name': s.name,
+            'ref_type': s.ref_type, 'ref_id': s.ref_id,
+            'current_step': s.current_step,
+            'error': (s.error or '')[:300],
+            'created_at': s.created_at, 'updated_at': s.updated_at,
+        } for s in rows]
 
     def _webhook_failures(self):
         try:

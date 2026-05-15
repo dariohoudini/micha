@@ -122,6 +122,7 @@ export default function AdminOpsQueuePage() {
             { label: 'Drift do ledger', n: t.ledger_drift || 0, color: '#FF0000' },
             { label: 'Alertas recentes', n: t.recent_alerts || 0, color: G },
             { label: 'Webhooks falhando', n: t.webhook_failures || 0, color: AMBER },
+            { label: 'Sagas presas', n: t.stuck_sagas || 0, color: RED },
           ].map(s => (
             <div key={s.label} style={{ flex: '1 1 120px', minWidth: 120, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 10 }}>
               <p style={{ ...S, fontSize: 10, color: MUTED, margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.label}</p>
@@ -233,6 +234,29 @@ export default function AdminOpsQueuePage() {
                   </div>
                   <p style={{ ...S, fontSize: 12, color: TEXT, margin: 0 }}>{r.reason} · {r.buyer_email}</p>
                   {r.description && <p style={{ ...S, fontSize: 11, color: MUTED, margin: '4px 0 0' }}>{r.description}</p>}
+                </div>
+              ))}
+        </Section>
+
+        {/* Stuck sagas — compensation itself failed; nobody else can recover these */}
+        <Section title="🔗 Sagas precisando atenção" count={t.stuck_sagas || 0} color={RED}>
+          {(data.stuck_sagas || []).length === 0
+            ? <Empty>Sem sagas presas. ✓</Empty>
+            : data.stuck_sagas.map(s => (
+                <div key={s.id} style={{ padding: 10, background: 'rgba(255,0,0,0.06)', borderRadius: 10, marginBottom: 6, border: `1px solid ${BORDER}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ ...S, fontSize: 11, fontWeight: 700, color: RED }}>{s.name}</span>
+                    <span style={{ ...S, fontSize: 10, color: MUTED }}>passo {s.current_step}</span>
+                    <span style={{ ...S, fontSize: 10, color: MUTED, marginLeft: 'auto' }}>{relTime(s.updated_at)}</span>
+                  </div>
+                  {s.ref_type && (
+                    <p style={{ ...S, fontSize: 11, color: TEXT, margin: 0 }}>
+                      {s.ref_type}:{s.ref_id}
+                    </p>
+                  )}
+                  <p style={{ ...S, fontSize: 11, color: RED, margin: '4px 0 0', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {s.error}
+                  </p>
                 </div>
               ))}
         </Section>

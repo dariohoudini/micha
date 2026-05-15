@@ -217,29 +217,51 @@ class ProductDetailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
-        product = get_object_or_404(
-            Product.objects.select_related("store", "category").prefetch_related("images", "tags"),
-            slug=slug, is_active=True, is_archived=False
-        )
+        from apps.core.cache_kit import cached_call, build_key
 
-        # ETag based on updated_at
-        etag = f'"{product.pk}-{product.updated_at.timestamp()}"'
+        # The expensive part is the serializer + prefetch. Cache *that*,
+        # keyed by slug AND the product's tag version so save() invalidates
+        # automatically. Lookup the product id once (cheap by indexed slug)
+        # so we know which tag to version-bind to.
+        pid = Product.objects.filter(
+            slug=slug, is_active=True, is_archived=False,
+        ).values_list('id', flat=True).first()
+        if pid is None:
+            from django.http import Http404
+            raise Http404()
+
+        cache_key = build_key('product_detail', [f'product:{pid}'], slug)
+
+        def _load():
+            product = get_object_or_404(
+                Product.objects.select_related("store", "category").prefetch_related("images", "tags"),
+                pk=pid,
+            )
+            return ProductDetailSerializer(product, context={"request": request}).data
+
+        data = cached_call(cache_key, _load, ttl=300, swr_ttl=60)
+
+        # ETag derived from the data identity (so 304 still works post-cache).
+        etag = f'"{pid}-{hash(repr(sorted(data.items()))) & 0xffffffff:x}"'
         if request.META.get("HTTP_IF_NONE_MATCH") == etag:
             from django.http import HttpResponse
             return HttpResponse(status=304)
 
-        # Increment view counter
-        Product.objects.filter(pk=product.pk).update(views=F("views") + 1)
+        # Increment view counter (outside the cache — it's a write)
+        Product.objects.filter(pk=pid).update(views=F("views") + 1)
 
         # Track for recommendations
         if request.user.is_authenticated:
             from apps.recommendations.models import ProductInteraction
-            ProductInteraction.track(request.user, product, "view")
+            try:
+                product_for_track = Product.objects.get(pk=pid)
+                ProductInteraction.track(request.user, product_for_track, "view")
+            except Exception:
+                pass
 
-        serializer = ProductDetailSerializer(product, context={"request": request})
-        response = Response(serializer.data)
+        response = Response(data)
         response["ETag"] = etag
-        response["Cache-Control"] = "private, max-age=0, must-revalidate"
+        response["Cache-Control"] = "public, max-age=60"
         return response
 
 

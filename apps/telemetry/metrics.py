@@ -144,3 +144,18 @@ http_db_queries = Histogram(
     ['route'],
     buckets=(1, 5, 10, 25, 50, 100, 250, 500),
 )
+
+# ── Cache ───────────────────────────────────────────────────────────
+cache_hits = Counter(
+    'micha_cache_hits_total',
+    'Cache lookups served from the cache (fresh or SWR-stale).',
+)
+cache_misses = Counter(
+    'micha_cache_misses_total',
+    'Cache lookups that required loading from source.',
+)
+cache_stampedes_avoided = Counter(
+    'micha_cache_stampedes_avoided_total',
+    'Concurrent requests that waited on a single-flight rebuild instead of '
+    'all hitting the loader.',
+)

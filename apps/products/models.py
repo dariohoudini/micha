@@ -258,6 +258,14 @@ class Product(models.Model):
         cache.delete('homepage:new_arrivals')
         cache.delete('homepage:featured')
 
+        # Bump tag-versioned caches: any cache key that referenced
+        # tag='product:{id}' becomes logically invalid on next read.
+        try:
+            from apps.core.cache_kit import bump_tag
+            bump_tag(f'product:{self.id}')
+        except Exception:
+            pass
+
     @property
     def is_published(self):
         if self.publish_at and timezone.now() < self.publish_at:

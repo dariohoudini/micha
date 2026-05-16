@@ -487,16 +487,46 @@ class OpsQueueView(APIView):
             except Exception:
                 return []
         out = {
-            'fraud_holds':      _safe(self._fraud_holds),
-            'dead_events':      _safe(self._dead_events),
-            'pending_returns':  _safe(self._pending_returns),
-            'ledger_drift':     _safe(self._ledger_drift),
-            'recent_alerts':    _safe(self._recent_alerts),
-            'webhook_failures': _safe(self._webhook_failures),
-            'stuck_sagas':      _safe(self._stuck_sagas),
+            'fraud_holds':       _safe(self._fraud_holds),
+            'dead_events':       _safe(self._dead_events),
+            'pending_returns':   _safe(self._pending_returns),
+            'ledger_drift':      _safe(self._ledger_drift),
+            'recent_alerts':     _safe(self._recent_alerts),
+            'webhook_failures':  _safe(self._webhook_failures),
+            'stuck_sagas':       _safe(self._stuck_sagas),
+            'spoofed_webhooks':  _safe(self._spoofed_webhooks),
         }
         out['totals'] = {k: len(v) for k, v in out.items()}
         return Response(out)
+
+    def _spoofed_webhooks(self):
+        """Inbound webhook attempts rejected by signature/timestamp checks in
+        the last 24h. Spike here = someone trying to forge provider callbacks."""
+        try:
+            from apps.inbound_webhooks.models import InboundWebhookEvent, WebhookStatus
+        except Exception:
+            return []
+        from datetime import timedelta
+        cutoff = timezone.now() - timedelta(hours=24)
+        rows = (
+            InboundWebhookEvent.objects
+            .filter(
+                received_at__gte=cutoff,
+                status__in=(
+                    WebhookStatus.SIGNATURE_INVALID,
+                    WebhookStatus.MISSING_SIGNATURE,
+                    WebhookStatus.STALE_TIMESTAMP,
+                ),
+            )
+            .order_by('-received_at')[:25]
+        )
+        return [{
+            'id': r.id, 'provider': r.provider, 'status': r.status,
+            'source_ip': r.source_ip,
+            'user_agent': (r.user_agent or '')[:120],
+            'signature_excerpt': (r.signature_header or '')[:24],
+            'received_at': r.received_at,
+        } for r in rows]
 
     def _stuck_sagas(self):
         """Sagas in NEEDS_ATTENTION — compensation itself failed; humans must look."""

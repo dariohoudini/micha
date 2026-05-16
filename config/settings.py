@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.risk',
     'apps.idempotency',
     'apps.webhooks',
+    'apps.inbound_webhooks',
     'apps.sagas',
     'apps.telemetry',
     'apps.users',

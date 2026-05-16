@@ -14,6 +14,7 @@ from rest_framework.throttling import UserRateThrottle
 
 from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser
 from middleware.security import log_security_event
+from apps.inbound_webhooks.decorators import verified_webhook
 from .models import SellerWallet, WalletTransaction, SellerBankAccount, PayoutRequest
 
 
@@ -322,93 +323,57 @@ class AppyPayWebhookView(APIView):
     APPYPAY Multicaixa Express webhook endpoint.
     URL: POST /api/v1/payments/appypay/webhook/
 
-    Security:
-    - HMAC-SHA256 signature verification (rejects anything unsigned)
-    - Idempotent processing (duplicate events are safe)
-    - Append-only event log for full audit trail
-
-    APPYPAY sends webhooks for:
-    - payment.confirmed  — user approved payment on phone
-    - payment.failed     — user rejected or timed out
-    - payment.refunded   — refund processed
-    - payment.reversed   — chargeback/dispute
+    Defense-in-depth via @verified_webhook:
+      • HMAC-SHA256 signature verification on every request
+      • Timestamp window enforcement (rejects replays older than 5 min if
+        provider supplies X-AppyPay-Timestamp)
+      • Body-hash dedupe at the storage layer — re-delivery of the byte-
+        identical body returns the original response without re-executing
+      • Forensic audit row per attempt (verified OR rejected)
+      • Critical-severity security event log on any verification failure
     """
     permission_classes = [AllowAny]  # verified by HMAC
 
+    @verified_webhook('appypay')
     def post(self, request):
-        from apps.payments.gateway import AppyPayGateway, PaymentProcessor
+        from apps.payments.gateway import PaymentProcessor
 
-        # 1. Verify signature FIRST — reject anything unverified
-        gateway = AppyPayGateway()
-        signature = request.META.get('HTTP_X_APPYPAY_SIGNATURE', '')
+        # The decorator parsed + verified the payload and attached it.
+        ctx = request._verified_webhook
+        data = ctx['payload'] or {}
+        event_type = ctx['event_type']
+        reference = data.get('reference', '')
+        amount = data.get('amount')
 
-        if not signature:
-            logger.warning('AppyPay webhook missing signature', extra={
-                'ip': request.META.get('REMOTE_ADDR'),
-            })
-            return Response({'error': 'missing_signature'}, status=400)
-
-        if not gateway.verify_webhook_signature(request.body, signature):
-            logger.error('AppyPay webhook invalid signature — REJECTED', extra={
-                'ip': request.META.get('REMOTE_ADDR'),
-                'signature': signature[:20],
-            })
-            log_security_event('webhook_signature_failed', request=request,
-                               severity='CRITICAL', details={'gateway': 'appypay'})
-            return Response({'error': 'invalid_signature'}, status=400)
-
-        # 2. Parse event
-        try:
-            data = request.data
-            event_type = data.get('event', '')
-            reference = data.get('reference', '')
-            amount = data.get('amount')
-        except Exception as e:
-            return Response({'error': 'invalid_payload'}, status=400)
-
-        logger.info('AppyPay webhook received', extra={
-            'event': event_type,
-            'reference': reference,
+        logger.info('AppyPay webhook verified', extra={
+            'event': event_type, 'reference': reference,
         })
 
-        # 3. Process event
         processor = PaymentProcessor()
-
         try:
             if event_type == 'payment.confirmed':
                 processor.confirm_payment(reference, data)
-
             elif event_type == 'payment.failed':
-                reason = data.get('failure_reason', 'unknown')
-                processor.fail_payment(reference, reason)
-
+                processor.fail_payment(reference, data.get('failure_reason', 'unknown'))
             elif event_type in ('payment.refunded', 'payment.reversed'):
-                # Gateway-initiated refund (chargeback)
                 try:
                     from apps.orders.models import Payment
                     payment = Payment.objects.get(gateway_reference=reference)
                     from apps.payments.gateway import PaymentEventLogger
-                    PaymentEventLogger.log(
-                        payment, event_type,
-                        {'amount': amount, 'reason': data.get('reason')}
-                    )
+                    PaymentEventLogger.log(payment, event_type,
+                                           {'amount': amount, 'reason': data.get('reason')})
                 except Exception as e:
                     logger.error(f'Could not log refund event: {e}')
-
             else:
                 logger.info(f'Unhandled AppyPay event: {event_type}')
-
         except Exception as e:
-            logger.error('AppyPay webhook processing error', extra={
-                'event': event_type,
-                'reference': reference,
-                'error': str(e),
+            logger.error('AppyPay webhook handler error', extra={
+                'event': event_type, 'reference': reference, 'error': str(e),
             })
-            # Return 200 to prevent gateway from retrying permanently
-            # The error is logged and will be caught by reconciliation
+            # Acknowledge so the gateway doesn't retry forever; reconciliation
+            # will pick up any stuck payments.
             return Response({'status': 'error_logged'}, status=200)
 
-        # Always return 200 to acknowledge receipt
         return Response({'status': 'ok'}, status=200)
 
 

@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'apps.webhooks',
     'apps.inbound_webhooks',
     'apps.sagas',
+    'apps.data_rights',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

@@ -495,9 +495,43 @@ class OpsQueueView(APIView):
             'webhook_failures':  _safe(self._webhook_failures),
             'stuck_sagas':       _safe(self._stuck_sagas),
             'spoofed_webhooks':  _safe(self._spoofed_webhooks),
+            'overdue_data_requests': _safe(self._overdue_data_requests),
         }
         out['totals'] = {k: len(v) for k, v in out.items()}
         return Response(out)
+
+    def _overdue_data_requests(self):
+        """Data-subject requests still in-flight past their SLA. Erase
+        requests carry a 30-day regulatory deadline."""
+        try:
+            from apps.data_rights.models import DataSubjectRequest, RequestStatus
+        except Exception:
+            return []
+        now = timezone.now()
+        rows = (
+            DataSubjectRequest.objects
+            .filter(
+                status__in=(RequestStatus.PENDING, RequestStatus.RUNNING,
+                            RequestStatus.FAILED),
+            )
+            .order_by('sla_deadline_at')[:25]
+        )
+        out = []
+        for r in rows:
+            overdue = (
+                r.sla_deadline_at is not None and r.sla_deadline_at < now
+            )
+            # Only surface OVERDUE requests OR failures (humans needed)
+            if not overdue and r.status != RequestStatus.FAILED:
+                continue
+            out.append({
+                'id': r.id, 'kind': r.kind, 'status': r.status,
+                'user_email': r.user_email_at_request,
+                'sla_deadline_at': r.sla_deadline_at,
+                'created_at': r.created_at,
+                'error': (r.error or '')[:200],
+            })
+        return out
 
     def _spoofed_webhooks(self):
         """Inbound webhook attempts rejected by signature/timestamp checks in

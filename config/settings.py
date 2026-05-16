@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     'apps.loyalty',
     'apps.two_factor',
     'apps.alerts',
+    'apps.content_safety',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

@@ -15,11 +15,13 @@ from django.utils import timezone
 
 from .models import Saga, SagaStatus
 from .registry import get as get_def, all_names
+from apps.core.task_locks import singleton_task
 
 log = logging.getLogger(__name__)
 
 
 @shared_task(name='sagas.advance_waiting')
+@singleton_task('beat:sagas.advance_waiting')
 def advance_waiting_sagas():
     """Wake any saga whose wait_until has elapsed."""
     from .runner import resume
@@ -38,6 +40,7 @@ def advance_waiting_sagas():
 
 
 @shared_task(name='sagas.abandon_overdue')
+@singleton_task('beat:sagas.abandon_overdue')
 def abandon_overdue_sagas():
     """Force terminal state on sagas that exceeded their per-definition
     max_lifetime_seconds. Compensates any completed forward steps."""
@@ -70,6 +73,7 @@ def abandon_overdue_sagas():
 
 
 @shared_task(name='sagas.reap_abandoned_checkouts')
+@singleton_task('beat:sagas.reap_abandoned_checkouts')
 def reap_abandoned_checkouts(grace_minutes: int = 30):
     """Spawn an ``abandoned_checkout`` saga per order that's been sitting
     unpaid past the grace window. Idempotent — already-reaped orders won't

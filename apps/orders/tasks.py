@@ -1,8 +1,10 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
+from apps.core.task_locks import singleton_task
 
 @shared_task(name='orders.auto_complete_old_orders')
+@singleton_task('beat:orders.auto_complete_old_orders')
 def auto_complete_old_orders():
     """Auto-complete orders delivered 7+ days ago with no open dispute."""
     try:
@@ -142,6 +144,7 @@ PROTECTION_TOPICS = {
 
 
 @shared_task(name='orders.enforce_buyer_protection')
+@singleton_task('beat:orders.enforce_buyer_protection')
 def enforce_buyer_protection(batch_size=200):
     """Scan orders whose buyer-protection deadline has lapsed; emit one outbox
     event per order so the actual action is durable + retryable.
@@ -186,6 +189,7 @@ def enforce_buyer_protection(batch_size=200):
 
 
 @shared_task(name='orders.enforce_return_deadlines')
+@singleton_task('beat:orders.enforce_return_deadlines')
 def enforce_return_deadlines(batch_size: int = 200):
     """SLA enforcement for returns.
 

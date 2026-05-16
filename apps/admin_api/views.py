@@ -11,6 +11,44 @@ from django.utils import timezone
 from django.db.models import Sum, Q
 from datetime import timedelta
 
+from apps.admin_actions.decorators import audit_admin_action
+
+
+# ─── Dynamic action resolvers ─────────────────────────────────────────────
+def _user_action_name(request, kwargs):
+    a = (request.data.get('action') or '').strip()
+    return {
+        'suspend':     'suspend_user',
+        'activate':    'activate_user',
+        'make_seller': 'assign_role',
+    }.get(a, '')
+
+
+def _product_action_name(request, kwargs):
+    a = (request.data.get('action') or '').strip()
+    return {'approve': 'feature_product', 'reject': 'remove_product'}.get(a, '')
+
+
+def _ops_queue_action_name(request, kwargs):
+    kind = kwargs.get('kind', '')
+    a = (request.data.get('action') or '').strip()
+    return f'ops_{kind}_{a}' if (kind and a) else ''
+
+
+def _lookup_user(user_id):
+    from django.contrib.auth import get_user_model
+    return get_user_model().objects.filter(pk=user_id).first()
+
+
+def _lookup_order(order_id):
+    from apps.orders.models import Order
+    return Order.objects.filter(pk=order_id).first()
+
+
+def _lookup_product(product_id):
+    from apps.products.models import Product
+    return Product.objects.filter(pk=product_id).first()
+
 
 class AdminDashboardStatsView(APIView):
     """GET /api/admin/stats/ — Platform overview for admin dashboard."""
@@ -172,6 +210,8 @@ class AdminUserActionView(APIView):
     """POST /api/admin/users/<id>/action/ — suspend/activate/ban a user."""
     permission_classes = [IsAdminUser]
 
+    @audit_admin_action(_user_action_name, target_kwarg='user_id',
+                        target_lookup=_lookup_user)
     def post(self, request, user_id):
         from django.contrib.auth import get_user_model
         User = get_user_model()
@@ -250,6 +290,11 @@ class AdminOrderDisputeView(APIView):
     """POST /api/admin/orders/<id>/resolve/ — resolve a dispute."""
     permission_classes = [IsAdminUser]
 
+    @audit_admin_action(
+        lambda req, kw: f'resolve_dispute_{(req.data.get("favour") or "").strip()}'
+                        if (req.data.get('favour') or '').strip() in ('buyer', 'seller') else '',
+        target_kwarg='order_id', target_lookup=_lookup_order,
+    )
     def post(self, request, order_id):
         try:
             from apps.orders.models import Order
@@ -392,6 +437,8 @@ class AdminProductActionView(APIView):
     """POST /api/admin/products/<id>/action/ — approve/reject product."""
     permission_classes = [IsAdminUser]
 
+    @audit_admin_action(_product_action_name, target_kwarg='product_id',
+                        target_lookup=_lookup_product)
     def post(self, request, product_id):
         try:
             from apps.products.models import Product
@@ -742,6 +789,7 @@ class OpsQueueActionView(APIView):
     """
     permission_classes = [IsAdminUser]
 
+    @audit_admin_action(_ops_queue_action_name, target_kwarg='item_id')
     def post(self, request, kind, item_id):
         action = (request.data.get('action') or '').strip()
         if kind == 'dead_event':

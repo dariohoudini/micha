@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'apps.tax',
     'apps.cases',
     'apps.loyalty',
+    'apps.two_factor',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

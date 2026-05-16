@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     'apps.two_factor',
     'apps.alerts',
     'apps.content_safety',
+    'apps.forecasting',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -406,6 +407,13 @@ CELERY_BEAT_SCHEDULE = {
     'run-saved-searches': {
         'task': 'alerts.run_saved_searches',
         'schedule': 3600,  # hourly — bounded by per-row min_notify_interval
+        'options': {'queue': 'low'},
+    },
+
+    # ── Forecasting ───────────────────────────────────────────
+    'run-forecasting': {
+        'task': 'forecasting.run_all',
+        'schedule': 86400,  # nightly per-product forecast + reorder check
         'options': {'queue': 'low'},
     },
 

@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'apps.fx',
     'apps.bulk_ops',
     'apps.dev_keys',
+    'apps.tax',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

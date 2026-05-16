@@ -543,9 +543,32 @@ class OpsQueueView(APIView):
             'stuck_sagas':       _safe(self._stuck_sagas),
             'spoofed_webhooks':  _safe(self._spoofed_webhooks),
             'overdue_data_requests': _safe(self._overdue_data_requests),
+            'active_bulk_jobs':  _safe(self._active_bulk_jobs),
         }
         out['totals'] = {k: len(v) for k, v in out.items()}
         return Response(out)
+
+    def _active_bulk_jobs(self):
+        """Currently-running or recently-failed bulk admin operations.
+        Surfaces so admins can see live progress and triage failed jobs."""
+        try:
+            from apps.bulk_ops.models import BulkJob, JobStatus
+        except Exception:
+            return []
+        rows = (
+            BulkJob.objects
+            .filter(status__in=(JobStatus.RUNNING, JobStatus.PENDING, JobStatus.FAILED))
+            .select_related('requested_by')
+            .order_by('-created_at')[:15]
+        )
+        return [{
+            'id': j.id, 'name': j.name, 'status': j.status,
+            'total': j.total, 'processed': j.processed,
+            'failed': j.failed, 'skipped': j.skipped,
+            'progress_pct': round(((j.processed + j.skipped) / j.total) * 100, 1) if j.total else 0,
+            'requested_by': j.requested_by.email if j.requested_by_id else None,
+            'created_at': j.created_at,
+        } for j in rows]
 
     def _overdue_data_requests(self):
         """Data-subject requests still in-flight past their SLA. Erase

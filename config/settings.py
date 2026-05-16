@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'apps.data_rights',
     'apps.flags',
     'apps.fx',
+    'apps.bulk_ops',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -376,6 +377,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'sagas.reap_abandoned_checkouts',
         'schedule': 600,  # every 10 min — grace=30min by default
         'options': {'queue': 'default'},
+    },
+
+    # ── Bulk operations ──────────────────────────────────────
+    'drive-pending-bulk-jobs': {
+        'task': 'bulk_ops.drive_pending',
+        'schedule': 60,  # belt-and-braces — picks up jobs that lost their .delay()
+        'options': {'queue': 'low'},
     },
 
     # ── Cart ──────────────────────────────────────────────────

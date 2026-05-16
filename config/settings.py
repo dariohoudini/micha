@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'apps.flags',
     'apps.fx',
     'apps.bulk_ops',
+    'apps.dev_keys',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -118,6 +119,7 @@ MIDDLEWARE = [
     'middleware.terms_version.TermsVersionMiddleware',
     'middleware.sanitise.SanitiseInputMiddleware',
     'apps.verification_gate.middleware.SellerVerificationMiddleware',
+    'apps.dev_keys.middleware.APIKeyUsageMiddleware',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False
@@ -195,6 +197,7 @@ AUTH_USER_MODEL = 'users.User'
 # ── DRF ───────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
+        'apps.dev_keys.auth.APIKeyAuthentication',
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [

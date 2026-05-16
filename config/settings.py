@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'apps.dev_keys',
     'apps.tax',
     'apps.cases',
+    'apps.loyalty',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -388,6 +389,13 @@ CELERY_BEAT_SCHEDULE = {
     'drive-pending-bulk-jobs': {
         'task': 'bulk_ops.drive_pending',
         'schedule': 60,  # belt-and-braces — picks up jobs that lost their .delay()
+        'options': {'queue': 'low'},
+    },
+
+    # ── Loyalty ───────────────────────────────────────────────
+    'recompute-loyalty-tiers': {
+        'task': 'loyalty.recompute_all_tiers',
+        'schedule': 86400,  # nightly — beat-fired with singleton_task guard
         'options': {'queue': 'low'},
     },
 

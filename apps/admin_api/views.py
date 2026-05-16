@@ -544,9 +544,43 @@ class OpsQueueView(APIView):
             'spoofed_webhooks':  _safe(self._spoofed_webhooks),
             'overdue_data_requests': _safe(self._overdue_data_requests),
             'active_bulk_jobs':  _safe(self._active_bulk_jobs),
+            'overdue_cases':     _safe(self._overdue_cases),
         }
         out['totals'] = {k: len(v) for k, v in out.items()}
         return Response(out)
+
+    def _overdue_cases(self):
+        """T&S cases past SLA or unassigned URGENT cases. The "who's the
+        next admin shift?" question lives here."""
+        try:
+            from apps.cases.models import Case, CaseStatus, CasePriority
+        except Exception:
+            return []
+        now = timezone.now()
+        # Open + (past SLA OR urgent-and-unassigned). Sorted by urgency.
+        from django.db.models import Q
+        open_statuses = [CaseStatus.NEW, CaseStatus.TRIAGED,
+                         CaseStatus.INVESTIGATING, CaseStatus.ESCALATED,
+                         CaseStatus.AWAITING_INFO]
+        rows = (
+            Case.objects.filter(status__in=open_statuses)
+            .filter(Q(sla_at__lte=now)
+                    | Q(priority=CasePriority.URGENT, assigned_to__isnull=True))
+            .select_related('assigned_to')
+            .order_by('sla_at')[:25]
+        )
+        out = []
+        for c in rows:
+            overdue = c.sla_at is not None and c.sla_at <= now
+            out.append({
+                'id': c.id, 'code': c.code, 'title': c.title,
+                'kind': c.kind, 'status': c.status, 'priority': c.priority,
+                'assigned_to_email': c.assigned_to.email if c.assigned_to_id else None,
+                'sla_at': c.sla_at,
+                'overdue': overdue,
+                'created_at': c.created_at,
+            })
+        return out
 
     def _active_bulk_jobs(self):
         """Currently-running or recently-failed bulk admin operations.

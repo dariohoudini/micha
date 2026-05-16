@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/v1/admin-api/bulk/",  include("apps.bulk_ops.urls")),
     path("api/v1/dev/keys/",        include("apps.dev_keys.urls")),
     path("api/v1/tax/",             include("apps.tax.urls")),
+    path("api/v1/admin-api/cases/", include("apps.cases.urls")),
     path("api/v1/reviews/",         include("apps.reviews.urls")),
     path("api/v1/reports/",         include("apps.reports.urls")),
     path("api/v1/seller/",          include("apps.seller.urls")),

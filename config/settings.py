@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'apps.cases',
     'apps.loyalty',
     'apps.two_factor',
+    'apps.alerts',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -397,6 +398,13 @@ CELERY_BEAT_SCHEDULE = {
     'recompute-loyalty-tiers': {
         'task': 'loyalty.recompute_all_tiers',
         'schedule': 86400,  # nightly — beat-fired with singleton_task guard
+        'options': {'queue': 'low'},
+    },
+
+    # ── Alerts ────────────────────────────────────────────────
+    'run-saved-searches': {
+        'task': 'alerts.run_saved_searches',
+        'schedule': 3600,  # hourly — bounded by per-row min_notify_interval
         'options': {'queue': 'low'},
     },
 

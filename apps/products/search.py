@@ -115,6 +115,7 @@ def search_products(queryset, raw_query: str):
 
     if _is_postgres():
         from django.contrib.postgres.search import SearchQuery, SearchRank
+        from django.db.models import Case, When, FloatField, Value
 
         # Build "primary | synonym | synonym | …" — favour primary terms via &
         # in the multi-token case so two-word queries narrow rather than widen.
@@ -128,9 +129,33 @@ def search_products(queryset, raw_query: str):
             # Older Postgres or restricted role — fall back to plain
             sq = SearchQuery(' '.join(all_terms))
 
+        # ── Relevance feedback boost ────────────────────────────────────
+        # Look up per-product CTR/conversion boosts for this exact query and
+        # ADD them to the BM25 rank. Boost is in [0, 1]; we scale by 0.5 so
+        # a perfectly-boosted product can move at most ~half a BM25 unit up
+        # the rankings — enough to break ties, not enough to override a
+        # genuinely better text match.
+        try:
+            from apps.search.feedback import boosts_for_query
+            boost_map = boosts_for_query(raw_query)
+        except Exception:
+            boost_map = {}
+
+        if boost_map:
+            # Build a CASE expression — fast for the typical case of ~25 boosts.
+            cases = [
+                When(pk=pid, then=Value(float(score) * 0.5))
+                for pid, score in boost_map.items()
+            ]
+            rank_expr = SearchRank(F('search_vector'), sq) + Case(
+                *cases, default=Value(0.0), output_field=FloatField(),
+            )
+        else:
+            rank_expr = SearchRank(F('search_vector'), sq)
+
         result = (
             queryset
-            .annotate(_rank=SearchRank(F('search_vector'), sq))
+            .annotate(_rank=rank_expr)
             .filter(search_vector=sq)
             .order_by('-_rank')
         )

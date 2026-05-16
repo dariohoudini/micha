@@ -437,6 +437,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=3, minute=0),  # 3am daily
         'options': {'queue': 'low'},
     },
+    'recompute-search-query-boosts': {
+        'task': 'search.recompute_query_boosts',
+        'schedule': 3600,  # hourly — picks up recent clicks/purchases
+        'options': {'queue': 'low'},
+    },
     'send-weekly-digest': {
         'task': 'recommendations.send_weekly_digest',
         'schedule': crontab(hour=10, minute=0, day_of_week='friday'),

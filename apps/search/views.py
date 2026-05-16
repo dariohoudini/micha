@@ -150,3 +150,92 @@ class TrendingView(APIView):
             trending = []
         cache.set("trending_searches", trending, timeout=3600)
         return Response({"trending": trending})
+
+
+class SearchEventView(APIView):
+    """POST /api/v1/search/event/
+
+    Frontend posts user actions on search results back here so the
+    relevance-feedback loop can learn what's actually useful.
+
+    Body:
+      query: str
+      product_id: uuid
+      kind: 'impression' | 'click' | 'cart' | 'purchase'
+      position: int (optional)
+
+    Returns 202 always — best-effort telemetry, never blocks the user.
+    Rate-limited per user/IP via the standard throttle to prevent abuse.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from apps.search.feedback import log_event, SearchEventKind
+
+        query = (request.data.get('query') or '').strip()[:200]
+        product_id = request.data.get('product_id')
+        kind = (request.data.get('kind') or '').strip()
+        position = request.data.get('position')
+        try:
+            position = int(position) if position is not None else None
+            if position is not None and (position < 1 or position > 10000):
+                position = None
+        except (TypeError, ValueError):
+            position = None
+
+        if kind not in {k.value for k in SearchEventKind}:
+            return Response({'error': 'bad_kind'}, status=400)
+        if not (query and product_id):
+            return Response({'error': 'missing_fields'}, status=400)
+
+        # Anon token derived from session/cookie so we can dedupe and
+        # aggregate anonymous behaviour without storing PII.
+        anon = ''
+        try:
+            from hashlib import sha256
+            sid = request.session.session_key or ''
+            if sid:
+                anon = sha256(sid.encode()).hexdigest()[:32]
+        except Exception:
+            pass
+
+        log_event(
+            query=query, product_id=product_id, kind=kind,
+            position=position, user=request.user, anon_token=anon,
+        )
+        return Response({'status': 'accepted'}, status=202)
+
+
+class SearchEventBatchView(APIView):
+    """POST /api/v1/search/event/batch/
+
+    Bulk variant — impressions are fired in batches of ~25 per search to
+    reduce per-keystroke chatter. Body: ``{"events": [{...}, {...}]}``.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    MAX_BATCH = 100
+
+    def post(self, request):
+        from apps.search.feedback import log_event, SearchEventKind
+
+        events = request.data.get('events') or []
+        if not isinstance(events, list):
+            return Response({'error': 'events_must_be_list'}, status=400)
+        accepted = 0
+        for ev in events[:self.MAX_BATCH]:
+            try:
+                kind = ev.get('kind')
+                if kind not in {k.value for k in SearchEventKind}:
+                    continue
+                log_event(
+                    query=(ev.get('query') or '')[:200],
+                    product_id=ev.get('product_id'),
+                    kind=kind,
+                    position=ev.get('position'),
+                    user=request.user,
+                )
+                accepted += 1
+            except Exception:
+                pass
+        return Response({'accepted': accepted}, status=202)

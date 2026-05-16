@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'apps.sagas',
     'apps.data_rights',
     'apps.flags',
+    'apps.fx',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

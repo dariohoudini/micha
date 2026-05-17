@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     'apps.content_safety',
     'apps.forecasting',
     'apps.feed',
+    'apps.affiliates',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -415,6 +416,18 @@ CELERY_BEAT_SCHEDULE = {
     'run-forecasting': {
         'task': 'forecasting.run_all',
         'schedule': 86400,  # nightly per-product forecast + reorder check
+        'options': {'queue': 'low'},
+    },
+
+    # ── Affiliates ────────────────────────────────────────────
+    'affiliates-confirm-pending': {
+        'task': 'affiliates.confirm_pending',
+        'schedule': 3600,  # hourly — moves pending → confirmed past hold
+        'options': {'queue': 'low'},
+    },
+    'affiliates-process-payouts': {
+        'task': 'affiliates.process_payouts',
+        'schedule': 86400,  # nightly
         'options': {'queue': 'low'},
     },
 

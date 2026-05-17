@@ -71,6 +71,7 @@ INSTALLED_APPS = [
     'apps.alerts',
     'apps.content_safety',
     'apps.forecasting',
+    'apps.feed',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

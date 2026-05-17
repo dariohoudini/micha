@@ -159,3 +159,10 @@ cache_stampedes_avoided = Counter(
     'Concurrent requests that waited on a single-flight rebuild instead of '
     'all hitting the loader.',
 )
+
+# ── Feed ────────────────────────────────────────────────────────────
+feed_served = Counter(
+    'micha_feed_served_total',
+    'Personalized feed builds served.',
+    ['section'],
+)

@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/v1/2fa/",             include("apps.two_factor.urls")),
     path("api/v1/alerts/",          include("apps.alerts.urls")),
     path("api/v1/forecasting/",     include("apps.forecasting.urls")),
+    path("api/v1/feed/",            include("apps.feed.urls")),
     path("api/v1/reviews/",         include("apps.reviews.urls")),
     path("api/v1/reports/",         include("apps.reports.urls")),
     path("api/v1/seller/",          include("apps.seller.urls")),

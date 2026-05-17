@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     'apps.forecasting',
     'apps.feed',
     'apps.affiliates',
+    'apps.gift_cards',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -424,6 +425,13 @@ CELERY_BEAT_SCHEDULE = {
     'run-forecasting': {
         'task': 'forecasting.run_all',
         'schedule': 86400,  # nightly per-product forecast + reorder check
+        'options': {'queue': 'low'},
+    },
+
+    # ── Gift cards ───────────────────────────────────────────
+    'gift-cards-expire-overdue': {
+        'task': 'gift_cards.expire_overdue',
+        'schedule': 86400,  # daily — sweeps expired cards with positive balance
         'options': {'queue': 'low'},
     },
 

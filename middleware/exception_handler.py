@@ -38,6 +38,22 @@ def custom_exception_handler(exc, context):
         elif response.status_code == 429:
             error_data["error"] = "rate_limited"
             error_data["detail"] = "Too many requests. Please slow down."
+            # RFC 7231 §7.1.3 — Retry-After in seconds.
+            # DRF's Throttled exception carries .wait (seconds until next allowed).
+            # Surface it both as a header (well-behaved clients honour this)
+            # AND in the body (so the frontend can show a countdown).
+            retry_after = getattr(exc, 'wait', None)
+            if retry_after is not None:
+                try:
+                    retry_after = int(round(float(retry_after)))
+                    response['Retry-After'] = str(retry_after)
+                    error_data["retry_after_seconds"] = retry_after
+                except Exception:
+                    pass
+            # Scope hint so callers can identify which throttle hit
+            scope = getattr(getattr(exc, 'detail', None), 'code', None)
+            if scope:
+                error_data["scope"] = str(scope)
         elif response.status_code >= 500:
             error_data["error"] = "server_error"
             error_data["detail"] = "An internal error occurred."

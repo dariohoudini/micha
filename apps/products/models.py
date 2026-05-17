@@ -232,25 +232,58 @@ class Product(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        if not self.slug:
-            base = slugify(self.title)
-            slug = base
-            n = 1
-            while Product.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base}-{n}"
-                n += 1
-            self.slug = slug
-
-        # FIX: Only auto-deactivate when going OUT of stock.
-        # Never block reactivation — seller can restock and re-enable.
-        # Old code: if self.quantity == 0: self.is_active = False
-        # Problem: seller restocks to 10, is_active stays False, sales stop silently
+        # Stock-out auto-deactivation (legacy behaviour preserved)
         if self.quantity == 0 and self.is_active:
             self.is_active = False
-            # Note: seller must manually re-activate after restocking
-            # This is intentional — forces seller to confirm product is ready
 
-        super().save(*args, **kwargs)
+        # Slug allocation: race-safe INSERT-then-retry. The previous
+        # implementation did a .exists() pre-check then save — classic
+        # TOCTOU: two concurrent product creates with the same title
+        # both pass the check, then both INSERT and one collides.
+        #
+        # Pattern: pick base slug, try save; on IntegrityError that
+        # mentions 'slug', append a short random suffix and retry.
+        # Existing-row updates skip the loop entirely.
+        from django.db import IntegrityError, transaction
+        import secrets
+
+        if self.pk is not None and self.slug:
+            # Existing row, slug already set → no allocation needed
+            super().save(*args, **kwargs)
+            self._post_save_invalidations()
+            return
+
+        if not self.slug:
+            self.slug = slugify(self.title) or 'product'
+        base_slug = self.slug
+
+        max_attempts = 5
+        last_exc = None
+        for attempt in range(max_attempts):
+            try:
+                with transaction.atomic():
+                    super().save(*args, **kwargs)
+                self._post_save_invalidations()
+                return
+            except IntegrityError as e:
+                msg = str(e).lower()
+                # Only retry on slug-related collisions; other unique
+                # constraint failures are bugs we want surfaced.
+                if 'slug' not in msg and 'uniq' not in msg:
+                    raise
+                last_exc = e
+                # Append 6 random base32-ish chars (~30 bits of entropy).
+                # Concurrent retries are extremely unlikely to collide.
+                suffix = secrets.token_urlsafe(4).rstrip('=').lower()
+                suffix = ''.join(c for c in suffix if c.isalnum())[:6]
+                self.slug = f'{base_slug}-{suffix}'
+        # Exhausted all attempts — re-raise the last collision.
+        raise IntegrityError(
+            f'Failed to allocate unique slug for {self.title!r} after '
+            f'{max_attempts} attempts: {last_exc}'
+        )
+
+    def _post_save_invalidations(self):
 
         # Invalidate cached homepage sections
         from django.core.cache import cache

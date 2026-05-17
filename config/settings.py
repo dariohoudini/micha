@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     'apps.feed',
     'apps.affiliates',
     'apps.gift_cards',
+    'apps.imagery',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

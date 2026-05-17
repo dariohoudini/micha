@@ -28,7 +28,9 @@ from django.db import connection
 logger = logging.getLogger('q-audit')
 
 WARN_THRESHOLD = 25       # log a warning above this
-SLOW_QUERY_MS = 50        # log individual slow queries
+SLOW_QUERY_MS = 50        # capture for aggregate log on noisy requests
+INDIVIDUAL_LOG_MS = 250   # log this query on its own line, even if request is cheap
+CRITICAL_QUERY_MS = 1000  # log with FULL params for forensics
 
 # Per-thread counter (Django runs requests in worker threads).
 _local = threading.local()
@@ -53,9 +55,27 @@ def _on_query_executed(execute, sql, params, many, context):
         state['count'] += 1
         state['ms_total'] += dt_ms
         if dt_ms >= SLOW_QUERY_MS:
-            # Compress sql to a single line for log digestibility
             sql_one = ' '.join((sql or '').split())[:200]
             state['slow_queries'].append((dt_ms, sql_one))
+            # Individual log line for any non-trivial slow query — ops can
+            # grep production for these. Critical queries get a fuller dump
+            # including the (truncated) params for reproduction.
+            if dt_ms >= CRITICAL_QUERY_MS:
+                params_repr = ('-' if params is None
+                                else repr(params)[:300])
+                logger.error(
+                    'slow_query_critical',
+                    extra={'duration_ms': round(dt_ms, 1),
+                            'sql': sql_one, 'params': params_repr,
+                            'route': state.get('route', 'unknown')},
+                )
+            elif dt_ms >= INDIVIDUAL_LOG_MS:
+                logger.warning(
+                    'slow_query',
+                    extra={'duration_ms': round(dt_ms, 1),
+                            'sql': sql_one,
+                            'route': state.get('route', 'unknown')},
+                )
 
 
 class QueryAuditMiddleware:
@@ -70,7 +90,14 @@ class QueryAuditMiddleware:
         if request.path.startswith('/metrics'):
             return self.get_response(request)
 
-        state = {'count': 0, 'ms_total': 0.0, 'slow_queries': []}
+        state = {
+            'count': 0, 'ms_total': 0.0, 'slow_queries': [],
+            # Route resolution doesn't happen until middleware below this
+            # runs urlconf matching. We patch state['route'] mid-flight
+            # via the X-Route header trick OR set it lazily — for now
+            # use the request path as a best-effort label.
+            'route': request.path[:120],
+        }
         _local.state = state
 
         with connection.execute_wrapper(_on_query_executed):

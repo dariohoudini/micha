@@ -180,9 +180,17 @@ if os.environ.get('DB_NAME'):
             'CONN_HEALTH_CHECKS': True,
             'OPTIONS': {
                 'connect_timeout': 10,
-                # FIX: Query timeout — kill queries taking longer than 30 seconds
-                # Prevents one slow analytics query from taking down the whole app
-                'options': '-c statement_timeout=30000',
+                # Three timeouts protect the pool from runaway / wedged code:
+                #   statement_timeout                  — kill any single query > 30s
+                #   lock_timeout                       — kill a query waiting > 5s on a row lock
+                #   idle_in_transaction_session_timeout — kill a tx that's been open > 60s
+                # Without these, a single bug (forgotten commit, long
+                # SELECT FOR UPDATE) wedges the entire connection pool.
+                'options': (
+                    '-c statement_timeout=30000'
+                    ' -c lock_timeout=5000'
+                    ' -c idle_in_transaction_session_timeout=60000'
+                ),
             },
         }
     }

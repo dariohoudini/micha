@@ -92,3 +92,31 @@ class SmallResultsPagination(StandardPagination):
     """For sidebar/widget endpoints — fewer results needed."""
     page_size = 10
     max_page_size = 20
+
+
+class LargeListCursorPagination(CursorPagination):
+    """Cursor pagination for HOT list endpoints (my orders, seller orders,
+    product search). OFFSET pagination is O(N) — at row 50000 the DB
+    scans the prior 49999 rows on every page request. Cursor pagination
+    is O(log N) via the indexed ordering column.
+
+    Use this whenever the table can grow past ~10k rows AND the order is
+    by an indexed column. Falls back gracefully to page-style for callers
+    that pass ``?page=`` (DRF's CursorPagination just ignores it).
+
+    Caller picks order by setting ``pagination_class.ordering`` on the
+    view OR via ``?ordering=...`` if exposed.
+    """
+    page_size = 25
+    max_page_size = 100
+    page_size_query_param = 'page_size'
+    cursor_query_param = 'cursor'
+    ordering = '-created_at'  # default; views can override
+
+    def get_paginated_response(self, data):
+        return Response({
+            'next_cursor': self.get_next_link(),
+            'previous_cursor': self.get_previous_link(),
+            'page_size': self.get_page_size(self.request),
+            'results': data,
+        })

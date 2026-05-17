@@ -182,6 +182,11 @@ class CheckoutView(APIView):
 class MyOrderListView(generics.ListAPIView):
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    # Cursor pagination — buyer order histories grow without bound for
+    # repeat buyers; OFFSET 5000 on page 250 scans 5000 rows we don't need.
+    # ordered by -created_at (which already has an index via Order.Meta).
+    from middleware.pagination import LargeListCursorPagination
+    pagination_class = LargeListCursorPagination
 
     def get_queryset(self):
         return Order.objects.filter(
@@ -263,6 +268,10 @@ class ConfirmDeliveryView(APIView):
 class SellerOrderListView(generics.ListAPIView):
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
+    # Cursor pagination — high-volume sellers can accrue 100k+ orders.
+    # OFFSET pagination on page 4000 = 100,000 scanned rows per request.
+    from middleware.pagination import LargeListCursorPagination
+    pagination_class = LargeListCursorPagination
 
     def get_queryset(self):
         qs = Order.objects.filter(seller=self.request.user)
@@ -303,6 +312,7 @@ class UpdateOrderStatusView(APIView):
 class RequestRefundView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
+    @idempotent(required=False)
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ("delivered", "completed"):
@@ -437,6 +447,7 @@ class ReturnRequestCreateView(APIView):
             'updated_at': ret.updated_at,
         }
 
+    @idempotent(required=False)
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ('delivered', 'completed'):

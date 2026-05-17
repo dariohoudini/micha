@@ -76,6 +76,13 @@ class QueryAuditMiddleware:
         with connection.execute_wrapper(_on_query_executed):
             response = self.get_response(request)
 
+        # Expose per-request count for downstream middleware (query budget).
+        # Set on the request so subsequent middleware in the chain can read it.
+        try:
+            request._db_queries = state['count']
+        except Exception:
+            pass
+
         _local.state = None
 
         # Telemetry counter (best-effort)

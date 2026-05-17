@@ -123,6 +123,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'middleware.logging_middleware.RequestIDMiddleware',
     'apps.telemetry.middleware.MetricsMiddleware',
+    # QueryBudgetMiddleware OUTSIDE QueryAuditMiddleware so its response-
+    # phase code runs AFTER query_audit sets request._db_queries.
+    'middleware.query_budget.QueryBudgetMiddleware',
     'apps.telemetry.query_audit.QueryAuditMiddleware',
     'middleware.security_hardening.SecurityHardeningMiddleware',
     'middleware.security_hardening.FileUploadSecurityMiddleware',

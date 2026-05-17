@@ -107,7 +107,27 @@ class SecurityHardeningMiddleware:
         response['X-Frame-Options'] = 'DENY'
         response['X-XSS-Protection'] = '1; mode=block'
         response['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+        response['Permissions-Policy'] = (
+            'geolocation=(), camera=(), microphone=(), '
+            'payment=(self), interest-cohort=()'
+        )
+        # Cross-origin isolation — protects against Spectre-class attacks
+        # and prevents other origins from embedding our API responses as
+        # resources without our consent.
+        response.setdefault('Cross-Origin-Opener-Policy', 'same-origin')
+        response.setdefault('Cross-Origin-Resource-Policy', 'same-site')
+
+        # Content-Security-Policy — only set on API responses (HTML pages
+        # have their own CSP tuned per asset host). For JSON endpoints a
+        # strict default-src 'none' prevents any surprise rendering if a
+        # response is ever misinterpreted as HTML by an old client.
+        ctype = response.get('Content-Type', '')
+        if 'application/json' in ctype or request.path.startswith('/api/'):
+            response.setdefault(
+                'Content-Security-Policy',
+                "default-src 'none'; frame-ancestors 'none'; "
+                "base-uri 'none'; form-action 'none'"
+            )
 
         # Remove server info headers
         if 'Server' in response:

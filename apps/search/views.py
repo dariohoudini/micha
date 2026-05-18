@@ -90,26 +90,48 @@ class SearchView(APIView):
             "brand": request.query_params.get("brand"),
         }
 
-        import hashlib; cache_key = "search:" + hashlib.sha256(f"{query}{sorted(filters.items())}".encode()).hexdigest()
-        cached = cache.get(cache_key)
-        if cached:
-            return Response(cached)
+        import hashlib
+        from apps.core.cache_kit import cached_call
 
-        qs = search_products(query, filters)
-        paginator = StandardPagination()
-        page = paginator.paginate_queryset(qs, request)
-        data = SlimProductSerializer(page, many=True, context={"request": request}).data
+        cache_key = "search:" + hashlib.sha256(
+            f"{query}{sorted(filters.items())}{request.query_params.get('page','1')}"
+            .encode()
+        ).hexdigest()
 
+        # Always write the search-history side effect — that's not cached.
         if query and request.user.is_authenticated:
             try:
                 from apps.search.models import SearchHistory
-                SearchHistory.objects.get_or_create(user=request.user, query=query.lower()[:100])
+                SearchHistory.objects.get_or_create(
+                    user=request.user, query=query.lower()[:100],
+                )
             except Exception:
                 pass
 
-        result = paginator.get_paginated_response(data).data
-        if query:
-            cache.set(cache_key, result, timeout=300)
+        def _compute():
+            qs = search_products(query, filters)
+            paginator = StandardPagination()
+            page = paginator.paginate_queryset(qs, request)
+            data = SlimProductSerializer(
+                page, many=True, context={"request": request}
+            ).data
+            return paginator.get_paginated_response(data).data
+
+        if not query:
+            # Empty-query browse — don't cache (varies too much by filters
+            # and personalization down the road).
+            return Response(_compute())
+
+        # Stampede protection — a viral search ("iPhone 16" right after
+        # launch) hammers this endpoint. Single-flight ensures only ONE
+        # DB hit per cache-miss window. SWR keeps latency low past TTL.
+        # negative_ttl=30 absorbs "no results" hammering on misspellings.
+        result = cached_call(
+            cache_key, _compute,
+            ttl=300, swr_ttl=300,
+            negative_ttl=30,
+            lock_ttl=15,  # search query can be slow on large catalogs
+        )
         return Response(result)
 
 
@@ -118,18 +140,26 @@ class SearchSuggestionsView(APIView):
 
     def get(self, request):
         # FIX: Length limit on autocomplete too
+        from apps.core.cache_kit import cached_call
+        from apps.products.models import Product
+
         q = request.query_params.get("q", "").strip()[:50]
         if len(q) < 2:
             return Response({"suggestions": []})
-        cache_key = f"suggestions:{q}"
-        cached = cache.get(cache_key)
-        if cached:
-            return Response({"suggestions": cached})
-        from apps.products.models import Product
-        titles = list(Product.objects.filter(
-            title__icontains=q, is_active=True
-        ).values_list("title", flat=True).distinct()[:8])
-        cache.set(cache_key, titles, timeout=300)
+
+        def _suggestions():
+            return list(Product.objects.filter(
+                title__icontains=q, is_active=True,
+            ).values_list("title", flat=True).distinct()[:8])
+
+        # Autocomplete fires on every keystroke from every concurrent
+        # user — extreme stampede surface. Single-flight + short
+        # negative TTL absorbs typo-cascades.
+        titles = cached_call(
+            f"suggestions:{q}", _suggestions,
+            ttl=300, swr_ttl=300,
+            negative_ttl=30,
+        )
         return Response({"suggestions": titles})
 
 
@@ -137,18 +167,29 @@ class TrendingView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        cached = cache.get("trending_searches")
-        if cached:
-            return Response({"trending": cached})
-        try:
-            from apps.search.models import SearchHistory
-            from django.db.models import Count
-            trending = list(SearchHistory.objects.values("query").annotate(
-                count=Count("id")
-            ).order_by("-count").values_list("query", flat=True)[:10])
-        except Exception:
-            trending = []
-        cache.set("trending_searches", trending, timeout=3600)
+        from apps.core.cache_kit import cached_call
+
+        def _trending():
+            try:
+                from apps.search.models import SearchHistory
+                from django.db.models import Count
+                return list(
+                    SearchHistory.objects.values("query")
+                    .annotate(count=Count("id"))
+                    .order_by("-count")
+                    .values_list("query", flat=True)[:10]
+                )
+            except Exception:
+                return []
+
+        # Homepage feature — hot read. 1-hour TTL with SWR keeps the
+        # carousel snappy even as the underlying SearchHistory table
+        # grows. Single-flight collapses the homepage-spike stampede.
+        trending = cached_call(
+            "trending_searches", _trending,
+            ttl=3600, swr_ttl=3600,
+            lock_ttl=15,
+        )
         return Response({"trending": trending})
 
 

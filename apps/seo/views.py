@@ -81,24 +81,22 @@ def robots_txt(request):
     return HttpResponse('\n'.join(lines), content_type='text/plain')
 
 
-def sitemap_xml(request):
-    cached = cache.get('sitemap_xml')
-    if cached:
-        return HttpResponse(cached, content_type='application/xml')
-
+def _build_sitemap_xml():
+    """The expensive part of sitemap_xml — registered with cache_kit
+    so async refresh can rebuild it out-of-band without blocking a
+    user request."""
     from django.conf import settings
     from apps.products.models import Product
     from apps.stores.models import Store
 
     base = getattr(settings, 'FRONTEND_URL', 'https://micha.app')
     urls = [
-        f'<url><loc>{base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>'
+        f'<url><loc>{base}/</loc><changefreq>daily</changefreq>'
+        f'<priority>1.0</priority></url>'
     ]
-
     products = Product.objects.filter(
-        is_active=True, is_archived=False
+        is_active=True, is_archived=False,
     ).only('slug', 'updated_at').order_by('-updated_at')[:5000]
-
     for p in products:
         urls.append(
             f'<url>'
@@ -108,7 +106,6 @@ def sitemap_xml(request):
             f'<priority>0.8</priority>'
             f'</url>'
         )
-
     stores = Store.objects.filter(is_active=True).only('id', 'updated_at')[:1000]
     for s in stores:
         urls.append(
@@ -118,71 +115,100 @@ def sitemap_xml(request):
             f'<priority>0.6</priority>'
             f'</url>'
         )
-
-    xml = (
+    return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         + '\n'.join(urls)
         + '\n</urlset>'
     )
-    cache.set('sitemap_xml', xml, timeout=86400)
+
+
+def sitemap_xml(request):
+    """Crawler endpoint. Expensive build (up to 6000 rows aggregated),
+    24h cache. When the cache expires, EVERY crawler that polls in
+    the window stampedes the DB simultaneously — Google + Bing alone
+    hit this dozens of times per minute. Single-flight + SWR ensures
+    one rebuild per cycle even under crawler swarms.
+    """
+    from apps.core.cache_kit import cached_call
+    xml = cached_call(
+        'sitemap_xml', _build_sitemap_xml,
+        ttl=86400, swr_ttl=3600,
+        lock_ttl=60,  # full sitemap build can take ~30s on large catalogs
+        waiter_max_retries=240,  # 240 × 50ms = 12s wait — sitemap builds slow
+    )
     return HttpResponse(xml, content_type='application/xml')
 
 
 class ProductSchemaView(APIView):
+    """JSON-LD endpoint for product detail pages — Google parses this
+    for rich snippets. Hit on every product page view, including by
+    crawlers. Viral product → thousands of concurrent requests for
+    the same key. Single-flight is essential."""
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, product_id):
-        cache_key = f'schema:product:{product_id}'
-        cached = cache.get(cache_key)
-        if cached:
-            return Response(cached)
+        from apps.core.cache_kit import cached_call, build_key
 
-        from apps.products.models import Product
-        from django.conf import settings
-        from django.shortcuts import get_object_or_404
-
-        product = get_object_or_404(
-            Product.objects.select_related('store', 'category').prefetch_related('images'),
-            pk=product_id, is_active=True
+        # Tag-versioned key — bumping the 'product:<id>' tag (which
+        # Product.save() already does) invalidates this entry too.
+        cache_key = build_key(
+            'schema:product', [f'product:{product_id}'], product_id,
         )
-        base = getattr(settings, 'FRONTEND_URL', 'https://micha.app')
 
-        schema = {
-            '@context': 'https://schema.org/',
-            '@type': 'Product',
-            'name': product.title,
-            'description': (product.description or '')[:500],
-            'sku': product.sku or str(product.id),
-            'brand': {'@type': 'Brand', 'name': product.brand or product.store.name},
-            'offers': {
-                '@type': 'Offer',
-                'url': f'{base}/products/{product.slug}/',
-                'priceCurrency': 'AOA',
-                'price': str(product.price),
-                'availability': (
-                    'https://schema.org/InStock'
-                    if product.quantity > 0
-                    else 'https://schema.org/OutOfStock'
-                ),
-                'itemCondition': (
-                    'https://schema.org/NewCondition'
-                    if product.condition == 'new'
-                    else 'https://schema.org/UsedCondition'
-                ),
-                'seller': {'@type': 'Organization', 'name': product.store.name},
-            },
-        }
+        def _build_schema():
+            from apps.products.models import Product
+            from django.conf import settings
+            from django.shortcuts import get_object_or_404
 
-        images = product.images.all()
-        if images:
-            schema['image'] = [
-                request.build_absolute_uri(img.image.url)
-                for img in images[:5] if img.image
-            ]
+            product = get_object_or_404(
+                Product.objects.select_related('store', 'category')
+                .prefetch_related('images'),
+                pk=product_id, is_active=True,
+            )
+            base = getattr(settings, 'FRONTEND_URL', 'https://micha.app')
+            schema = {
+                '@context': 'https://schema.org/',
+                '@type': 'Product',
+                'name': product.title,
+                'description': (product.description or '')[:500],
+                'sku': product.sku or str(product.id),
+                'brand': {'@type': 'Brand',
+                          'name': product.brand or product.store.name},
+                'offers': {
+                    '@type': 'Offer',
+                    'url': f'{base}/products/{product.slug}/',
+                    'priceCurrency': 'AOA',
+                    'price': str(product.price),
+                    'availability': (
+                        'https://schema.org/InStock'
+                        if product.quantity > 0
+                        else 'https://schema.org/OutOfStock'
+                    ),
+                    'itemCondition': (
+                        'https://schema.org/NewCondition'
+                        if product.condition == 'new'
+                        else 'https://schema.org/UsedCondition'
+                    ),
+                    'seller': {'@type': 'Organization',
+                               'name': product.store.name},
+                },
+            }
+            images = list(product.images.all())
+            if images:
+                schema['image'] = [
+                    request.build_absolute_uri(img.image.url)
+                    for img in images[:5] if img.image
+                ]
+            if product.category:
+                schema['category'] = product.category.name
+            return schema
 
-        if product.category:
-            schema['category'] = product.category.name
-
-        cache.set(cache_key, schema, timeout=3600)
+        schema = cached_call(
+            cache_key, _build_schema,
+            ttl=3600, swr_ttl=1800,
+            # 404 on this product is fine to cache briefly — don't
+            # let a 404-storm reach the DB.
+            negative_ttl=60,
+        )
         return Response(schema)

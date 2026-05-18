@@ -62,23 +62,35 @@ class HomepageFeedView(APIView):
         now = timezone.now()
         sections = []
 
-        # Flash sales — cached 5 min
-        flash_cache_key = 'homepage:flash_sales'
-        flash_data = cache.get(flash_cache_key)
-        if flash_data is None:
+        # Flash sales — homepage's hottest cache key. EVERY anonymous
+        # visit hits it; Black Friday will stampede when it expires.
+        # Single-flight + SWR ensures one DB hit per cycle even under
+        # ten-thousand-rps homepage load.
+        from apps.core.cache_kit import cached_call
+
+        def _build_flash_data():
             try:
                 from apps.promotions.models import FlashSale
                 flash_qs = FlashSale.objects.filter(
-                    is_active=True, start_time__lte=now, end_time__gte=now
+                    is_active=True, start_time__lte=now, end_time__gte=now,
                 ).select_related('product')[:8]
-                if flash_qs.exists():
-                    flash_data = {
-                        'end_time': flash_qs.first().end_time.isoformat(),
-                        'product_ids': [f.product_id for f in flash_qs],
-                    }
-                    cache.set(flash_cache_key, flash_data, timeout=300)
+                if not flash_qs.exists():
+                    return None
+                return {
+                    'end_time': flash_qs.first().end_time.isoformat(),
+                    'product_ids': [f.product_id for f in flash_qs],
+                }
             except Exception:
-                flash_data = None
+                return None
+
+        flash_data = cached_call(
+            'homepage:flash_sales', _build_flash_data,
+            ttl=300, swr_ttl=300,
+            # No active flash sales is the common case during quiet
+            # hours — short negative cache so we don't query 10k/s
+            # during the lull either.
+            negative_ttl=30,
+        )
 
         if flash_data:
             products = Product.objects.filter(

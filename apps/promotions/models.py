@@ -97,3 +97,53 @@ class FlashSale(models.Model):
 
     def __str__(self):
         return f"Flash sale: {self.product.title} — {self.sale_price}"
+
+
+class CouponRedemptionStatus(models.TextChoices):
+    APPLIED = 'applied', 'Applied'
+    RELEASED = 'released', 'Released'
+
+
+class CouponRedemption(models.Model):
+    """Per-redemption audit ledger.
+
+    Sum of APPLIED redemptions for a coupon must equal Coupon.used_count.
+    Idempotent per (coupon, order_id): the unique constraint guarantees
+    that a retried checkout for the same order produces ONE redemption
+    row, not two.
+    """
+    coupon = models.ForeignKey(
+        Coupon, on_delete=models.CASCADE, related_name='redemptions',
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='coupon_redemptions',
+    )
+    # Stored as CharField, not FK, so an order in another schema /
+    # microservice can be referenced without a hard FK dependency.
+    order_id = models.CharField(max_length=80)
+    applied_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal_at_apply = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+    )
+    status = models.CharField(
+        max_length=12, choices=CouponRedemptionStatus.choices,
+        default=CouponRedemptionStatus.APPLIED,
+    )
+    applied_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    note = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['coupon', 'order_id'],
+                name='uniq_coupon_redemption_per_order',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'coupon']),
+            models.Index(fields=['status', 'applied_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.coupon.code} → order {self.order_id} ({self.status})'

@@ -452,6 +452,13 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'low'},
     },
 
+    # ── Promotions / Coupons ──────────────────────────────────
+    'coupons-cleanup-expired': {
+        'task': 'promotions.coupons_cleanup_expired',
+        'schedule': 86400,  # daily — soft-deactivate past-window coupons
+        'options': {'queue': 'low'},
+    },
+
     # ── Affiliates ────────────────────────────────────────────
     'affiliates-confirm-pending': {
         'task': 'affiliates.confirm_pending',

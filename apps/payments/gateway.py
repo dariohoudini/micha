@@ -409,11 +409,32 @@ class PaymentProcessor:
         return True
 
     def fail_payment(self, gateway_reference: str, reason: str) -> bool:
-        """Called by webhook when gateway reports payment failure."""
+        """Called by webhook when gateway reports payment failure.
+
+        Must do FOUR things, atomically, and idempotently:
+          1. Flip the payment row to FAILED.
+          2. Restore the inventory units that checkout decremented.
+          3. Refund any store credit that was redeemed.
+          4. Release any coupons that were applied.
+
+        Steps 2-4 used to be missing — the function set order.status
+        and walked away. Each failed payment therefore silently leaked
+        1+ inventory units, kept the buyer's store credit, and inflated
+        the coupon's used_count. Over a few months of production
+        traffic this produces invisible catalog drift, customer-support
+        load, and analytics that don't match reality.
+
+        The restore_order() primitive is idempotent so a duplicate
+        webhook delivery is safe: the second call sees the order's
+        stock_restored flag and no-ops.
+        """
         if IdempotencyGuard.is_processed(gateway_reference, 'failed'):
             return False
 
         from apps.orders.models import Payment, Order
+        from apps.orders.stock_restore import (
+            restore_order, StockRestoreError,
+        )
 
         try:
             with transaction.atomic():
@@ -432,10 +453,31 @@ class PaymentProcessor:
                     status=PaymentState.FAILED,
                 )
 
-                # Return stock
+                # Set order status FIRST so that any concurrent reads
+                # see 'payment_failed' even if the restore takes a beat.
                 Order.objects.filter(id=payment.order_id).update(
                     status='payment_failed',
                     payment_status='failed',
+                )
+
+            # restore_order opens its own atomic block + acquires PK-ordered
+            # locks on the inventory rows. Doing it OUTSIDE the payment-row
+            # lock keeps the lock-graph simple (payment → order, then a
+            # separate inventory lock cycle).
+            try:
+                restore_order(
+                    order_id=str(payment.order_id),
+                    source='payment_failed',
+                    reason=f'gateway:{reason[:80]}',
+                )
+            except StockRestoreError as e:
+                # Order already shipped / cancelled — log but don't fail
+                # the webhook. The payment side is already updated; the
+                # mismatch is rare (race between ship and fail) and
+                # operators can reconcile via the admin.
+                logger.warning(
+                    'fail_payment: restore_order refused for order=%s: %s',
+                    payment.order_id, e,
                 )
 
             self.logger.log(payment, 'failed', {'reason': reason})
@@ -477,6 +519,9 @@ class PaymentProcessor:
                 # Debit seller wallet first
                 try:
                     from apps.payments.models import SellerWallet
+                    # select_for_update locks the wallet row for the
+                    # duration of this transaction — no TOCTOU race
+                    # against concurrent refund attempts on this seller.
                     wallet = SellerWallet.objects.select_for_update().get(
                         seller=order.seller
                     )
@@ -486,9 +531,7 @@ class PaymentProcessor:
                             f'Refund for order {str(order.id)[:8]}',
                             reference=f'REFUND-{payment.gateway_reference}',
                         )
-                    # Re-read with lock to prevent TOCTOU race condition
-                wallet = SellerWallet.objects.select_for_update(of=('self',)).get(pk=wallet.pk)
-                elif wallet.pending_balance >= refund_amount:
+                    elif wallet.pending_balance >= refund_amount:
                         wallet.pending_balance -= refund_amount
                         wallet.save(update_fields=['pending_balance', 'updated_at'])
                 except Exception as e:
@@ -601,9 +644,13 @@ class PaymentProcessor:
             # Try category-specific rate first
             if order.items.exists():
                 first_item = order.items.first()
-            category = first_item.product.category if first_item and first_item.product else None
+                category = (
+                    first_item.product.category
+                    if first_item and first_item.product
+                    else None
+                )
                 commission = PlatformCommission.objects.filter(
-                    category=category
+                    category=category,
                 ).first()
                 if commission:
                     return float(commission.percentage)

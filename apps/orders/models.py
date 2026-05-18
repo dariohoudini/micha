@@ -116,6 +116,13 @@ class Order(models.Model):
     fraud_score = models.IntegerField(default=0, help_text='0-100 fraud risk score from FraudEngine')
     fraud_action = models.CharField(max_length=20, default='allow', help_text='allow/flag/hold/block')
 
+    # Stock-restore guard — idempotency anchor for apps.orders.stock_restore.
+    # Set True the first time the order is unwound (payment failure,
+    # abandoned-checkout reap, manual cancel). Subsequent calls no-op.
+    stock_restored = models.BooleanField(default=False, db_index=True)
+    stock_restored_at = models.DateTimeField(null=True, blank=True)
+    stock_restored_source = models.CharField(max_length=32, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [

@@ -220,15 +220,36 @@ class CancelOrderView(APIView):
 
     @idempotent(required=True)
     def post(self, request, pk):
+        from apps.orders.stock_restore import (
+            restore_order, StockRestoreError,
+        )
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ("pending", "confirmed"):
-            return Response({'error': 'cannot_cancel', "detail": f"Cannot cancel a {order.status} order."}, status=400)
+            return Response(
+                {'error': 'cannot_cancel',
+                 "detail": f"Cannot cancel a {order.status} order."},
+                status=400,
+            )
+        # All restock + store-credit + coupon-release logic lives in
+        # restore_order so cancel, payment-fail, and the abandoned-checkout
+        # saga behave IDENTICALLY. Previously this view's inline restock
+        # only handled products (not variants), didn't refund store credit,
+        # and didn't release coupons.
+        try:
+            restore_order(
+                order_id=str(order.pk), source='manual_cancel',
+                reason=f'buyer:{request.user.id}',
+            )
+        except StockRestoreError as e:
+            return Response(
+                {'error': 'cannot_cancel', 'detail': str(e)},
+                status=400,
+            )
         with transaction.atomic():
-            order.update_status("cancelled", changed_by=request.user, note="Cancelled by buyer")
-            for item in order.items.all():
-                from django.db.models import F
-                item.product.quantity = F("quantity") + item.quantity
-                item.product.save(update_fields=["quantity"])
+            order.update_status(
+                "cancelled", changed_by=request.user,
+                note="Cancelled by buyer",
+            )
         return Response({"detail": "Order cancelled."})
 
 

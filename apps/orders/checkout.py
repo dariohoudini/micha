@@ -139,27 +139,100 @@ class CheckoutService:
             )
             orders.append(order)
 
-        # 7. Deduct stock atomically (with row locks)
+        # 7. Deduct stock atomically — DEADLOCK-FREE.
+        #
+        # Two production issues this section addresses:
+        #
+        # (a) Lock ordering. Without sorted locking, two concurrent
+        #     checkouts of overlapping carts can acquire the same set
+        #     of product rows in DIFFERENT orders, producing a
+        #     deadlock cycle. Postgres auto-detects + aborts one of
+        #     them, but customers see 500s during high-traffic events.
+        #
+        #     Fix: sort product PKs and variant PKs ascending, then
+        #     acquire all locks in that order. Concurrent checkouts
+        #     queue up rather than deadlock.
+        #
+        # (b) Per-row lock round-trips. The old code did N separate
+        #     SELECT FOR UPDATE queries — one per item. A 10-item
+        #     cart was 10 sequential DB round-trips. The batched
+        #     pk__in form takes ONE round-trip and the database
+        #     locks rows in index order.
         from apps.inventory.models import ProductVariantCombo
+        from apps.telemetry.metrics import checkout_stock_contention
+
+        # Collect PKs we need to lock, sorted for deterministic order.
+        items_by_combo_pk = {}
+        items_by_product_pk = {}
         for item in validated_items:
             if item.variant_combo_id:
-                combo = ProductVariantCombo.objects.select_for_update(of=("self",)).get(pk=item.variant_combo_id)
-                if combo.quantity < item.quantity:
-                    raise CheckoutError(
-                        f"Stock changed for '{item.product.title}' ({combo.label}). Please refresh your cart."
-                    )
-                combo.quantity -= item.quantity
-                if combo.quantity == 0:
-                    combo.is_active = False
-                combo.save(update_fields=['quantity', 'is_active'])
+                items_by_combo_pk.setdefault(item.variant_combo_id, 0)
+                items_by_combo_pk[item.variant_combo_id] += item.quantity
             else:
-                product = Product.objects.select_for_update(of=("self",)).get(pk=item.product.pk)
-                if product.quantity < item.quantity:
-                    raise CheckoutError(f"Stock changed for '{product.title}'. Please refresh your cart.")
-                product.quantity -= item.quantity
-                if product.quantity == 0:
-                    product.is_active = False
-                product.save(update_fields=['quantity', 'is_active'])
+                items_by_product_pk.setdefault(item.product.pk, 0)
+                items_by_product_pk[item.product.pk] += item.quantity
+
+        # Lock products first (PK-sorted), then variants (PK-sorted).
+        # Locking products before variants is part of the global lock
+        # order: any other code path touching both must lock in this
+        # order too (see apps/orders/stock_restore for the matching
+        # implementation).
+        if items_by_product_pk:
+            locked_products = {
+                p.pk: p for p in
+                Product.objects.select_for_update(of=("self",))
+                .filter(pk__in=sorted(items_by_product_pk.keys()))
+                .order_by('pk')
+            }
+        else:
+            locked_products = {}
+
+        if items_by_combo_pk:
+            locked_combos = {
+                c.pk: c for c in
+                ProductVariantCombo.objects.select_for_update(of=("self",))
+                .filter(pk__in=sorted(items_by_combo_pk.keys()))
+                .order_by('pk')
+            }
+        else:
+            locked_combos = {}
+
+        # Apply decrements with re-validation under lock.
+        for combo_pk, total_qty in items_by_combo_pk.items():
+            combo = locked_combos.get(combo_pk)
+            if combo is None:
+                checkout_stock_contention.labels(reason='product_vanished').inc()
+                raise CheckoutError(
+                    'Stock changed since you opened your cart. Please refresh.'
+                )
+            if combo.quantity < total_qty:
+                checkout_stock_contention.labels(reason='variant_oversold').inc()
+                raise CheckoutError(
+                    f"'{combo.product.title}' ({combo.label}) stock changed. "
+                    f"Please refresh your cart."
+                )
+            combo.quantity -= total_qty
+            if combo.quantity == 0:
+                combo.is_active = False
+            combo.save(update_fields=['quantity', 'is_active'])
+
+        for product_pk, total_qty in items_by_product_pk.items():
+            product = locked_products.get(product_pk)
+            if product is None:
+                checkout_stock_contention.labels(reason='product_vanished').inc()
+                raise CheckoutError(
+                    'Stock changed since you opened your cart. Please refresh.'
+                )
+            if product.quantity < total_qty:
+                checkout_stock_contention.labels(reason='product_oversold').inc()
+                raise CheckoutError(
+                    f"'{product.title}' stock changed. "
+                    f"Please refresh your cart."
+                )
+            product.quantity -= total_qty
+            if product.quantity == 0:
+                product.is_active = False
+            product.save(update_fields=['quantity', 'is_active'])
 
         # 8. Clear cart
         cart_items.delete()
@@ -424,10 +497,16 @@ class CheckoutService:
         )
         order.save(update_fields=['protection_state', 'protection_deadline_at'])
 
-        # Create order items with price + variant snapshot
+        # Create order items with price + variant snapshot.
+        # IMPORTANT: bulk_create bypasses Model.save(), and OrderItem.save()
+        # is where total_price = unit_price * quantity is computed. Without
+        # this manual compute, the bulk_create would crash on the NOT NULL
+        # constraint against orders_orderitem.total_price.
         order_items = []
         for item in items:
             combo = item.variant_combo
+            unit_price = combo.price if combo else item.product.price
+            quantity = item.quantity
             order_items.append(OrderItem(
                 order=order,
                 product=item.product,
@@ -435,8 +514,9 @@ class CheckoutService:
                 variant_options=(combo.options if combo else {}),
                 product_title=item.product.title,
                 product_sku=(combo.sku if combo and combo.sku else item.product.sku or ''),
-                unit_price=(combo.price if combo else item.product.price),
-                quantity=item.quantity,
+                unit_price=unit_price,
+                quantity=quantity,
+                total_price=Decimal(unit_price) * quantity,
             ))
         OrderItem.objects.bulk_create(order_items)
 

@@ -28,6 +28,19 @@ checkout_blocked_by_risk = Counter(
     'micha_checkout_blocked_by_risk_total',
     'Checkouts blocked by the fraud engine.',
 )
+checkout_stock_contention = Counter(
+    'micha_checkout_stock_contention_total',
+    'Checkouts that failed because stock changed between cart-view and '
+    'the locked decrement. High counts = flash-sale traffic; sudden '
+    'spikes = a popular product just hit zero.',
+    ['reason'],   # 'product_oversold' | 'variant_oversold' | 'product_vanished'
+)
+stock_restored_total = Counter(
+    'micha_stock_restored_total',
+    'Inventory units put back via the restore-stock primitive '
+    '(payment_failed, abandoned_checkout, manual_cancel).',
+    ['source'],   # 'payment_failed' | 'abandoned_checkout' | 'manual_cancel'
+)
 
 # ── Payments ────────────────────────────────────────────────────────
 payments_confirmed = Counter(

@@ -135,6 +135,12 @@ MIDDLEWARE = [
     'middleware.sanitise.SanitiseInputMiddleware',
     'apps.verification_gate.middleware.SellerVerificationMiddleware',
     'apps.dev_keys.middleware.APIKeyUsageMiddleware',
+    # Egress normalizer for the canonical error envelope. Positioned LAST
+    # in the chain so its response phase runs FIRST — the DRF Response is
+    # still un-rendered at this point, so mutating .data takes effect.
+    # Moving it earlier means downstream middlewares (telemetry, etc.)
+    # trigger .render() and lock the body before normalization runs.
+    'middleware.error_envelope.ErrorEnvelopeMiddleware',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False

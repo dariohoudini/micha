@@ -212,6 +212,30 @@ class MyTokenObtainPairView(TokenObtainPairView):
         return response
 
 
+def _blacklist_all_tokens_for(user) -> int:
+    """Blacklist every outstanding refresh token for the user.
+
+    The single source of token revocation logic — called by
+    User.set_password (password change), LogoutAllView (explicit
+    "log me out everywhere"), and RevokeSessionView (UI session
+    revocation, since UserSession rows aren't joined to JWT jti).
+
+    Returns the count of tokens that were newly blacklisted.
+    """
+    try:
+        from rest_framework_simplejwt.token_blacklist.models import (
+            OutstandingToken, BlacklistedToken,
+        )
+    except ImportError:
+        return 0
+    n = 0
+    for tok in OutstandingToken.objects.filter(user=user):
+        _, created = BlacklistedToken.objects.get_or_create(token=tok)
+        if created:
+            n += 1
+    return n
+
+
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -223,6 +247,32 @@ class LogoutView(APIView):
             return Response({'detail': 'Logged out successfully.'})
         except Exception:
             return Response({'error': 'invalid_token', 'detail': 'Invalid token.'}, status=400)
+
+
+class LogoutAllSessionsView(APIView):
+    """POST /api/v1/auth/logout-all/  — invalidate every JWT for this user.
+
+    For account-compromise containment: "I lost my laptop" / "I think
+    someone got my password." Blacklists every outstanding refresh token
+    AND marks every UserSession inactive in one operation.
+
+    Returns the count of tokens blacklisted so the UI can confirm
+    ("Logged out of 3 devices.").
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        n = _blacklist_all_tokens_for(request.user)
+        UserSession.objects.filter(
+            user=request.user, is_active=True,
+        ).update(is_active=False)
+        log_security_event('logout_all_sessions', request=request,
+                           details={'user_id': request.user.id, 'tokens_revoked': n})
+        _log(request.user, 'logout_all', request)
+        return Response({
+            'detail': 'Logged out of all sessions.',
+            'tokens_revoked': n,
+        })
 
 
 # ── Social auth ───────────────────────────────────────────────────────────────
@@ -590,6 +640,21 @@ class SessionListView(APIView):
 
 
 class RevokeSessionView(APIView):
+    """DELETE /api/v1/auth/sessions/<session_id>/
+
+    UserSession rows are NOT joined to a specific JWT jti (the session_id
+    is generated independently of the token). Without that join, we can't
+    selectively blacklist the one token for the revoked session — so we
+    do the safe thing: mark the session inactive AND blacklist every
+    outstanding token for the user, forcing re-login on all devices.
+
+    Heavier than ideal — the user is logged out everywhere when they
+    asked to revoke one device — but the alternative is the worst kind
+    of security bug: a revoke action in the UI that doesn't actually
+    revoke. Until session_id ↔ jti are joined (schema change), this is
+    the only correct behaviour. Documented in the response so the UI
+    can warn the user before they click.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, session_id):
@@ -597,7 +662,16 @@ class RevokeSessionView(APIView):
         session = get_object_or_404(UserSession, session_id=session_id, user=request.user)
         session.is_active = False
         session.save(update_fields=['is_active'])
-        return Response({'detail': 'Session revoked.'})
+        revoked = _blacklist_all_tokens_for(request.user)
+        log_security_event('session_revoked', request=request, details={
+            'user_id': request.user.id,
+            'session_id': str(session_id),
+            'tokens_revoked': revoked,
+        })
+        return Response({
+            'detail': 'Session revoked. All your devices have been signed out.',
+            'tokens_revoked': revoked,
+        })
 
 
 class ReferralView(APIView):

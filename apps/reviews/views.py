@@ -43,13 +43,24 @@ class ReviewSerializer(serializers.ModelSerializer):
             return ''
 
     def validate(self, attrs):
-        if self.context['request'].user == attrs.get('seller'):
+        # Self-review check only applies when seller is being set (create).
+        # On update, attrs['seller'] is absent because we strip it below.
+        seller = attrs.get('seller')
+        if seller is not None and self.context['request'].user == seller:
             raise serializers.ValidationError("You cannot review yourself.")
         return attrs
 
     def create(self, validated_data):
         validated_data['reviewer'] = self.context['request'].user
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # ``seller`` is write-once. A reviewer who left a 1-star for seller A
+        # must not be able to PATCH the same review to point at seller B,
+        # which would silently drag down B's rating without B ever
+        # interacting with this reviewer. Strip seller from update payloads.
+        validated_data.pop('seller', None)
+        return super().update(instance, validated_data)
 
 
 class ProductReviewSerializer(serializers.ModelSerializer):

@@ -310,9 +310,17 @@ class UpdateOrderStatusView(APIView):
 
 
 class RequestRefundView(APIView):
+    """POST /api/v1/orders/<pk>/refund/  — buyer requests a refund.
+
+    Idempotency-Key REQUIRED. A retried refund request from a flaky network
+    must not create two Refund rows for the same order — the duplicate-
+    refund check below catches the obvious case, but a concurrent retry
+    inside the same millisecond can slip past it. The idempotency layer
+    is the belt-and-braces guard.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
-    @idempotent(required=False)
+    @idempotent(required=True)
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ("delivered", "completed"):

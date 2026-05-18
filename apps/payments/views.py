@@ -42,6 +42,12 @@ class BankAccountSerializer(serializers.ModelSerializer):
         model = SellerBankAccount
         fields = ["id", "bank_name", "account_name", "account_number", "account_number_display",
                   "iban", "is_default", "is_verified", "created_at"]
+        # ``is_verified`` MUST be read-only on the serializer — otherwise a
+        # seller POSTing {is_verified: true, ...} self-verifies their bank
+        # account, bypassing whatever manual verification the platform
+        # requires before paying real money to that IBAN.
+        # ``created_at`` is also read-only (timestamp managed by DB).
+        read_only_fields = ["id", "is_verified", "created_at"]
         extra_kwargs = {
             "account_number": {"write_only": True},
             "iban": {"write_only": True},

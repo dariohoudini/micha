@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     'apps.affiliates',
     'apps.gift_cards',
     'apps.imagery',
+    'apps.waitlist',
     'apps.telemetry',
     'apps.users',
     'apps.verification',
@@ -436,6 +437,18 @@ CELERY_BEAT_SCHEDULE = {
     'gift-cards-expire-overdue': {
         'task': 'gift_cards.expire_overdue',
         'schedule': 86400,  # daily — sweeps expired cards with positive balance
+        'options': {'queue': 'low'},
+    },
+
+    # ── Waitlist ──────────────────────────────────────────────
+    'waitlist-drain-pending': {
+        'task': 'waitlist.drain_pending',
+        'schedule': 60,  # every minute — catches signal-bypass restocks
+        'options': {'queue': 'default'},
+    },
+    'waitlist-cleanup-stale': {
+        'task': 'waitlist.cleanup_stale',
+        'schedule': 86400,
         'options': {'queue': 'low'},
     },
 

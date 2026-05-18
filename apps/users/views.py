@@ -193,23 +193,211 @@ class ResendEmailOTPView(APIView):
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 class MyTokenObtainPairView(TokenObtainPairView):
+    """POST /api/v1/auth/login/  body: {email, password, totp_code?}
+
+    Orchestrates production-grade brute-force defense. See
+    apps/security/lockout for the underlying service.
+
+    Anti-enumeration policy
+    ─────────────────────────
+    Every failure path returns the SAME generic body with the SAME
+    timing characteristics:
+      • bad password
+      • unknown email
+      • locked account (per-email)
+      • locked IP (credential stuffing)
+      • suspended / banned account
+
+    All return 400 ``invalid_credentials``. The user discovers lockout
+    state via the email notification AND the password-reset path,
+    NOT via the login API response.
+
+    Two exceptions where we DO leak signal, by design:
+      • ``email_not_verified`` — the user is stuck and needs to know
+        to resend the verification email. The attacker, by this point,
+        has already proven password possession, so the enumeration
+        battle around credential-equivalent info is moot.
+      • ``2fa_required`` — the client needs to prompt for a code.
+        Same justification.
+    """
     serializer_class = MyTokenObtainPairSerializer
     throttle_classes = [LoginThrottle]
 
+    # Single canonical generic-failure response. Built here as a class
+    # constant so every failure site returns byte-identical bytes.
+    _GENERIC_FAILURE_BODY = {
+        'error': 'invalid_credentials',
+        'detail': 'Email or password is incorrect.',
+    }
+
+    def _generic_fail(self):
+        return Response(self._GENERIC_FAILURE_BODY, status=400)
+
     def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        if response.status_code == 200:
-            email = request.data.get('email', '').lower()
+        from apps.security import lockout
+        from apps.security.notifications import send_account_locked_email
+        from apps.security.login_attempt_models import (
+            LoginAttempt, LoginAttemptFailureReason,
+        )
+        from django.contrib.auth import authenticate
+
+        email = (request.data.get('email') or '').lower().strip()
+        password = request.data.get('password') or ''
+        ip = _get_ip(request)
+        ua = _get_ua(request)
+
+        # ── Pre-auth gates ────────────────────────────────────────────────
+        # Check BEFORE password lookup so locked attackers don't even
+        # cost us the bcrypt CPU — and so the per-IP gate short-circuits
+        # stuffing scans efficiently.
+
+        ip_lock = lockout.check_ip_lockout(ip)
+        if ip_lock.locked:
             try:
-                user = User.objects.get(email=email)
-                user.last_login_ip = _get_ip(request)
-                user.last_login_device = _get_ua(request)
-                user.save(update_fields=['last_login_ip', 'last_login_device'])
-                UserSession.create_session(user, device=_get_ua(request), ip_address=_get_ip(request))
-                log_security_event('login_success', request=request, details={'user_id': user.id})
-                _log(user, 'login', request)
-            except User.DoesNotExist:
+                LoginAttempt.objects.create(
+                    email=email[:255], ip=ip or None, user_agent=ua,
+                    succeeded=False,
+                    failure_reason=LoginAttemptFailureReason.IP_LOCKED,
+                )
+            except Exception:
                 pass
+            return self._generic_fail()
+
+        account_lock = (lockout.check_account_lockout(email)
+                        if email else None)
+        if account_lock and account_lock.locked:
+            # Continued probes against a locked account still increment
+            # the counter — sustained pressure should escalate to the
+            # next tier (5→10→20 → 15min/1h/24h).
+            lockout.record_failed_login(
+                email=email, ip=ip, user_agent=ua,
+                reason=LoginAttemptFailureReason.ACCOUNT_LOCKED,
+            )
+            return self._generic_fail()
+
+        # ── User lookup with timing equalisation ──────────────────────────
+        user = User.objects.filter(email=email).first() if email else None
+
+        if user is None:
+            # Burn the same CPU as a real bcrypt check so unknown
+            # emails don't time-leak.
+            lockout.equalize_timing(password)
+            lockout.record_failed_login(
+                email=email, ip=ip, user_agent=ua,
+                reason=LoginAttemptFailureReason.BAD_CREDENTIALS,
+            )
+            return self._generic_fail()
+
+        # ── Real auth ─────────────────────────────────────────────────────
+        authenticated = authenticate(
+            request=request, username=email, password=password,
+        )
+
+        if not authenticated:
+            info = lockout.record_failed_login(
+                email=email, ip=ip, user_agent=ua,
+                reason=LoginAttemptFailureReason.BAD_CREDENTIALS,
+            )
+            # If THIS failure triggered the lockout, email the owner.
+            # Dedupe limits to one notification per hour even under burst.
+            if info.get('triggered_account_lockout'):
+                if lockout.should_send_lockout_notification(email):
+                    try:
+                        send_account_locked_email(
+                            user=user, ip=ip,
+                            attempt_count=info['new_email_count'],
+                            lockout_duration_s=info['lockout_duration_s'],
+                        )
+                    except Exception:
+                        logger.exception('lockout notification dispatch failed')
+            return self._generic_fail()
+
+        # ── Post-auth gates ───────────────────────────────────────────────
+        # Suspended/banned: 400-generic to prevent enumeration of
+        # account status by attackers who happen to have a real password.
+
+        if authenticated.status in ('suspended', 'banned'):
+            lockout.record_failed_login(
+                email=email, ip=ip, user_agent=ua,
+                reason=LoginAttemptFailureReason.ACCOUNT_SUSPENDED,
+            )
+            return self._generic_fail()
+
+        if (not authenticated.is_email_verified
+                and not authenticated.is_phone_verified):
+            try:
+                LoginAttempt.objects.create(
+                    email=email[:255], ip=ip or None, user_agent=ua,
+                    succeeded=False,
+                    failure_reason=LoginAttemptFailureReason.EMAIL_NOT_VERIFIED,
+                )
+            except Exception:
+                pass
+            return Response({
+                'error': 'email_not_verified',
+                'detail': 'Please verify your email before logging in.',
+            }, status=400)
+
+        # ── 2FA ───────────────────────────────────────────────────────────
+        if authenticated.two_fa_enabled:
+            totp_code = (request.data.get('totp_code') or '').strip()
+            if not totp_code:
+                try:
+                    LoginAttempt.objects.create(
+                        email=email[:255], ip=ip or None, user_agent=ua,
+                        succeeded=False,
+                        failure_reason=LoginAttemptFailureReason.MISSING_2FA,
+                    )
+                except Exception:
+                    pass
+                return Response({
+                    'error': '2fa_required',
+                    'detail': '2FA code required.',
+                    'requires_2fa': True,
+                }, status=400)
+            try:
+                import pyotp
+                totp = pyotp.TOTP(authenticated.two_fa_secret)
+                if not totp.verify(totp_code, valid_window=1):
+                    # Password + bad 2FA is a strong attack signal —
+                    # COUNT it against the lockout threshold.
+                    lockout.record_failed_login(
+                        email=email, ip=ip, user_agent=ua,
+                        reason=LoginAttemptFailureReason.BAD_2FA,
+                    )
+                    return Response({
+                        'error': 'invalid_2fa',
+                        'detail': 'Invalid 2FA code.',
+                    }, status=400)
+            except ImportError:
+                pass
+
+        # ── Success ───────────────────────────────────────────────────────
+        # Issue the token via the parent class (which calls the serializer
+        # to mint refresh + access). Sanitize the data we feed to it so
+        # totp_code etc. don't pollute the serializer.
+        request._lockout_authenticated_user = authenticated
+        response = super().post(request, *args, **kwargs)
+
+        if response.status_code == 200:
+            lockout.record_successful_login(
+                email=email, ip=ip, user_agent=ua,
+                user_id=authenticated.pk,
+            )
+            User.objects.filter(pk=authenticated.pk).update(
+                failed_login_attempts=0, locked_until=None,
+                last_login_ip=ip, last_login_device=ua,
+            )
+            try:
+                UserSession.create_session(
+                    authenticated, device=ua, ip_address=ip,
+                )
+            except Exception:
+                pass
+            log_security_event('login_success', request=request,
+                               details={'user_id': authenticated.id})
+            _log(authenticated, 'login', request)
+
         return response
 
 
@@ -412,7 +600,19 @@ class ResetPasswordView(APIView):
 
         user.set_password(new_password)  # also blacklists all JWT tokens
         user.clear_password_reset()
+        # Also clear the legacy DB-side counters
+        user.failed_login_attempts = 0
+        user.locked_until = None
         user.save()
+        # AUTO-UNLOCK: a successful password reset proves email ownership,
+        # which is stronger than a successful login. Clear the lockout
+        # cache so the legitimate user isn't stranded waiting for the
+        # TTL to expire after they've already proven they own the email.
+        try:
+            from apps.security.lockout import clear_lockout
+            clear_lockout(email, reason='password_reset')
+        except Exception:
+            logger.exception('lockout clear-on-reset failed')
         log_security_event('password_reset_success', request=request, details={'user_id': user.id})
         _log(user, 'password_reset', request)
         return Response({'detail': 'Password reset successfully. You can now log in.'})

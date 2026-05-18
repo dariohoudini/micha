@@ -4,6 +4,11 @@ from django.utils import timezone
 
 User = settings.AUTH_USER_MODEL
 
+# Re-export LoginAttempt so Django's app registry picks it up.
+# The class lives in its own file because it has different lifecycle /
+# retention concerns than the rest of this module.
+from .login_attempt_models import LoginAttempt, LoginAttemptFailureReason  # noqa: F401,E402
+
 
 class FraudAlert(models.Model):
     """Flag suspicious orders or user behaviour automatically."""

@@ -104,6 +104,81 @@ class ResolveContentFlagView(APIView):
         return Response({"detail": "Flag resolved."})
 
 
+class AdminUnlockAccountView(APIView):
+    """POST /api/security/unlock-account/  body: {email}
+
+    Support tool. Clears the cache-side lockout AND the legacy DB-side
+    counter for a single user. Audited via AdminActionLog so we know
+    which admin unlocked whom.
+
+    Use when:
+      • A legitimate user calls support after being locked out and
+        can't wait for the TTL.
+      • A pen-test or bulk import triggered a false-positive lockout.
+    """
+    permission_classes = [IsAdminOrSuperuser]
+
+    def post(self, request):
+        from apps.security.lockout import clear_lockout
+        from django.contrib.auth import get_user_model
+        email = (request.data.get('email') or '').strip().lower()
+        if not email:
+            return Response(
+                {'error': 'validation_error', 'detail': 'email required.'},
+                status=400,
+            )
+        was_locked = clear_lockout(email, reason=f'admin:{request.user.id}')
+        UserModel = get_user_model()
+        user = UserModel.objects.filter(email=email).first()
+        if user is not None:
+            UserModel.objects.filter(pk=user.pk).update(
+                failed_login_attempts=0, locked_until=None,
+            )
+        try:
+            from apps.admin_actions.models import AdminActionLog
+            AdminActionLog.log(
+                request, 'admin_unlock_account', user,
+                metadata={'email': email, 'was_locked': was_locked},
+            )
+        except Exception:
+            pass
+        return Response({
+            'detail': 'Account unlocked.' if was_locked
+                      else 'Account was not locked; counter cleared.',
+            'was_locked': was_locked,
+        })
+
+
+class LoginAttemptHistoryView(APIView):
+    """GET /api/security/login-attempts/?email=<email>&limit=50
+
+    Admin forensic view: walks the LoginAttempt audit table for one
+    email. Use during incident response to see the actual hit pattern
+    (IPs, timing, UAs) — not just the lockout state.
+    """
+    permission_classes = [IsAdminOrSuperuser]
+
+    def get(self, request):
+        from apps.security.login_attempt_models import LoginAttempt
+        email = (request.query_params.get('email') or '').strip().lower()
+        try:
+            limit = min(int(request.query_params.get('limit', 50)), 500)
+        except (TypeError, ValueError):
+            limit = 50
+        if not email:
+            return Response(
+                {'error': 'validation_error', 'detail': 'email required.'},
+                status=400,
+            )
+        rows = (
+            LoginAttempt.objects.filter(email=email)
+            .order_by('-created_at')[:limit]
+            .values('ip', 'user_agent', 'succeeded', 'failure_reason',
+                    'triggered_lockout', 'created_at')
+        )
+        return Response({'results': list(rows)})
+
+
 # URLs
 from django.urls import path
 
@@ -115,4 +190,6 @@ urlpatterns = [
     path('banned-keywords/', BannedKeywordListCreateView.as_view(), name='banned-keywords'),
     path('content-flags/', ContentFlagListView.as_view(), name='content-flags'),
     path('content-flags/<int:pk>/resolve/', ResolveContentFlagView.as_view(), name='resolve-flag'),
+    path('unlock-account/', AdminUnlockAccountView.as_view(), name='admin-unlock-account'),
+    path('login-attempts/', LoginAttemptHistoryView.as_view(), name='login-attempts'),
 ]

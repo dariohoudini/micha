@@ -180,7 +180,19 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Login with brute-force lockout, 2FA, and security event logging."""
+    """Thin JWT issuer.
+
+    All the brute-force defense, 2FA gating, and audit-logging logic
+    lives in ``MyTokenObtainPairView.post`` so the view can return
+    Response objects with our canonical envelope shape. Doing those
+    gates inside ``validate()`` doesn't work because DRF's
+    ``Serializer.run_validation`` wraps any raised ``ValidationError``
+    via ``as_serializer_error()``, which list-wraps every dict value
+    and breaks the wire shape.
+
+    This serializer's only job: validate credentials (via the parent
+    class) and decorate the token claims for downstream services.
+    """
     username_field = 'email'
 
     @classmethod
@@ -192,65 +204,6 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['is_staff'] = user.is_staff
         token['status'] = user.status
         return token
-
-    def validate(self, attrs):
-        from django.db.models import F
-        email = attrs.get('email', '').lower().strip()
-        password = attrs.get('password', '')
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            raise serializers.ValidationError({'detail': 'Invalid credentials.', 'error': 'invalid_credentials'})
-
-        if user.is_locked_out():
-            raise serializers.ValidationError({'detail': 'Account locked for 30 minutes.', 'error': 'account_locked'})
-
-        if user.status in ('suspended', 'banned'):
-            raise serializers.ValidationError({'detail': f'Account {user.status}.', 'error': 'account_suspended'})
-
-        authenticated = authenticate(
-            request=self.context.get('request'),
-            username=email, password=password,
-        )
-
-        if not authenticated:
-            User.objects.filter(pk=user.pk).update(failed_login_attempts=F('failed_login_attempts') + 1)
-            user.refresh_from_db(fields=['failed_login_attempts'])
-            if user.failed_login_attempts >= 5:
-                User.objects.filter(pk=user.pk).update(
-                    locked_until=timezone.now() + timedelta(minutes=30)
-                )
-            remaining = max(0, 5 - user.failed_login_attempts)
-            raise serializers.ValidationError({
-                'detail': f'Invalid credentials. {remaining} attempt(s) remaining.',
-                'error': 'invalid_credentials',
-            })
-
-        if not authenticated.is_email_verified and not authenticated.is_phone_verified:
-            raise serializers.ValidationError({'detail': 'Verify your email before logging in.', 'error': 'email_not_verified'})
-
-        if authenticated.two_fa_enabled:
-            totp_code = attrs.get('totp_code', '').strip()
-            if not totp_code:
-                raise serializers.ValidationError({'detail': '2FA code required.', 'error': '2fa_required', 'requires_2fa': True})
-            try:
-                import pyotp
-                totp = pyotp.TOTP(authenticated.two_fa_secret)
-                if not totp.verify(totp_code, valid_window=1):
-                    raise serializers.ValidationError({'detail': 'Invalid 2FA code.', 'error': 'invalid_2fa'})
-            except ImportError:
-                pass
-
-        User.objects.filter(pk=authenticated.pk).update(failed_login_attempts=0, locked_until=None)
-        data = super().validate({'email': email, 'password': password})
-        data.update({
-            'user_id': authenticated.id,
-            'email': authenticated.email,
-            'is_seller': authenticated.is_seller,
-            'is_staff': authenticated.is_staff,
-        })
-        return data
 
 
 class SocialAuthSerializer(serializers.Serializer):

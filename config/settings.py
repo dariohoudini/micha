@@ -465,6 +465,13 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'low'},
     },
 
+    # ── Security ──────────────────────────────────────────────
+    'security-purge-old-login-attempts': {
+        'task': 'security.purge_old_login_attempts',
+        'schedule': 86400,  # daily — purge LoginAttempt past retention window
+        'options': {'queue': 'low'},
+    },
+
     # ── Affiliates ────────────────────────────────────────────
     'affiliates-confirm-pending': {
         'task': 'affiliates.confirm_pending',

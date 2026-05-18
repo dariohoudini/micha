@@ -15,6 +15,7 @@ from rest_framework.throttling import UserRateThrottle
 from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser
 from middleware.security import log_security_event
 from apps.inbound_webhooks.decorators import verified_webhook
+from apps.idempotency.decorators import idempotent
 from .models import SellerWallet, WalletTransaction, SellerBankAccount, PayoutRequest
 
 
@@ -146,11 +147,15 @@ class BankAccountDetailView(APIView):
 class RequestPayoutView(APIView):
     """
     POST /api/payments/payout/request/
-    FIX: Requires 2FA when enabled
+    FIX: Requires 2FA when enabled.
+    Idempotency-Key header is REQUIRED — payouts are real money out of
+    the platform; a duplicate request from a flaky network must NEVER
+    issue two payouts.
     """
     throttle_classes = [PaymentThrottle]
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request):
         # FIX: Payout requires 2FA
         if request.user.two_fa_enabled:

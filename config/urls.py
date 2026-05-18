@@ -3,11 +3,16 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from apps.seo.views import HealthCheckView, robots_txt, sitemap_xml
+from apps.monitoring.health import healthz, readyz
 
 ADMIN_URL = getattr(settings, "ADMIN_URL", "admin/")
 
 urlpatterns = [
     path(ADMIN_URL, admin.site.urls),
+    # Split liveness vs readiness — see apps/monitoring/health.py.
+    # /health/ kept as legacy alias for existing callers.
+    path("healthz", healthz, name="healthz"),
+    path("readyz", readyz, name="readyz"),
     path("health/", HealthCheckView.as_view(), name="health"),
     path("metrics", include("apps.telemetry.urls")),
     path("robots.txt", robots_txt, name="robots-txt"),

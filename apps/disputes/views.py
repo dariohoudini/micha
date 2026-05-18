@@ -55,9 +55,21 @@ class DisputeMessageView(APIView):
         return Response(MsgSerializer(msg).data, status=201)
 
 class MyDisputesView(generics.ListAPIView):
+    """List disputes where the caller is EITHER party.
+
+    The buyer-only filter shipped originally meant sellers had no way to
+    enumerate disputes opened against them — they had to know dispute
+    IDs out-of-band, which made the seller dashboard impossible to
+    build. Include both sides; the detail view already participant-
+    checks, so widening the list view does not weaken authorization.
+    """
     serializer_class = DisputeSerializer
     permission_classes = [permissions.IsAuthenticated]
-    def get_queryset(self): return Dispute.objects.filter(buyer=self.request.user)
+    def get_queryset(self):
+        from django.db.models import Q
+        return Dispute.objects.filter(
+            Q(buyer=self.request.user) | Q(seller=self.request.user)
+        )
 
 class AdminDisputeListView(generics.ListAPIView):
     serializer_class = DisputeSerializer

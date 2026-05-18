@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
+from apps.idempotency.decorators import idempotent
 from .models import GiftCard, GiftCardTransaction
 from . import service
 
@@ -41,9 +42,16 @@ def _serialize_card(c, *, include_balance: bool = True) -> dict:
 class IssueCardView(APIView):
     """POST /gift-cards/issue/  body: {amount, currency?, expires_in_days?}
     Returns the plaintext code ONCE. Admin-only for now; later wired into
-    a paid-checkout flow."""
+    a paid-checkout flow.
+
+    Idempotency-Key REQUIRED: issuing a card mints real value. A retry
+    that re-mints would return TWO plaintext codes for one operator
+    intent — both bound to the same audit context — which is unforgivable
+    in a value-issuance flow.
+    """
     permission_classes = [permissions.IsAdminUser]
 
+    @idempotent(required=True)
     def post(self, request):
         try:
             amount = Decimal(str(request.data.get('amount')))
@@ -82,9 +90,16 @@ class IssueCardView(APIView):
 
 
 class ClaimCardView(APIView):
-    """POST /gift-cards/claim/  body: {code}"""
+    """POST /gift-cards/claim/  body: {code}
+
+    Idempotency-Key optional — claim() is already idempotent at the
+    service layer (re-claiming your own card is a no-op), but accepting
+    the header lets clients dedupe at the HTTP layer too without paying
+    the round trip.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
+    @idempotent()
     def post(self, request):
         code = (request.data.get('code') or '').strip()
         if not code:

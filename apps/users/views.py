@@ -25,6 +25,7 @@ from .serializers import (
     ChangePasswordSerializer, MyTokenObtainPairSerializer, SocialAuthSerializer,
 )
 from .permissions import IsNotSuspended
+from apps.idempotency.decorators import idempotent
 from middleware.security import log_security_event, require_recent_auth
 
 User = get_user_model()
@@ -700,8 +701,16 @@ class LoyaltyView(APIView):
 
 
 class RedeemPointsView(APIView):
+    """POST /api/v1/auth/loyalty/redeem/  body: {points}
+
+    Idempotency REQUIRED. A retry under network flakiness would consume
+    the user's points TWICE — the in-memory balance check passes both
+    times because the request is in flight when the second arrives, then
+    both atomic decrements succeed. This is a classic double-spend.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request):
         points = int(request.data.get('points', 0))
         if points <= 0:

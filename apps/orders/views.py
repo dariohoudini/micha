@@ -209,8 +209,16 @@ class OrderDetailView(generics.RetrieveAPIView):
 
 
 class CancelOrderView(APIView):
+    """POST /api/v1/orders/<pk>/cancel/
+
+    Idempotency REQUIRED. A duplicate cancel inside the same retry window
+    would re-enter the atomic block, re-credit stock with F-expressions,
+    and double-restock inventory — visible-to-buyers stock count would
+    silently double for every product in the order.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ("pending", "confirmed"):
@@ -225,8 +233,18 @@ class CancelOrderView(APIView):
 
 
 class ConfirmDeliveryView(APIView):
+    """POST /api/v1/orders/<pk>/confirm-delivery/
+
+    Idempotency REQUIRED. Each call mints cashback points via
+    ledger.transfer AND releases seller escrow via the outbox. The
+    ledger transfer has its own journal_key dedupe, but the
+    user.add_loyalty_points() cached counter call does NOT — a retry
+    would double-credit the cached counter while the source-of-truth
+    ledger correctly dedupes, leaving the two views inconsistent.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status != "shipped":
@@ -282,9 +300,17 @@ class SellerOrderListView(generics.ListAPIView):
 
 
 class UpdateOrderStatusView(APIView):
+    """PATCH /api/v1/orders/<pk>/status/
+
+    Idempotency REQUIRED. Each accepted transition publishes outbox
+    events (e.g. order.shipped → notification + carrier webhooks).
+    A duplicate retry would fire those events twice, sending the
+    buyer two "your order has shipped" emails.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
     VALID_TRANSITIONS = {"confirmed": ["processing"], "processing": ["shipped"], "shipped": ["delivered"]}
 
+    @idempotent(required=True)
     def patch(self, request, pk):
         order = get_object_or_404(Order, pk=pk, seller=request.user)
         new_status = request.data.get("status")
@@ -455,8 +481,10 @@ class ReturnRequestCreateView(APIView):
             'updated_at': ret.updated_at,
         }
 
-    @idempotent(required=False)
+    @idempotent(required=True)
     def post(self, request, pk):
+        # Idempotency REQUIRED. The unique-row check below catches the
+        # already-submitted case but a concurrent retry can slip past it.
         order = get_object_or_404(Order, pk=pk, buyer=request.user)
         if order.status not in ('delivered', 'completed'):
             return Response({'error': 'invalid_status', 'detail': 'Só pode pedir devolução de pedidos entregues.'}, status=400)
@@ -621,9 +649,16 @@ class SellerReturnActionView(APIView):
     All transitions go through return_service so the state machine is enforced,
     audit events are recorded, and the completion saga fires (refund + restock
     in one atomic-with-compensation unit).
+
+    Idempotency REQUIRED. ``complete`` fires a saga that performs refund +
+    restock. State-machine guards inside return_service would refuse a
+    second ``complete`` (already-completed → TransitionError), but a
+    concurrent retry inside the same lock window can both pass the guard
+    and both attempt the saga.
     """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsSellerOrSuperuser]
 
+    @idempotent(required=True)
     def patch(self, request, pk):
         from apps.orders.return_models import ReturnRequest
         from apps.orders import return_service
@@ -658,9 +693,14 @@ class SellerReturnActionView(APIView):
 
 
 class BuyerReturnActionView(APIView):
-    """PATCH /api/v1/orders/returns/<id>/buyer-action/  — buyer withdraws or escalates."""
+    """PATCH /api/v1/orders/returns/<id>/buyer-action/  — buyer withdraws or escalates.
+
+    Idempotency REQUIRED. Escalation creates a Case row and notifies
+    ops; duplicate retry = duplicate Case row + duplicate ops ping.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
+    @idempotent(required=True)
     def patch(self, request, pk):
         from apps.orders.return_models import ReturnRequest
         from apps.orders import return_service

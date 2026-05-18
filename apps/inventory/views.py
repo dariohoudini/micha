@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404
 
 from .models import ProductVariant, StockReservation, LowStockAlert
 from apps.users.permissions import IsSellerOrSuperuser, IsNotSuspended
+from apps.idempotency.decorators import idempotent
 
 
 class VariantSerializer(serializers.ModelSerializer):
@@ -34,8 +35,16 @@ class VariantDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class StockReservationView(APIView):
+    """POST /api/v1/inventory/reserve/
+
+    Idempotency REQUIRED. StockReservation.reserve(product, user, qty)
+    creates a new reservation each call — a retry would tie up 2N units
+    of inventory and starve other buyers. The header binds repeated
+    calls to one reservation.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request):
         from apps.products.models import Product
         product_id = request.data.get("product_id")

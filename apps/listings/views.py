@@ -5,6 +5,7 @@ from django.db.models import Q
 from .models import Listing
 from .serializers import ListingSerializer
 from apps.users.permissions import IsNotSuspended
+from apps.idempotency.decorators import idempotent
 
 
 class ListingListView(generics.ListAPIView):
@@ -49,9 +50,17 @@ class ListingDetailView(generics.RetrieveAPIView):
 
 
 class ListingCreateView(generics.CreateAPIView):
-    """POST /api/listings/create/ — Create a new listing."""
+    """POST /api/listings/create/ — Create a new listing.
+
+    Idempotency REQUIRED. Same rationale as ProductCreateView:
+    no natural dedupe, retries silently duplicate listings.
+    """
     serializer_class = ListingSerializer
     permission_classes = [IsAuthenticated, IsNotSuspended]
+
+    @idempotent(required=True)
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
 
 class MyListingsView(generics.ListAPIView):

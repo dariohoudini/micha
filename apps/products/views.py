@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 
 from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser
+from apps.idempotency.decorators import idempotent
 from .models import Product, Category, ProductImage, ProductQA
 from .serializers import (
     ProductListSerializer, ProductDetailSerializer, ProductWriteSerializer,
@@ -338,8 +339,20 @@ def _save_variant_combos(product, combos_payload):
 
 
 class ProductCreateView(generics.CreateAPIView):
+    """POST /api/v1/products/
+
+    Idempotency REQUIRED. A retried create would produce TWO listings
+    of the same product — there's no natural dedupe (titles aren't
+    unique, slugs are uniqued per save() but with a "-N" suffix so a
+    retry simply lands as "iPhone-2"). The idempotency layer is the
+    only defence.
+    """
     serializer_class = ProductWriteSerializer
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
+
+    @idempotent(required=True)
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         from apps.stores.models import Store
@@ -372,10 +385,17 @@ class ProductImageUploadView(APIView):
     """
     POST /api/products/<id>/images/
     FIX: Image resizing wired to upload — creates thumbnail/medium/large variants
+
+    Idempotency optional. Image uploads can be expensive (resize +
+    perceptual hash + storage write). A retry without dedupe wastes
+    bandwidth and disk; with a header, the cached response is replayed.
+    Not required because multipart bodies aren't trivially hashable —
+    forcing the header would break existing clients.
     """
     parser_classes = [MultiPartParser]
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 
+    @idempotent()
     def post(self, request, pk):
         product = get_object_or_404(Product, pk=pk, store__owner=request.user)
         image_file = request.FILES.get("image")
@@ -430,10 +450,15 @@ class BulkProductCreateView(APIView):
     """
     POST /api/products/bulk/
     Body: { products: [...] } — array of up to 100 products
-    FIX: Sellers can import multiple products in one request
+
+    Idempotency REQUIRED. A retried bulk import would mint 100 duplicate
+    products in a second call. Per-row de-dup would be expensive and
+    title-based dedupe is incorrect (same title is a legitimate refresh).
+    The idempotency layer is the only honest answer.
     """
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request):
         from apps.stores.models import Store
         store = get_object_or_404(Store, owner=request.user)
@@ -515,8 +540,15 @@ class ProductQAAnswerView(APIView):
 
 
 class ProductDuplicateView(APIView):
+    """POST /api/v1/products/<pk>/duplicate/
+
+    Idempotency REQUIRED. The whole purpose of this endpoint is to clone
+    a product — a retry without dedupe produces N copies for N retries.
+    No natural unique constraint to fall back on.
+    """
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 
+    @idempotent(required=True)
     def post(self, request, pk):
         product = get_object_or_404(Product, pk=pk, store__owner=request.user)
         product.pk = None

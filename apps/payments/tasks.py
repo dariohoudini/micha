@@ -50,7 +50,7 @@ def auto_payout_sellers():
         return f"Error: {e}"
 
 
-@app.task(bind=True, max_retries=3, default_retry_delay=300)
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def retry_failed_payment(self, payment_id: str):
     """
     Retry a failed payment after 5 minutes.
@@ -85,7 +85,7 @@ def retry_failed_payment(self, payment_id: str):
         raise self.retry(exc=exc)
 
 
-@app.task
+@shared_task
 def run_payment_reconciliation():
     """
     Daily reconciliation — check all pending payments against gateway.

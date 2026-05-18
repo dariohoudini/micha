@@ -175,21 +175,19 @@ class StoreDetailView(APIView):
         except Store.DoesNotExist:
             return Response({'error': 'Loja não encontrada.'}, status=404)
 
-        updatable = [
+        # Allowlist — only permit safe store-profile fields. Internal
+        # / privilege fields (owner, is_verified_seller, commission_rate,
+        # etc.) MUST NOT be settable via this endpoint regardless of
+        # what the client posts. This is the only authoritative list.
+        ALLOWED_STORE_FIELDS = {
             'name', 'tagline', 'description', 'province', 'address',
             'phone', 'whatsapp', 'primary_category', 'primary_color',
-            'return_policy', 'shipping_policy',
-        ]
-        for field in updatable:
-            if field in request.data:
-                # Allowlist — only permit safe store fields, never internal/privilege fields
-            ALLOWED_STORE_FIELDS = {
-                'name', 'description', 'city', 'is_open',
-                'banner_image', 'return_policy', 'shipping_policy',
-            }
+            'return_policy', 'shipping_policy', 'city', 'is_open',
+        }
+        for field, value in request.data.items():
             if field not in ALLOWED_STORE_FIELDS:
                 continue
-            setattr(store, field, request.data.get(field, getattr(store, field, None)))
+            setattr(store, field, value)
 
         if 'logo' in request.FILES:
             store.logo = request.FILES['logo']

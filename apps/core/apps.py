@@ -12,3 +12,7 @@ class CoreConfig(AppConfig):
         # per-app and doesn't have the full plan — we need plan-level
         # visibility to refuse-or-allow as a single decision.
         from . import migration_hook  # noqa: F401
+        # Register the apps-module import sanity check. Surfaces in
+        # ``manage.py check`` and blocks runserver if any apps/ file
+        # has a syntax / import-time error.
+        from . import system_checks  # noqa: F401

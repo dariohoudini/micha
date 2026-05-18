@@ -38,15 +38,19 @@ def seller_engagement_nudge():
             store_name = ''
             try:
                 store_obj = seller.stores.first()
-        store_name = store_obj.name if store_obj else ''
-            except Exception:
-                logger.debug(f"Suppressed exception: {e}" if "as e" in line else "logger.debug('Suppressed exception')")
+                store_name = store_obj.name if store_obj else ''
+            except Exception as e:
+                logger.debug('Seller-nudge store lookup failed: %s', e)
 
             Notification.objects.create(
                 recipient=seller,
                 notification_type='seller_nudge',
                 title='Adiciona novos produtos à tua loja!',
-                message=f'{"A " + store_name if store_name else "A tua loja"} não tem novos produtos há mais de 7 dias. Compradores que vêem novidades frequentes compram mais.',
+                message=(
+                    f'{"A " + store_name if store_name else "A tua loja"} '
+                    f'não tem novos produtos há mais de 7 dias. Compradores '
+                    f'que vêem novidades frequentes compram mais.'
+                ),
             )
             nudged += 1
 

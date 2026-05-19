@@ -472,6 +472,16 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'low'},
     },
 
+    # ── Outbox DLQ health ─────────────────────────────────────
+    # Refresh the dead-count + stale-retry gauges every 5 min so
+    # Prometheus has a real signal to alert on. Without this, the
+    # gauges sit at their last-seen value forever.
+    'outbox-refresh-dlq-metrics': {
+        'task': 'outbox.refresh_dlq_metrics',
+        'schedule': 300,
+        'options': {'queue': 'low'},
+    },
+
     # ── Affiliates ────────────────────────────────────────────
     'affiliates-confirm-pending': {
         'task': 'affiliates.confirm_pending',

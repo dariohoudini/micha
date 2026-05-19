@@ -66,6 +66,7 @@ urlpatterns = [
     path("api/v1/security/",     include("apps.security.urls")),
     path("api/v1/monitoring/",   include("apps.monitoring.urls")),
     path("api/v1/admin-api/",    include("apps.admin_api.urls")),
+    path("api/v1/admin/outbox/", include("apps.outbox.urls")),
 
     # Legacy /api/ aliases — same includes, no duplicate namespace issue
     path("api/auth/",               include("apps.users.urls")),

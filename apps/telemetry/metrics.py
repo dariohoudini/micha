@@ -126,6 +126,17 @@ outbox_dispatch_latency = Histogram(
     'Time inside dispatch_one() — handler execution + DB write.',
     buckets=(0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30),
 )
+outbox_oldest_dead_age_seconds = Gauge(
+    'micha_outbox_oldest_dead_age_seconds',
+    'Age of the oldest DEAD event still sitting in the outbox table. '
+    'Alert if this exceeds ~24h — somebody is not watching the DLQ.',
+)
+outbox_stale_retrying = Gauge(
+    'micha_outbox_stale_retrying',
+    'Count of OutboxEvent in retrying state that have not progressed '
+    'in >24h. Indicates a handler stuck in a silent-failure loop or '
+    'a downstream that keeps hard-failing past max-backoff.',
+)
 
 # ── Search ──────────────────────────────────────────────────────────
 search_queries = Counter(

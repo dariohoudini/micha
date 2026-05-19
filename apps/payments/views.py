@@ -178,34 +178,53 @@ class RequestPayoutView(APIView):
             except Exception:
                 return Response({'error': '2fa_error', "detail": "2FA verification failed."}, status=403)
 
-        amount = request.data.get("amount")
+        from apps.core.money import to_decimal
+
+        raw_amount = request.data.get("amount")
         bank_id = request.data.get("bank_account_id")
 
-        if not amount or float(amount) <= 0:
-            return Response({'error': 'validation_error', "detail": "Invalid amount."}, status=400)
+        # Money MUST be Decimal end-to-end. The previous flow cast
+        # to float() three times — would crash production payouts on
+        # ``Decimal - float`` (TypeError) inside wallet.debit().
+        try:
+            amount = to_decimal(raw_amount)
+        except (ValueError, TypeError):
+            return Response({'error': 'validation_error',
+                             "detail": "Invalid amount."}, status=400)
+        if amount <= 0:
+            return Response({'error': 'validation_error',
+                             "detail": "Invalid amount."}, status=400)
 
         wallet, _ = SellerWallet.objects.get_or_create(seller=request.user)
         # Re-read with lock to prevent TOCTOU
         wallet = SellerWallet.objects.select_for_update(of=('self',)).get(pk=wallet.pk)
-        if wallet.balance < float(amount):
+        if wallet.balance < amount:
             return Response({'error': 'insufficient_funds',
                              "detail": f"Balance is {wallet.balance} AOA."}, status=400)
 
         try:
             bank = SellerBankAccount.objects.get(pk=bank_id, seller=request.user)
         except SellerBankAccount.DoesNotExist:
-            return Response({'error': 'not_found', "detail": "Bank account not found."}, status=404)
+            return Response({'error': 'not_found',
+                             "detail": "Bank account not found."}, status=404)
 
-        if PayoutRequest.objects.filter(seller=request.user, status__in=["pending", "processing"]).exists():
+        if PayoutRequest.objects.filter(seller=request.user,
+                                         status__in=["pending", "processing"]).exists():
             return Response({'error': 'conflict',
-                             "detail": "You already have a pending payout request."}, status=409)
+                             "detail": "You already have a pending payout request."},
+                            status=409)
 
         with transaction.atomic():
-            payout = PayoutRequest.objects.create(seller=request.user, bank_account=bank, amount=amount)
-            wallet.debit(float(amount), f"Payout request {payout.id}", reference=str(payout.id))
+            payout = PayoutRequest.objects.create(
+                seller=request.user, bank_account=bank, amount=amount,
+            )
+            wallet.debit(amount, f"Payout request {payout.id}",
+                         reference=str(payout.id))
             try:
                 from apps.ledger.service import record_payout_debit
-                record_payout_debit(seller=request.user, amount=amount, payout_id=payout.id)
+                record_payout_debit(
+                    seller=request.user, amount=amount, payout_id=payout.id,
+                )
             except Exception:
                 pass
 
@@ -235,7 +254,13 @@ class AdminPayoutActionView(APIView):
                 payout.processed_at = timezone.now()
             elif action == "rejected":
                 wallet, _ = SellerWallet.objects.get_or_create(seller=payout.seller)
-                wallet.credit(float(payout.amount), "Payout rejected — refunded", reference=str(payout.id))
+                # payout.amount is already Decimal — pass it through.
+                # The prior float() cast was a latent bug: Decimal +/- float
+                # raises TypeError inside wallet.credit().
+                wallet.credit(
+                    payout.amount, "Payout rejected — refunded",
+                    reference=str(payout.id),
+                )
                 try:
                     from apps.ledger.service import record_payout_reverse
                     record_payout_reverse(seller=payout.seller, amount=payout.amount, payout_id=payout.id)

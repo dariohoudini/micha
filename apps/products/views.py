@@ -290,10 +290,14 @@ def _save_price_tiers(product, tiers_payload):
         return
     product.price_tiers.all().delete()
     seen_quantities = set()
+    from apps.core.money import to_decimal
     for t in tiers_payload:
         try:
             min_q = int(t.get('min_quantity'))
-            unit_price = float(t.get('unit_price'))
+            # Money stays Decimal end-to-end. float() round-trip would
+            # introduce binary-floating-point drift on values like 99.99
+            # that the cart later snapshots as price_at_add.
+            unit_price = to_decimal(t.get('unit_price'))
         except (TypeError, ValueError):
             continue
         if min_q < 2 or min_q in seen_quantities or unit_price <= 0:
@@ -319,12 +323,14 @@ def _save_variant_combos(product, combos_payload):
         return
     # Wipe existing and recreate (simple, idempotent for MVP)
     product.variant_combos.all().delete()
+    from apps.core.money import to_decimal
     for c in combos_payload:
         opts = c.get('options') or {}
         if not isinstance(opts, dict) or not opts:
             continue
         try:
-            price = float(c.get('price'))
+            # Same Decimal-end-to-end reasoning as price tiers above.
+            price = to_decimal(c.get('price'))
             qty = int(c.get('quantity', 0))
         except (TypeError, ValueError):
             continue

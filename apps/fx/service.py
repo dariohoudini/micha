@@ -30,7 +30,7 @@ Fail-safety:
   Conversion logging never blocks the math (log failure logged at debug).
 """
 from __future__ import annotations
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_EVEN
 import logging
 
 from django.db import transaction
@@ -178,10 +178,18 @@ def convert(amount, *, from_currency: str, to_currency: str,
 
 
 def _quantize(amount: Decimal, places: int) -> Decimal:
+    """Banker's rounding (HALF_EVEN) is the accounting convention.
+
+    Was previously ROUND_HALF_UP, which systematically biased the
+    platform's favour over many conversions: every .x5 amount rounded
+    UP, adding fractions of a cent. Over a million conversions of
+    midpoint values, ROUND_HALF_UP collects ~0.005 × N extra; HALF_EVEN
+    averages to zero by alternating up/down.
+    """
     if places <= 0:
-        return amount.to_integral_value(rounding=ROUND_HALF_UP)
+        return amount.to_integral_value(rounding=ROUND_HALF_EVEN)
     q = Decimal(10) ** -places
-    return amount.quantize(q, rounding=ROUND_HALF_UP)
+    return amount.quantize(q, rounding=ROUND_HALF_EVEN)
 
 
 # ─── Rate updates ──────────────────────────────────────────────────────────

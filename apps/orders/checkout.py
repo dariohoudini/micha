@@ -45,9 +45,16 @@ class CheckoutService:
         if single and single not in codes:
             codes.append(single)
         self.coupon_codes = [str(c).strip().upper() for c in codes if str(c).strip()]
-        # Loyalty store credit redemption (whole-Kz amount)
+        # Loyalty store credit redemption (whole-Kz amount).
+        # Coerce via Decimal so a string like "100.50" doesn't go through
+        # float() and pick up binary-floating-point drift. The int()
+        # cast then truncates fractional Kz deliberately — store credit
+        # is redeemed in whole units.
         try:
-            self.use_store_credit = max(0, int(float(data.get('use_store_credit', 0))))
+            from apps.core.money import to_decimal
+            self.use_store_credit = max(
+                0, int(to_decimal(data.get('use_store_credit', 0))),
+            )
         except (TypeError, ValueError):
             self.use_store_credit = 0
         # Idempotency key — client generates once, retries use same key

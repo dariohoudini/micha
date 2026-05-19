@@ -145,6 +145,12 @@ MIDDLEWARE = [
     # Moving it earlier means downstream middlewares (telemetry, etc.)
     # trigger .render() and lock the body before normalization runs.
     'middleware.error_envelope.ErrorEnvelopeMiddleware',
+    # Auto-audit every successful mutating admin request. Manual
+    # AdminActionLog.log() / @audit_admin_action still work — they
+    # call mark_logged(request) to suppress this middleware for the
+    # request so we don't double-log. This middleware is the safety
+    # net for endpoints nobody remembered to instrument.
+    'apps.admin_actions.middleware.AdminActionAuditMiddleware',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False

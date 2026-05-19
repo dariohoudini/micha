@@ -53,15 +53,32 @@ class AdminActionLog(models.Model):
             xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
             ip = xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR', '')
             ua = request.META.get('HTTP_USER_AGENT', '')[:200]
-        target_repr = getattr(target, 'email', None) or getattr(target, 'title', None) or str(target)[:200]
-        return cls.objects.create(
+        if target is not None:
+            target_repr = (
+                getattr(target, 'email', None)
+                or getattr(target, 'title', None)
+                or str(target)[:200]
+            )
+            target_type = type(target).__name__.lower()
+            target_id = str(getattr(target, 'pk', ''))
+        else:
+            target_repr, target_type, target_id = '', 'request', ''
+        row = cls.objects.create(
             admin=request.user, action=action,
-            target_type=type(target).__name__.lower(),
-            target_id=str(getattr(target, 'pk', '')),
+            target_type=target_type, target_id=target_id,
             target_repr=target_repr, note=note,
             ip_address=ip or None, user_agent=ua,
             metadata=metadata or {},
         )
+        # Suppress the auto-audit middleware for this request — we've
+        # already written a richer (manually-targeted) row.
+        if request is not None:
+            try:
+                from .middleware import mark_logged
+                mark_logged(request)
+            except Exception:
+                pass
+        return row
 
     def __str__(self):
         return f"{self.admin.email} → {self.action} on {self.target_type}:{self.target_id}"

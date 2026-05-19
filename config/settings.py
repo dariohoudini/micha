@@ -482,6 +482,23 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'low'},
     },
 
+    # ── Ledger reconciliation ─────────────────────────────────
+    # Global invariant check: Σ debits == Σ credits. Cheap, runs every
+    # 5 min so any drift is alertable within a minute.
+    'ledger-check-invariants': {
+        'task': 'ledger.check_invariants',
+        'schedule': 300,
+        'options': {'queue': 'low'},
+    },
+    # Hourly cached-counter scan: User.store_credit, loyalty_points,
+    # SellerWallet.balance vs ledger truth. Surfaces drift to gauges +
+    # admin endpoint; does NOT auto-correct (operator decision).
+    'ledger-reconcile-cached': {
+        'task': 'ledger.reconcile_cached',
+        'schedule': 3600,
+        'options': {'queue': 'low'},
+    },
+
     # ── Affiliates ────────────────────────────────────────────
     'affiliates-confirm-pending': {
         'task': 'affiliates.confirm_pending',

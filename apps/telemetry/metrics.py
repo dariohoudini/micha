@@ -96,6 +96,23 @@ ledger_imbalance_cents = Gauge(
     'Σ credits − Σ debits per currency (must be 0; otherwise alert).',
     ['currency'],
 )
+ledger_unbalanced_journals = Gauge(
+    'micha_ledger_unbalanced_journals',
+    'Count of journals where Σ debits ≠ Σ credits. Should always be 0; '
+    'non-zero means a write path bypassed service.post().',
+)
+ledger_cached_counter_drift_count = Gauge(
+    'micha_ledger_cached_counter_drift_count',
+    'Count of users whose cached counters (store_credit, loyalty_points, '
+    'seller wallet) drift from the ledger truth. Run hourly by the '
+    'reconciliation beat task.',
+)
+ledger_cached_counter_drift_cents = Gauge(
+    'micha_ledger_cached_counter_drift_cents',
+    'Aggregate signed magnitude of cached-counter drift across all users. '
+    'Positive = cached values exceed ledger (user sees more than they own); '
+    'negative = ledger exceeds cached (user sees less than they own).',
+)
 
 # ── Outbox ──────────────────────────────────────────────────────────
 outbox_published = Counter(

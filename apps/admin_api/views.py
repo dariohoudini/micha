@@ -298,17 +298,32 @@ class AdminOrderDisputeView(APIView):
     def post(self, request, order_id):
         try:
             from apps.orders.models import Order
+            from apps.orders.state_machine import transition, InvalidTransition
             order = Order.objects.get(id=order_id)
             favour = request.data.get('favour')  # 'buyer' or 'seller'
 
             if favour == 'buyer':
-                order.status = 'cancelled'
+                target = 'cancelled'
             elif favour == 'seller':
-                order.status = 'delivered'
+                target = 'delivered'
             else:
-                return Response({'error': 'favour must be buyer or seller'}, status=400)
+                return Response({'error': 'favour must be buyer or seller'},
+                                status=400)
 
-            order.save()
+            # Admin dispute resolution can force any transition — but go
+            # through the state machine so the audit row + outbox event +
+            # protection state recalc fire consistently. admin_override
+            # records that policy was bypassed for forensics.
+            try:
+                order = transition(
+                    order, target,
+                    actor=request.user, source='admin:dispute_resolve',
+                    note=f'Dispute resolved in favour of {favour}',
+                    admin_override=True,
+                )
+            except InvalidTransition as e:
+                return Response({'error': 'invalid_transition',
+                                 'detail': str(e)}, status=400)
 
             # Record trust event for seller
             try:

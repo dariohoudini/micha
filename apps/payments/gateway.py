@@ -361,11 +361,24 @@ class PaymentProcessor:
                 paid_at=timezone.now(),
             )
 
-            # Update order
+            # Update order via the state machine so the transition is
+            # validated (pending → confirmed is the canonical move),
+            # audit-logged, outbox-published, and protection-state-recalced
+            # consistently with every other path.
             order = Order.objects.select_for_update().get(id=payment.order_id)
-            order.status = 'confirmed'
-            order.payment_status = 'paid'
-            order.save(update_fields=['status', 'payment_status', 'updated_at'])
+            from apps.orders.state_machine import transition, InvalidTransition
+            try:
+                order = transition(
+                    order, 'confirmed',
+                    source='gateway:payment_confirmed',
+                    note=f'Payment confirmed via {payment.method}',
+                )
+            except InvalidTransition:
+                # Already confirmed (idempotent retry) — proceed without raising
+                pass
+            # payment_status lives outside the state machine since it's
+            # a separate field with its own (smaller) state space.
+            Order.objects.filter(pk=order.pk).update(payment_status='paid')
 
             # Credit seller wallet (in escrow until delivery)
             self._credit_seller_escrow(order, payment)
@@ -453,10 +466,26 @@ class PaymentProcessor:
                     status=PaymentState.FAILED,
                 )
 
-                # Set order status FIRST so that any concurrent reads
-                # see 'payment_failed' even if the restore takes a beat.
+                # Set order status via the state machine so the
+                # transition is validated, audited, and outbox-published.
+                # admin_override because payment-fail can land while the
+                # order is in non-pending states (e.g. confirmed via a
+                # racing webhook arrived first, then the failure arrived).
+                from apps.orders.state_machine import (
+                    transition as _state_transition, InvalidTransition,
+                )
+                order = Order.objects.get(id=payment.order_id)
+                try:
+                    _state_transition(
+                        order, 'payment_failed',
+                        source=f'gateway:fail_payment',
+                        note=f'Gateway reported failure: {reason[:80]}',
+                        admin_override=True,
+                    )
+                except InvalidTransition:
+                    # Already in payment_failed / terminal — idempotent
+                    pass
                 Order.objects.filter(id=payment.order_id).update(
-                    status='payment_failed',
                     payment_status='failed',
                 )
 
@@ -540,8 +569,23 @@ class PaymentProcessor:
                 Payment.objects.filter(id=payment.id).update(
                     status=PaymentState.REFUNDED,
                 )
-                order.status = 'refunded'
-                order.save(update_fields=['status'])
+                # Route through the state machine so the refund transition
+                # gets audited + protection-state-recalced. admin_override
+                # because refunds may be initiated from terminal states
+                # (delivered, completed) which would otherwise be blocked.
+                from apps.orders.state_machine import (
+                    transition as _state_transition, InvalidTransition,
+                )
+                try:
+                    _state_transition(
+                        order, 'refunded',
+                        source='gateway:refund_payment',
+                        note=f'Refund {refund_amount} via {payment.method}',
+                        admin_override=True,
+                    )
+                except InvalidTransition:
+                    # Already refunded — idempotent
+                    pass
 
             # Send refund to gateway
             self.gateway.refund_payment(payment, refund_amount, reason)

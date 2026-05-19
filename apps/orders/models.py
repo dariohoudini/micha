@@ -25,6 +25,11 @@ class Order(models.Model):
         ("pending","Pending"),("confirmed","Confirmed"),("processing","Processing"),
         ("shipped","Shipped"),("delivered","Delivered"),("completed","Completed"),
         ("cancelled","Cancelled"),("refunded","Refunded"),
+        # ``payment_failed`` was already used in code (gateway.fail_payment)
+        # but missing from this tuple, so Django's choice validation never
+        # admitted it. Adding here so the state machine + admin display
+        # treat it as a proper status (matching apps.orders.state_machine).
+        ("payment_failed","Payment failed"),
     )
     PAYMENT_STATUS = (
         ("pending","Pending"),("paid","Paid"),("failed","Failed"),("refunded","Refunded"),
@@ -186,40 +191,44 @@ class Order(models.Model):
         deadline = timezone.now() + timedelta(days=days) if days else None
         return state, deadline
 
-    def update_status(self, new_status, changed_by=None, note=""):
-        with transaction.atomic():
-            old = self.status
-            self.status = new_status
+    def update_status(self, new_status, changed_by=None, note="",
+                      *, source="model:update_status", admin_override=False):
+        """Convenience wrapper around the state machine.
 
-            # Recompute protection state + deadline based on the new status.
-            new_state, new_deadline = self._compute_protection_for_status(new_status)
-            self.protection_state = new_state
-            self.protection_deadline_at = new_deadline
-            self.save(update_fields=[
-                "status", "protection_state", "protection_deadline_at", "updated_at",
-            ])
+        Delegates to apps.orders.state_machine.transition() so every
+        status change goes through ONE chokepoint with validation,
+        audit, protection-state recalc, telemetry, and outbox event.
 
-            OrderStatusLog.objects.create(
-                order=self, from_status=old, to_status=new_status,
-                changed_by=changed_by, note=note,
-            )
-            # Telemetry — track every transition so we can chart funnel + lapses
-            try:
-                from apps.telemetry.metrics import orders_status_transitions
-                orders_status_transitions.labels(
-                    from_status=old or 'new',
-                    to_status=new_status,
-                ).inc()
-            except Exception:
-                pass
-            # Auto-create a buyer-visible tracking event for every status change
+        The OrderTrackingEvent for buyer visibility is created here
+        AFTER the transition commits — visible to buyers via the
+        tracking endpoint regardless of which path triggered the change.
+        """
+        from .state_machine import transition
+        old = self.status
+        refreshed = transition(
+            self, new_status,
+            actor=changed_by, note=note, source=source,
+            admin_override=admin_override,
+        )
+        # Idempotent no-op transition (old == new) doesn't generate
+        # a tracking event either — buyers shouldn't see a duplicate
+        # "shipped" event for the same status set twice.
+        if refreshed.status != old:
             OrderTrackingEvent.objects.create(
-                order=self,
+                order=refreshed,
                 code=new_status,
-                description=note or OrderTrackingEvent.DEFAULT_DESCRIPTIONS.get(new_status, new_status),
+                description=note or OrderTrackingEvent.DEFAULT_DESCRIPTIONS.get(
+                    new_status, new_status,
+                ),
                 location="",
                 is_visible_to_buyer=True,
             )
+        # Mutate self in place so the caller's reference stays current
+        # (callers like CancelOrderView keep using ``order.update_status``
+        # without refresh_from_db after).
+        self.status = refreshed.status
+        self.protection_state = refreshed.protection_state
+        self.protection_deadline_at = refreshed.protection_deadline_at
 
     def __str__(self):
         return f"Order {self.id} — {self.buyer.email}"

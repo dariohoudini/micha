@@ -499,6 +499,20 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'low'},
     },
 
+    # ── Inbound webhooks ──────────────────────────────────────
+    # Refresh failure-rate gauge every 5 min for fast incident detection.
+    'inbound-webhooks-refresh-metrics': {
+        'task': 'inbound_webhooks.refresh_metrics',
+        'schedule': 300,
+        'options': {'queue': 'low'},
+    },
+    # Daily retention purge — keeps GDPR-bound IP/UA data bounded.
+    'inbound-webhooks-purge-old': {
+        'task': 'inbound_webhooks.purge_old',
+        'schedule': 86400,
+        'options': {'queue': 'low'},
+    },
+
     # ── Affiliates ────────────────────────────────────────────
     'affiliates-confirm-pending': {
         'task': 'affiliates.confirm_pending',

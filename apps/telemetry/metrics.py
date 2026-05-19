@@ -114,6 +114,21 @@ ledger_cached_counter_drift_cents = Gauge(
     'negative = ledger exceeds cached (user sees less than they own).',
 )
 
+# ── Inbound webhooks ────────────────────────────────────────────────
+inbound_webhook_failure_rate_1h = Gauge(
+    'micha_inbound_webhook_failure_rate_1h',
+    'Fraction of inbound webhooks that failed verification or handler '
+    'execution in the last hour. Alert at >0.05.',
+)
+inbound_webhook_failures_1h = Gauge(
+    'micha_inbound_webhook_failures_1h',
+    'Absolute count of failed inbound webhooks in the last hour.',
+)
+inbound_webhook_total_1h = Gauge(
+    'micha_inbound_webhook_total_1h',
+    'Absolute count of inbound webhooks received in the last hour.',
+)
+
 # ── Outbox ──────────────────────────────────────────────────────────
 outbox_published = Counter(
     'micha_outbox_published_total',

@@ -1,5 +1,8 @@
 from django.urls import path
-from .views import NotificationListView, UnreadCountView, MarkReadView, MarkAllReadView
+from .views import (
+    NotificationListView, UnreadCountView, MarkReadView, MarkAllReadView,
+    UnsubscribeView,
+)
 
 
 urlpatterns = [
@@ -8,4 +11,6 @@ urlpatterns = [
     path("mark-all-read/", MarkAllReadView.as_view(), name="mark-all-read"),
     path("<int:pk>/read/", MarkReadView.as_view(), name="mark-read"),
     path("read-all/", MarkAllReadView.as_view(), name="notifications-read-all"),
+    # RFC 8058 one-click unsubscribe. NO auth — HMAC sig is the auth.
+    path("unsubscribe/", UnsubscribeView.as_view(), name="unsubscribe"),
 ]

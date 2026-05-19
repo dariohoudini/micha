@@ -65,15 +65,23 @@ def send_account_locked_email(*, user, ip: str, attempt_count: int,
         f'— MICHA Security\n'
     )
 
+    # Route through the preference service. ACCOUNT_SECURITY is a
+    # TRANSACTIONAL category — always sent unless the address is on
+    # the suppression list (hard bounce / spam complaint). User CANNOT
+    # opt out of security alerts via preferences (legally and ethically
+    # required for service operation).
     try:
-        send_mail(
+        from apps.notifications.preferences import (
+            send_email_if_allowed, Category,
+        )
+        decision = send_email_if_allowed(
+            user, Category.ACCOUNT_SECURITY,
             subject='Security alert: your MICHA account is temporarily locked',
             message=body,
             from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=True,
         )
-        log.info('lockout notification sent to user_id=%s', user.id)
+        log.info('lockout notification user_id=%s sent=%s reason=%s',
+                 user.id, decision.allowed, decision.reason)
     except Exception:
         log.exception('lockout: failed to send notification')
 

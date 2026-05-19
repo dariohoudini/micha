@@ -9,6 +9,12 @@ from django.conf import settings
 
 User = settings.AUTH_USER_MODEL
 
+# Re-export auxiliary models so Django's app registry picks them up.
+# Suppression + NotificationLog live in their own files for separation
+# of concerns (different lifecycle, different retention).
+from .suppression_models import SuppressedEmail  # noqa: F401,E402
+from .notification_log_models import NotificationLog  # noqa: F401,E402
+
 
 class Notification(models.Model):
     TYPE_CHOICES = (

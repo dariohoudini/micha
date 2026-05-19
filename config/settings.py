@@ -129,6 +129,10 @@ MIDDLEWARE = [
     # phase code runs AFTER query_audit sets request._db_queries.
     'middleware.query_budget.QueryBudgetMiddleware',
     'apps.telemetry.query_audit.QueryAuditMiddleware',
+    # N+1 detector — runs INSIDE query_audit so it sees the same hook
+    # state. Records SQL templates per request and warns when the same
+    # template ran above N_PLUS_ONE_THRESHOLD times.
+    'apps.telemetry.n_plus_one.NPlusOneMiddleware',
     'middleware.security_hardening.SecurityHardeningMiddleware',
     'middleware.security_hardening.FileUploadSecurityMiddleware',
     'middleware.terms_version.TermsVersionMiddleware',

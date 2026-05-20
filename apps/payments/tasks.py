@@ -1,6 +1,43 @@
 from celery import shared_task
 from django.utils import timezone
 
+@shared_task(name='payments.process_pending_refunds')
+def process_pending_refunds_task():
+    """Drain Refund(status='pending') rows through the gateway.
+
+    Wraps apps.payments.refund_service.process_pending_refunds for the
+    Celery scheduler. Add to CELERY_BEAT_SCHEDULE:
+
+        'refunds-sweep': {
+            'task': 'payments.process_pending_refunds',
+            'schedule': crontab(minute='*/2'),  # every 2 minutes
+        }
+
+    Also triggered ad-hoc by the dispute.resolved outbox handler so
+    dispute-driven refunds don't wait for the next scheduled sweep.
+    """
+    from .refund_service import process_pending_refunds
+    return process_pending_refunds(limit=200)
+
+
+@shared_task(name='payments.process_refund')
+def process_refund_task(refund_id):
+    """Process a single Refund row.
+
+    Used by the dispute.resolved outbox handler to kick processing
+    immediately. The sweep task picks up any rows that get deferred or
+    missed.
+    """
+    from apps.orders.models import Refund
+    from .refund_service import process_refund
+    try:
+        refund = Refund.objects.get(pk=refund_id)
+    except Refund.DoesNotExist:
+        return {'status': 'missing', 'refund_id': refund_id}
+    updated = process_refund(refund)
+    return {'status': updated.status, 'refund_id': refund_id}
+
+
 @shared_task(name='payments.release_held_earnings')
 def release_held_earnings():
     """Release seller earnings that have passed the hold period (default 7 days).

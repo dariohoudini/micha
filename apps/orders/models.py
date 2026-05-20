@@ -338,7 +338,50 @@ class Payment(models.Model):
 
 
 class Refund(models.Model):
-    STATUS = (("pending","Pending"),("approved","Approved"),("rejected","Rejected"),("processed","Processed"))
+    """A refund request that the PSP worker drains into actual buyer credit.
+
+    Lifecycle
+    ──────────
+      pending   — created by a buyer request, dispute resolution, or
+                  return approval. The refund_worker scans this state.
+      processed — PaymentProcessor.refund() returned True. Buyer credited.
+      rejected  — terminal failure that ops decided not to retry
+                  (e.g. "no confirmed payment for this order").
+      failed    — exhausted ``max_attempts`` retries; needs ops triage.
+      approved  — legacy: an admin acked a refund manually but the
+                  worker hasn't run yet. Treated as pending by the worker.
+
+    Why this model needs retry fields
+    ──────────────────────────────────
+    Before this commit, Refund rows were created with status='pending'
+    and… nothing drained them. The dispute service wrote 'pending',
+    the buyer-initiated endpoint wrote 'pending', AdminResolveDispute
+    wrote 'processed' directly without ever calling the gateway. The
+    buyer's card never saw the credit. This was a real "marketplace
+    looks like it refunded but didn't" production hole.
+
+    A worker (apps/payments/refund_service.process_pending_refunds)
+    now polls this table and routes each row through
+    PaymentProcessor.refund(). To make that worker robust we need:
+      • attempts / max_attempts — bound retries
+      • next_attempt_at         — schedule exponential backoff
+      • last_attempt_at         — observability
+      • last_error              — last gateway error for ops triage
+      • gateway_refund_id       — correlate with PSP records on
+                                  reconciliation
+    """
+    STATUS = (
+        ("pending",   "Pending"),
+        ("approved",  "Approved"),
+        ("processed", "Processed"),
+        ("rejected",  "Rejected"),
+        # ``failed`` is new — terminal after MAX_ATTEMPTS exhausted.
+        # Distinct from ``rejected`` (rejected = admin/policy decision,
+        # failed = exhausted gateway retries).
+        ("failed",    "Failed"),
+    )
+    DEFAULT_MAX_ATTEMPTS = 8
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="refunds")
     requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="refund_requests")
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -347,6 +390,21 @@ class Refund(models.Model):
     admin_note = models.TextField(blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # ── Worker / retry fields ─────────────────────────────────────────
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=DEFAULT_MAX_ATTEMPTS)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    gateway_refund_id = models.CharField(max_length=128, blank=True, db_index=True)
+
+    class Meta:
+        indexes = [
+            # Worker query: WHERE status='pending' AND (next_attempt_at IS NULL
+            #                  OR next_attempt_at <= now) ORDER BY created_at
+            models.Index(fields=['status', 'next_attempt_at']),
+        ]
 
 
 # Import return models so they're registered with the orders app on startup.

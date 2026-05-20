@@ -698,7 +698,14 @@ class ChangePhoneView(APIView):
             return Response({'error': 'phone_taken', 'detail': 'Phone number already in use.'}, status=409)
         otp = request.user.generate_phone_otp()
         # TODO: Send SMS via Africa's Talking or Twilio
-        logger.info(f"Phone OTP for {new_phone}: {otp}")  # Console in dev
+        # NEVER log the OTP plaintext — it's a sub-second account-takeover
+        # primitive. The PII redactor would scrub it on the way out, but
+        # we don't even compose it: log the issuance event with the user
+        # id only. Dev-time delivery is via the SMS provider's sandbox.
+        logger.info(
+            'phone_otp_issued',
+            extra={'user_id': request.user.id, 'phone_masked': (new_phone or '')[:4] + '***'},
+        )
         return Response({'detail': f'Verification code sent to {new_phone}.'})
 
 

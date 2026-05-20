@@ -244,7 +244,13 @@ class CheckoutService:
         # 8. Clear cart
         cart_items.delete()
 
-        logger.info(f"Checkout complete: {len(orders)} orders created for user {self.user.email}")
+        # Use user.id, not email — email is PII and the redactor would
+        # mask the local-part anyway. user_id is sufficient for ops
+        # correlation via the structured-log filter.
+        logger.info(
+            'checkout_complete',
+            extra={'user_id': self.user.id, 'order_count': len(orders)},
+        )
         return orders
 
     def _get_address(self):

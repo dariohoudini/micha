@@ -817,6 +817,13 @@ if SENTRY_DSN:
 # ── Logging ─────────────────────────────────────────────────────
 LOG_FORMAT = os.environ.get('LOG_FORMAT', 'json')  # 'json' or 'text'
 
+# Master switch for the PII redactor in middleware/pii_redactor.py.
+# Default ON: every JSON log line is scrubbed for emails, phone numbers,
+# Bearer tokens, OTP-shape digit runs, and credential-named extra keys.
+# Set to '0' in dev only if redaction is interfering with debugging —
+# never turn off in production.
+LOG_PII_REDACTION_ENABLED = os.environ.get('LOG_PII_REDACTION_ENABLED', '1') != '0'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

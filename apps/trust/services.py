@@ -65,7 +65,17 @@ class TrustScoreService:
             score.compute_overall_score()
             score.save()
 
-        logger.info(f"Trust score recomputed for {seller.email}: {score.overall_score:.1f} ({score.badge_level})")
+        # Identify by seller.id — email is PII; structured log filter
+        # already carries the user_id for the request that triggered
+        # the recompute.
+        logger.info(
+            'trust_score_recomputed',
+            extra={
+                'seller_id': seller.id,
+                'score': round(score.overall_score, 1),
+                'badge_level': score.badge_level,
+            },
+        )
         return score
 
     @classmethod

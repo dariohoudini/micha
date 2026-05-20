@@ -272,7 +272,26 @@ class SavedPaymentMethod(models.Model):
 
 
 class EarningsHold(models.Model):
-    """Seller earnings held for SELLER_HOLD_DAYS days after delivery."""
+    """Seller earnings held for SELLER_HOLD_DAYS days after delivery.
+
+    Dispute interaction
+    ───────────────────
+    When a Dispute is opened on the order, ``disputes.service.open_dispute``
+    flips ``is_disputed=True`` on every matching EarningsHold row. The
+    ``payments.release_held_earnings`` sweep MUST skip disputed holds — if
+    a hold releases mid-dispute, the seller can payout to their bank and
+    the platform eats the buyer refund when the dispute resolves against
+    the seller. This is the single most common "marketplace ate the loss"
+    bug class and the reason this flag exists.
+
+    On resolve:
+      • resolution='pay_seller'    → is_disputed=False, release_at=now,
+                                     swept up by release_held_earnings on next run
+      • resolution='refund_buyer'  → released=True (consumed by refund),
+                                     refunded_at=now, never paid to seller
+      • resolution='partial_refund'→ split: portion released to seller,
+                                     portion consumed by refund (handled by service)
+    """
     seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='earnings_holds')
     order = models.ForeignKey('orders.Order', on_delete=models.CASCADE, related_name='earnings_hold')
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -280,8 +299,20 @@ class EarningsHold(models.Model):
     released = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ── Dispute interaction ───────────────────────────────────────────
+    is_disputed = models.BooleanField(default=False)
+    disputed_at = models.DateTimeField(null=True, blank=True)
+    # Set when resolution='refund_buyer' or 'partial_refund' consumes
+    # the hold — distinguishes "released to seller" from "consumed by
+    # refund" in the audit trail.
+    refunded_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
-        indexes = [models.Index(fields=['released', 'release_at'])]
+        indexes = [
+            models.Index(fields=['released', 'release_at']),
+            # Sweep queries the disputed flag — index it.
+            models.Index(fields=['is_disputed', 'released']),
+        ]
 
 
 class PaymentEvent(models.Model):

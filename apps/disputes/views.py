@@ -25,14 +25,38 @@ class DisputeSerializer(drf_serializers.ModelSerializer):
         read_only_fields = ["id","status","admin_note","resolution","created_at","updated_at"]
 
 class OpenDisputeView(APIView):
+    """Buyer opens a dispute on a shipped/delivered order.
+
+    Delegates to disputes.service.open_dispute so the full side-effect
+    set (evidence snapshot + EarningsHold freeze + outbox publish) runs
+    atomically. Direct ORM .create() would skip the freeze and let the
+    seller cash out mid-dispute.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
     def post(self, request):
         from apps.orders.models import Order
-        order = get_object_or_404(Order, pk=request.data.get("order_id"), buyer=request.user)
-        if hasattr(order,"dispute"): return Response({'error': 'Dispute already open.'}, status=400)
-        if order.status not in ("delivered","shipped"): return Response({'error': 'Can only dispute shipped or delivered orders.'}, status=400)
-        dispute = Dispute.objects.create(order=order,buyer=request.user,seller=order.seller,
-            reason=request.data.get("reason","other"),description=request.data.get("description",""))
+        from .service import (
+            open_dispute, DisputeError, DisputeAlreadyOpen, InvalidDisputeAction,
+        )
+
+        order = get_object_or_404(
+            Order, pk=request.data.get("order_id"), buyer=request.user,
+        )
+        try:
+            dispute = open_dispute(
+                buyer=request.user,
+                order=order,
+                reason=request.data.get("reason", "other"),
+                description=request.data.get("description", ""),
+            )
+        except DisputeAlreadyOpen as e:
+            return Response({'error': 'dispute_already_open', 'detail': str(e)}, status=409)
+        except InvalidDisputeAction as e:
+            return Response({'error': 'invalid_dispute_action', 'detail': str(e)}, status=400)
+        except DisputeError as e:
+            return Response({'error': 'dispute_error', 'detail': str(e)}, status=400)
+
         return Response(DisputeSerializer(dispute).data, status=201)
 
 class DisputeDetailView(generics.RetrieveAPIView):
@@ -46,12 +70,31 @@ class DisputeDetailView(generics.RetrieveAPIView):
         return d
 
 class DisputeMessageView(APIView):
+    """Post a message to a dispute thread.
+
+    Delegates to disputes.service.add_message which updates the
+    last_seller_message_at SLA marker when the seller posts.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
     def post(self, request, pk):
+        from .service import (
+            add_message, DisputeError, NotADisputeParticipant, InvalidDisputeAction,
+        )
         d = get_object_or_404(Dispute, pk=pk)
-        if d.buyer != request.user and d.seller != request.user: return Response({'error': 'Not a participant.'}, status=403)
-        if d.status in ("resolved","closed"): return Response({'error': 'Dispute closed.'}, status=400)
-        msg = DisputeMessage.objects.create(dispute=d,sender=request.user,message=request.data.get("message",""),attachment=request.FILES.get("attachment"))
+        try:
+            msg = add_message(
+                actor=request.user,
+                dispute=d,
+                body=request.data.get("message", ""),
+                attachment=request.FILES.get("attachment"),
+            )
+        except NotADisputeParticipant as e:
+            return Response({'error': 'not_a_participant', 'detail': str(e)}, status=403)
+        except InvalidDisputeAction as e:
+            return Response({'error': 'invalid_dispute_action', 'detail': str(e)}, status=400)
+        except DisputeError as e:
+            return Response({'error': 'dispute_error', 'detail': str(e)}, status=400)
         return Response(MsgSerializer(msg).data, status=201)
 
 class MyDisputesView(generics.ListAPIView):
@@ -81,16 +124,36 @@ class AdminDisputeListView(generics.ListAPIView):
         return qs
 
 class AdminResolveDisputeView(APIView):
+    """Admin applies a resolution to a dispute.
+
+    Delegates to disputes.service.resolve_dispute which atomically:
+      • flips status to resolved + records resolution + admin_note
+      • settles EarningsHold rows (release / refund) based on outcome
+      • creates a Refund row with status='pending' when buyer money
+        is owed (NOT 'processed' — the PSP path picks it up)
+      • clears SLA timers
+      • publishes dispute.resolved to outbox
+    """
     permission_classes = [IsAdminOrSuperuser]
+
     def patch(self, request, pk):
+        from .service import (
+            resolve_dispute, DisputeError, InvalidDisputeAction,
+        )
         d = get_object_or_404(Dispute, pk=pk)
-        res = request.data.get("resolution")
-        if res not in ("refund_buyer","pay_seller","partial_refund","dismissed"): return Response({'error': 'Invalid.'}, status=400)
-        d.resolution=res; d.status="resolved"; d.admin_note=request.data.get("note",""); d.resolved_at=timezone.now(); d.save()
-        if res == "refund_buyer":
-            from apps.orders.models import Refund
-            Refund.objects.get_or_create(order=d.order,defaults={"requested_by":d.buyer,"reason":"Admin refund","amount":d.order.total,"status":"processed"})
-        return Response({"detail":f"Resolved: {res}."})
+        try:
+            d = resolve_dispute(
+                admin=request.user,
+                dispute=d,
+                resolution=request.data.get("resolution", ""),
+                note=request.data.get("note", ""),
+                refund_amount=request.data.get("refund_amount"),
+            )
+        except InvalidDisputeAction as e:
+            return Response({'error': 'invalid_resolution', 'detail': str(e)}, status=400)
+        except DisputeError as e:
+            return Response({'error': 'dispute_error', 'detail': str(e)}, status=400)
+        return Response({'detail': f'Resolved: {d.resolution}.', 'status': d.status})
 
 class FraudFlagView(APIView):
     permission_classes = [IsAdminOrSuperuser]

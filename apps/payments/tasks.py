@@ -3,10 +3,21 @@ from django.utils import timezone
 
 @shared_task(name='payments.release_held_earnings')
 def release_held_earnings():
-    """Release seller earnings that have passed the hold period (default 7 days)."""
+    """Release seller earnings that have passed the hold period (default 7 days).
+
+    Excludes holds where ``is_disputed=True`` — those funds are frozen
+    until the dispute is resolved. Releasing a disputed hold mid-dispute
+    is the classic "marketplace ate the loss" bug: seller withdraws,
+    dispute resolves against them, platform eats the buyer refund.
+    See disputes.service for the freeze/settle path.
+    """
     try:
         from .models import SellerWallet, WalletTransaction, EarningsHold
-        holds = EarningsHold.objects.filter(released=False, release_at__lte=timezone.now())
+        holds = EarningsHold.objects.filter(
+            released=False,
+            is_disputed=False,
+            release_at__lte=timezone.now(),
+        )
         released_count = 0
         for hold in holds:
             wallet, _ = SellerWallet.objects.get_or_create(seller=hold.seller)

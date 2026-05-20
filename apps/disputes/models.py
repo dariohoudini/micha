@@ -31,7 +31,32 @@ class Dispute(models.Model):
     resolved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    class Meta: ordering=["-created_at"]
+
+    # ── SLA fields ────────────────────────────────────────────────────
+    # `respond_by` — seller must post a message by this time, else the
+    # dispute auto-escalates. Default is 72h post-open.
+    # `auto_resolve_at` — if the seller is still silent past this time,
+    # the SLA sweep auto-resolves to refund_buyer. Default is 7d post-open.
+    # Both are populated at open-time by disputes.service.open_dispute().
+    respond_by = models.DateTimeField(null=True, blank=True)
+    auto_resolve_at = models.DateTimeField(null=True, blank=True)
+    last_seller_message_at = models.DateTimeField(null=True, blank=True)
+
+    # ── Evidence snapshot ─────────────────────────────────────────────
+    # Frozen at open-time so even if the product page is later edited /
+    # archived, the dispute reflects what the buyer actually saw.
+    # Contents: order total, item list with titles/prices/qtys, status
+    # timeline (placed/shipped/delivered timestamps), product images.
+    # NOT a substitute for chat history — DisputeMessage rows are the
+    # authoritative back-and-forth and are immutable in practice.
+    evidence_snapshot = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            # SLA sweep queries: WHERE status='open' AND auto_resolve_at <= now
+            models.Index(fields=["status", "auto_resolve_at"]),
+        ]
 
 class DisputeMessage(models.Model):
     dispute = models.ForeignKey(Dispute, on_delete=models.CASCADE, related_name="messages")

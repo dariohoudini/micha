@@ -953,6 +953,13 @@ SEARCH_MAX_TOKENS      = int(os.environ.get('SEARCH_MAX_TOKENS', '10'))
 SEARCH_MAX_TOKEN_CHARS = int(os.environ.get('SEARCH_MAX_TOKEN_CHARS', '40'))
 SEARCH_MIN_TOKEN_CHARS = int(os.environ.get('SEARCH_MIN_TOKEN_CHARS', '2'))
 
+# ── SES bounce / complaint webhook (apps/notifications/ses_webhook.py) ──
+# Escape hatch for dev / staging when cryptography isn't installed AND
+# no IP allowlist is configured. NEVER set this True in production —
+# unauthenticated, unverified bounce/complaint events let an attacker
+# suppress any address by spoofing an SNS-shaped payload.
+SES_WEBHOOK_INSECURE = os.environ.get('SES_WEBHOOK_INSECURE', '0') == '1'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

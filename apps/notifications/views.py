@@ -114,3 +114,61 @@ class UnsubscribeView(APIView):
                          'email': email})
 
 
+class SESWebhookView(APIView):
+    """POST /api/v1/notifications/ses-webhook/
+
+    Receives bounce + complaint notifications from Amazon SES via SNS.
+    Routes hard bounces and spam complaints to the suppression list so
+    we stop sending to addresses that bounce or get flagged — without
+    this, our SES sending reputation tanks and AWS suspends the
+    sending account.
+
+    Authentication
+    ───────────────
+    SNS signs every message with an RSA key whose certificate is
+    published at a *.amazonaws.com URL. apps.notifications.ses_webhook
+    verifies the signature against the canonical SNS message string
+    (RSA-PKCS1v15 / SHA1 or SHA256 depending on SignatureVersion).
+
+    If the ``cryptography`` package isn't deployed, the verifier falls
+    back to source-IP allowlist (settings.WEBHOOK_ALLOWED_IPS['ses'])
+    — defence in depth, populated from AWS's published SNS egress IPs.
+
+    Idempotency
+    ───────────
+    Suppression-list inserts use get_or_create — duplicate notifications
+    are a no-op. SNS message_id replay protection is on the to-do list
+    for the inbound_webhooks integration commit; for now, idempotent
+    suppression is the structural guarantee.
+
+    Response codes
+    ───────────────
+      200 — handled (subscribed / suppressed / logged / ignored)
+      400 — envelope malformed / signature failed
+    """
+    from rest_framework.permissions import AllowAny
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        from .ses_webhook import process_sns_envelope, SNSError
+        import json as _json
+
+        # SNS sends Content-Type: text/plain even for JSON bodies, so
+        # rely on raw body bytes rather than DRF's content negotiator.
+        body = request.body or b''
+        if not body:
+            return Response({'error': 'empty_body'}, status=400)
+        try:
+            envelope = _json.loads(body.decode('utf-8'))
+        except Exception:
+            return Response({'error': 'invalid_json'}, status=400)
+
+        try:
+            result = process_sns_envelope(envelope)
+        except SNSError as e:
+            return Response({'error': 'sns_error', 'detail': str(e)}, status=400)
+
+        return Response({'detail': 'ok', 'result': result})
+
+

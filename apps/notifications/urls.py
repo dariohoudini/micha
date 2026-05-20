@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     NotificationListView, UnreadCountView, MarkReadView, MarkAllReadView,
-    UnsubscribeView,
+    UnsubscribeView, SESWebhookView,
 )
 
 
@@ -13,4 +13,7 @@ urlpatterns = [
     path("read-all/", MarkAllReadView.as_view(), name="notifications-read-all"),
     # RFC 8058 one-click unsubscribe. NO auth — HMAC sig is the auth.
     path("unsubscribe/", UnsubscribeView.as_view(), name="unsubscribe"),
+    # SES → SNS bounce + complaint webhook. NO auth — SNS RSA signature
+    # is the auth (or IP allowlist fallback when cryptography unavailable).
+    path("ses-webhook/", SESWebhookView.as_view(), name="ses-webhook"),
 ]

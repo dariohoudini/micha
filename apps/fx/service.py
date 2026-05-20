@@ -194,21 +194,77 @@ def _quantize(amount: Decimal, places: int) -> Decimal:
 
 # ─── Rate updates ──────────────────────────────────────────────────────────
 
+class FXDriftError(FXError):
+    """Raised when a proposed rate differs from the current rate by more
+    than FX_MAX_DRIFT_PERCENT. Pass ``force=True`` to override.
+
+    Carries the proposed + current rates so callers / admin UIs can show
+    a confirmation dialog with both numbers.
+    """
+    def __init__(self, message, *, current, proposed, drift_pct):
+        super().__init__(message)
+        self.current = current
+        self.proposed = proposed
+        self.drift_pct = drift_pct
+
+
+def _max_drift_percent() -> Decimal:
+    """Soft cap on rate movement per update. Defaults to 25%.
+
+    The AOA has historically had ~50% devaluations in a day during
+    crisis episodes — so 25% is "fat-finger guard, not policy ceiling".
+    Operators pass ``force=True`` for legitimate large moves.
+    """
+    try:
+        from django.conf import settings
+        return Decimal(str(getattr(settings, 'FX_MAX_DRIFT_PERCENT', '25')))
+    except Exception:
+        return Decimal('25')
+
+
 def update_rate(*, source_currency: str, target_currency: str, rate,
                 source: str = FXRateSource.MANUAL, user=None,
-                raw_response=None, note: str = '') -> FXRate:
+                raw_response=None, note: str = '',
+                force: bool = False) -> FXRate:
     """Close the current rate for this pair and insert a new one.
 
-    Atomicity: the UNIQUE-current constraint (PartialIndex on valid_until
-    IS NULL) means two simultaneous update_rate calls cannot both leave
-    two open rows behind — one wins, one fails with IntegrityError. We
-    catch that and retry once.
+    Drift guard
+    ────────────
+    Before writing, compares the proposed rate against the current rate.
+    If they differ by more than ``FX_MAX_DRIFT_PERCENT`` (default 25%),
+    raises FXDriftError unless ``force=True``. This catches:
+      • Fat-finger admin updates ("0.0011" typed as "0.011")
+      • A broken feed returning a typo'd value from upstream
+      • Currency-pair confusion ("AOA→USD" rate posted as USD→AOA)
+
+    On a legitimate large move (devaluation, demonetisation), the operator
+    explicitly passes force=True and the audit row records why.
+
+    Atomicity: the UNIQUE-current constraint (PartialIndex on
+    valid_until IS NULL) means two simultaneous update_rate calls cannot
+    both leave two open rows behind — one wins, one fails with
+    IntegrityError. We catch that and retry once.
     """
     source_currency = source_currency.upper()
     target_currency = target_currency.upper()
     rate = Decimal(str(rate))
     if rate <= 0:
         raise FXError('rate must be positive')
+
+    # Drift guard. Look up the CURRENT rate (no caching — we want the
+    # freshly-committed value, not a stale cache entry).
+    if not force:
+        current = _get_at(source_currency, target_currency, timezone.now())
+        if current is not None and current.rate > 0:
+            drift_pct = abs(rate - current.rate) / current.rate * Decimal('100')
+            if drift_pct > _max_drift_percent():
+                raise FXDriftError(
+                    f'{source_currency}->{target_currency} drift '
+                    f'{drift_pct:.2f}% exceeds cap {_max_drift_percent()}%',
+                    current=current.rate,
+                    proposed=rate,
+                    drift_pct=drift_pct,
+                )
 
     now = timezone.now()
 
@@ -226,7 +282,8 @@ def update_rate(*, source_currency: str, target_currency: str, rate,
             target_currency=target_currency,
             rate=rate, source=source,
             raw_response=raw_response or {},
-            note=note[:200], valid_from=now,
+            note=(note + (' [force]' if force else ''))[:200],
+            valid_from=now,
             recorded_by=user if (user and getattr(user, 'is_authenticated', False)) else None,
         )
 
@@ -237,6 +294,16 @@ def update_rate(*, source_currency: str, target_currency: str, rate,
         bump_tag(f'fx:{target_currency}:{source_currency}')  # inverse path
     except Exception:
         pass
+
+    log.info(
+        'fx_rate_updated',
+        extra={
+            'pair': f'{source_currency}->{target_currency}',
+            'rate': str(rate),
+            'source': source,
+            'forced': force,
+        },
+    )
 
     # Outbox event so analytics / seller webhooks / notifications can react
     try:
@@ -256,3 +323,49 @@ def update_rate(*, source_currency: str, target_currency: str, rate,
         pass
 
     return new_row
+
+
+# ─── Staleness ─────────────────────────────────────────────────────────────
+
+def _max_age_hours() -> int:
+    """How long a rate is allowed to be the current rate before we treat
+    it as stale. AOA rates move daily-ish; 36h is "let an ops outage
+    finish before alerting" but "alert if a refresh worker is broken".
+    """
+    try:
+        from django.conf import settings
+        return int(getattr(settings, 'FX_MAX_AGE_HOURS', 36))
+    except Exception:
+        return 36
+
+
+def is_rate_stale(rate_row) -> bool:
+    """True if the given FXRate is older than FX_MAX_AGE_HOURS."""
+    if rate_row is None or rate_row.valid_from is None:
+        return True
+    from datetime import timedelta
+    cutoff = timezone.now() - timedelta(hours=_max_age_hours())
+    return rate_row.valid_from < cutoff
+
+
+def stale_pairs() -> list:
+    """Return a list of {pair, age_hours} for current rates older than
+    FX_MAX_AGE_HOURS. Used by the staleness sweep task to emit metrics
+    + alert ops.
+    """
+    cutoff_hours = _max_age_hours()
+    now = timezone.now()
+    rows = FXRate.objects.filter(valid_until__isnull=True)
+    out = []
+    for r in rows:
+        if r.valid_from is None:
+            continue
+        age = (now - r.valid_from).total_seconds() / 3600.0
+        if age > cutoff_hours:
+            out.append({
+                'pair': f'{r.source_currency}->{r.target_currency}',
+                'age_hours': round(age, 1),
+                'rate': str(r.rate),
+                'source': r.source,
+            })
+    return out

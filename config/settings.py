@@ -721,6 +721,25 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'high'},
     },
 
+    # ── FX (foreign exchange) ────────────────────────────────
+    # Hourly: pull latest rates from BNA / external feeds via the
+    # drift-guarded update_rate path. Blocked drifts are logged for
+    # ops triage — they're NOT auto-overridden because a 30% jump on
+    # a feed could be either a real devaluation or a broken upstream.
+    'fx-refresh-rates': {
+        'task': 'fx.refresh_rates',
+        'schedule': 3600,
+        'options': {'queue': 'default'},
+    },
+    # Every 30 min: warn (+ metric) on any current rate past
+    # FX_MAX_AGE_HOURS. Without this nobody notices a silently-broken
+    # refresh worker — and stale rates are money-correctness bugs.
+    'fx-check-staleness': {
+        'task': 'fx.check_staleness',
+        'schedule': 1800,
+        'options': {'queue': 'low'},
+    },
+
     # ── Disputes ──────────────────────────────────────────────
     # SLA sweep auto-resolves disputes where the seller has gone
     # silent past auto_resolve_at (refund_buyer) OR escalates to
@@ -878,6 +897,27 @@ IMAGE_MAX_PIXELS        = int(os.environ.get('IMAGE_MAX_PIXELS', 50_000_000))
 IMAGE_MAX_DIMENSION     = int(os.environ.get('IMAGE_MAX_DIMENSION', 12_000))
 IMAGE_MIN_ASPECT_RATIO  = float(os.environ.get('IMAGE_MIN_ASPECT_RATIO', '0.1'))
 IMAGE_MAX_FRAMES        = int(os.environ.get('IMAGE_MAX_FRAMES', 50))
+
+# ── FX rate hardening (apps/fx/service.py) ────────────────────
+# Fat-finger guard on rate updates. A proposed rate that differs from
+# the current rate by more than this percent is REJECTED unless the
+# caller passes force=True. AOA has had ~50% devaluations in a day
+# during crisis periods, so this is "fat-finger cap" not "policy
+# ceiling" — operators force=True for legitimate large moves.
+FX_MAX_DRIFT_PERCENT = os.environ.get('FX_MAX_DRIFT_PERCENT', '25')
+
+# Staleness threshold for the current rate of any pair. Rates move
+# daily-ish; 36h is "let an ops outage finish without alert spam" plus
+# "alert if the refresh worker has been silently broken".
+FX_MAX_AGE_HOURS = int(os.environ.get('FX_MAX_AGE_HOURS', '36'))
+
+# Pairs the refresh worker pulls each hour. AOA-centric default; expand
+# as the marketplace adds cross-border SKUs.
+FX_REFRESH_PAIRS = [
+    ('USD', 'AOA'), ('AOA', 'USD'),
+    ('EUR', 'AOA'), ('AOA', 'EUR'),
+    ('BRL', 'AOA'), ('AOA', 'BRL'),
+]
 
 LOGGING = {
     'version': 1,

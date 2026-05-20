@@ -37,24 +37,86 @@ class VariantDetailView(generics.RetrieveUpdateDestroyAPIView):
 class StockReservationView(APIView):
     """POST /api/v1/inventory/reserve/
 
-    Idempotency REQUIRED. StockReservation.reserve(product, user, qty)
-    creates a new reservation each call — a retry would tie up 2N units
-    of inventory and starve other buyers. The header binds repeated
-    calls to one reservation.
+    Body: ``{product_id?, variant_combo_id?, quantity}`` — exactly one
+    of product_id / variant_combo_id is required. Variant-bearing
+    products MUST reserve at the combo level; reserving the parent
+    product won't actually hold a specific SKU.
+
+    Idempotency REQUIRED. Each call without a key would create a new
+    reservation; a buyer that retried over a flaky network would tie
+    up 2N units and starve other buyers. The header binds repeats to
+    one reservation.
+
+    Routes through ``inventory.service.reserve`` so variant combos +
+    per-user cap + atomic decrement are all enforced.
     """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     @idempotent(required=True)
     def post(self, request):
         from apps.products.models import Product
+        from apps.inventory.models import ProductVariantCombo
+        from apps.inventory.service import (
+            reserve as svc_reserve,
+            InsufficientStock, ReservationCapReached, InvalidReservationTarget,
+            ReservationError,
+        )
+
         product_id = request.data.get("product_id")
-        quantity = int(request.data.get("quantity", 1))
-        product = get_object_or_404(Product, pk=product_id, is_active=True)
+        combo_id = request.data.get("variant_combo_id")
         try:
-            reservation = StockReservation.reserve(product, request.user, quantity)
-            return Response({"detail": "Reserved.", "expires_at": reservation.expires_at}, status=201)
-        except ValueError as e:
-            return Response({'error': 'insufficient_stock', "detail": str(e)}, status=400)
+            quantity = int(request.data.get("quantity", 1))
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'invalid_quantity', 'detail': 'quantity must be an integer'},
+                status=400,
+            )
+
+        # Forward the Idempotency-Key header into the reservation row
+        # so duplicate calls return the existing row even if the outer
+        # @idempotent layer doesn't fire (e.g. a different DRF method
+        # path or future direct caller).
+        idem_key = request.META.get('HTTP_IDEMPOTENCY_KEY', '').strip()[:128]
+
+        product = combo = None
+        if combo_id:
+            combo = get_object_or_404(
+                ProductVariantCombo, pk=combo_id, is_active=True,
+            )
+        elif product_id:
+            product = get_object_or_404(Product, pk=product_id, is_active=True)
+        else:
+            return Response(
+                {'error': 'missing_target',
+                 'detail': 'one of product_id or variant_combo_id is required'},
+                status=400,
+            )
+
+        try:
+            reservation = svc_reserve(
+                user=request.user,
+                product=product, variant_combo=combo,
+                quantity=quantity,
+                idempotency_key=idem_key,
+            )
+        except InsufficientStock as e:
+            return Response({'error': 'insufficient_stock', 'detail': str(e)}, status=400)
+        except ReservationCapReached as e:
+            return Response({'error': 'reservation_cap_reached', 'detail': str(e)}, status=429)
+        except InvalidReservationTarget as e:
+            return Response({'error': 'invalid_target', 'detail': str(e)}, status=400)
+        except ReservationError as e:
+            return Response({'error': 'reservation_error', 'detail': str(e)}, status=400)
+
+        return Response(
+            {
+                'detail': 'Reserved.',
+                'reservation_id': reservation.id,
+                'expires_at': reservation.expires_at,
+                'quantity': reservation.quantity,
+            },
+            status=201,
+        )
 
 
 class LowStockAlertView(generics.ListCreateAPIView):

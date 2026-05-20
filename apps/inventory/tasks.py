@@ -2,24 +2,22 @@ from celery import shared_task
 
 @shared_task(name='inventory.clean_expired_reservations')
 def clean_expired_reservations():
-    """Release stock reserved by abandoned checkouts (expires after 15 min)."""
-    try:
-        from apps.inventory.models import StockReservation
-        from django.utils import timezone
-        expired = StockReservation.objects.filter(
-            expires_at__lte=timezone.now(),
-            is_active=True,
-        )
-        count = 0
-        for res in expired:
-            res.product.quantity += res.quantity
-            res.product.save(update_fields=['quantity'])
-            res.is_active = False
-            res.save(update_fields=['is_active'])
-            count += 1
-        return f"Released {count} expired stock reservations"
-    except Exception as e:
-        return f"Error: {e}"
+    """Release stock reserved by abandoned checkouts.
+
+    Delegates to inventory.service.sweep_expired so the release path
+    is identical to the on-demand release_reservation() path:
+    select_for_update on both the reservation row and the target
+    Product/ProductVariantCombo row. The old in-task implementation
+    read res.product.quantity and saved without locking, which raced
+    with concurrent reserves and lost stock-restore increments.
+
+    Also: the prior version was variant-blind — it always restored
+    Product.quantity, never ProductVariantCombo.quantity. Variant
+    reservations expired without giving the variant stock back.
+    """
+    from .service import sweep_expired
+    released = sweep_expired(limit=500)
+    return f"Released {released} expired stock reservations"
 
 @shared_task(name='inventory.send_low_stock_alerts')
 def send_low_stock_alerts():

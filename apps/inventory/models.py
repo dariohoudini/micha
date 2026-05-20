@@ -54,46 +54,105 @@ class ProductVariantCombo(models.Model):
 
 
 class StockReservation(models.Model):
-    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="reservations")
+    """A short-lived inventory hold attached to a buyer.
+
+    Reservation model
+    ──────────────────
+    A reservation decrements the canonical stock counter (Product.quantity
+    for a non-variant product; ProductVariantCombo.quantity for a variant
+    SKU) and keeps it decremented until either:
+
+      • released — abandoned cart / explicit release / expiry sweep
+      • committed — the order paid + checkout completed; the row is dropped
+        but the decrement stays (now permanent sale)
+
+    Why a separate `variant_combo` FK
+    ──────────────────────────────────
+    The original model only knew about Product. When a buyer reserved
+    "Red M" of a t-shirt, only Product.quantity was decremented — the
+    ProductVariantCombo("Red M").quantity stayed unchanged. Two
+    concurrent buyers could BOTH reserve the last "Red M" because each
+    saw combo.quantity unchanged from view-time. Variant oversell.
+
+    Per-buyer cap
+    ──────────────
+    A single buyer may hold at most ``MAX_ACTIVE_RESERVATIONS_PER_USER``
+    active reservations. Without this a script can spam reserve() and
+    starve all other buyers of inventory until expiry sweeps run.
+
+    Mutations go through ``apps.inventory.service`` (the chokepoint).
+    Direct ``StockReservation.objects.create()`` is a smell — it bypasses
+    the atomic decrement, the cap, and the idempotency key.
+    """
+
+    # Cap on active reservations per user. Tune from ops data.
+    MAX_ACTIVE_RESERVATIONS_PER_USER = 20
+
+    product = models.ForeignKey(
+        "products.Product", on_delete=models.CASCADE,
+        related_name="reservations",
+        # nullable so a variant-combo reservation doesn't have to also
+        # pin the parent product row (avoiding double-decrement bugs).
+        null=True, blank=True,
+    )
+    variant_combo = models.ForeignKey(
+        "inventory.ProductVariantCombo", on_delete=models.CASCADE,
+        related_name="reservations", null=True, blank=True,
+    )
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="stock_reservations")
     quantity = models.PositiveIntegerField()
     order = models.ForeignKey("orders.Order", on_delete=models.CASCADE, null=True, blank=True, related_name="stock_reservations")
     is_active = models.BooleanField(default=True)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # Idempotency key bound to (user, key). Allows safe retry of the
+    # reserve endpoint: same key + same target = returns the existing
+    # reservation row, no double-decrement.
+    idempotency_key = models.CharField(max_length=128, blank=True, db_index=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["is_active", "expires_at"]),
             models.Index(fields=["product", "is_active"]),
+            models.Index(fields=["variant_combo", "is_active"]),
+            models.Index(fields=["user", "is_active"]),
         ]
+        constraints = [
+            # A reservation targets EITHER a product OR a variant combo,
+            # not both — checkout decrements them independently and
+            # mixing them would double-count.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(product__isnull=False, variant_combo__isnull=True)
+                    | models.Q(product__isnull=True, variant_combo__isnull=False)
+                ),
+                name='reservation_one_target',
+            ),
+            # Idempotency: a (user, key) pair maps to exactly one row
+            # while active. Sparse partial index (Postgres) — SQLite
+            # treats the empty-string convention below as OK.
+            models.UniqueConstraint(
+                fields=['user', 'idempotency_key'],
+                condition=models.Q(is_active=True) & ~models.Q(idempotency_key=''),
+                name='uniq_user_active_idem_key',
+            ),
+        ]
+
+    # ── Back-compat classmethod ───────────────────────────────────────
+    # New code MUST use ``apps.inventory.service.reserve``. This shim is
+    # preserved so older callers that imported ``StockReservation.reserve``
+    # don't break in the same release. It now delegates to the service.
 
     @classmethod
     def reserve(cls, product, user, quantity, minutes=15):
-        with transaction.atomic():
-            from apps.products.models import Product
-            p = Product.objects.select_for_update().get(pk=product.pk)
-            if p.quantity < quantity:
-                raise ValueError(f"Insufficient stock: {p.quantity} available, {quantity} requested")
-            p.quantity -= quantity
-            p.save(update_fields=["quantity"])
-            return cls.objects.create(
-                product=p, user=user, quantity=quantity,
-                expires_at=timezone.now() + timedelta(minutes=minutes),
-            )
+        from .service import reserve as svc_reserve
+        return svc_reserve(
+            user=user, product=product, quantity=quantity, minutes=minutes,
+        )
 
     def release(self):
-        with transaction.atomic():
-            if not self.is_active:
-                return
-            from apps.products.models import Product
-            p = Product.objects.select_for_update().get(pk=self.product_id)
-            p.quantity += self.quantity
-            if p.quantity > 0 and not p.is_active and not p.is_archived:
-                p.is_active = True
-            p.save(update_fields=["quantity", "is_active"])
-            self.is_active = False
-            self.save(update_fields=["is_active"])
+        from .service import release_reservation
+        release_reservation(self)
 
 
 class LowStockAlert(models.Model):

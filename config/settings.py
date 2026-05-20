@@ -824,6 +824,16 @@ LOG_FORMAT = os.environ.get('LOG_FORMAT', 'json')  # 'json' or 'text'
 # never turn off in production.
 LOG_PII_REDACTION_ENABLED = os.environ.get('LOG_PII_REDACTION_ENABLED', '1') != '0'
 
+# ── Image upload security (middleware/image_security.py) ─────────
+# Tune from upload telemetry. Defaults are conservative for a
+# marketplace at scale: product photos rarely need to exceed 12k px
+# on a side or 50 MP total; avatars are 300px square.
+IMAGE_MAX_FILE_BYTES    = int(os.environ.get('IMAGE_MAX_FILE_BYTES', 10 * 1024 * 1024))
+IMAGE_MAX_PIXELS        = int(os.environ.get('IMAGE_MAX_PIXELS', 50_000_000))
+IMAGE_MAX_DIMENSION     = int(os.environ.get('IMAGE_MAX_DIMENSION', 12_000))
+IMAGE_MIN_ASPECT_RATIO  = float(os.environ.get('IMAGE_MIN_ASPECT_RATIO', '0.1'))
+IMAGE_MAX_FRAMES        = int(os.environ.get('IMAGE_MAX_FRAMES', 50))
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

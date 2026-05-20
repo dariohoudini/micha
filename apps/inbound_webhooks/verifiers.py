@@ -45,14 +45,41 @@ class BaseVerifier:
         raise NotImplementedError
 
 
-# ─── AppyPay (HMAC-SHA256 over body only) ─────────────────────────────────
+# ─── AppyPay (HMAC-SHA256) ────────────────────────────────────────────────
 class AppyPayVerifier(BaseVerifier):
+    """AppyPay webhook signature verification.
+
+    Two modes governed by ``settings.APPYPAY_REQUIRE_TIMESTAMP``:
+
+      • False (default, back-compat): HMAC-SHA256 over body only. A
+        timestamp header is OPTIONAL; if present, freshness is enforced
+        but the timestamp is NOT bound into the signature.
+
+      • True (strong): timestamp header REQUIRED. Signature is computed
+        over ``"<ts>.<body>"`` (Stripe-style binding). An attacker who
+        captures a leaked secret only has a 5-minute window to forge
+        signatures; outside that window the freshness check rejects.
+
+    Operators flip the strong flag once AppyPay's signing implementation
+    supports timestamp binding. Until then we ship back-compat behaviour
+    so the integration keeps working.
+
+    Why this matters
+    ────────────────
+    The HMAC-over-body-only mode is replay-safe at OUR layer (the
+    decorator dedupes by body_sha256), but provides no defence if the
+    signing secret leaks. Stripe-style timestamp binding bounds the
+    blast radius to the freshness window.
+    """
     provider = 'appypay'
     header_name = 'HTTP_X_APPYPAY_SIGNATURE'
     timestamp_header_name = 'HTTP_X_APPYPAY_TIMESTAMP'
 
     def _secret(self) -> str:
         return getattr(settings, 'APPYPAY_SECRET', '') or ''
+
+    def _require_timestamp(self) -> bool:
+        return bool(getattr(settings, 'APPYPAY_REQUIRE_TIMESTAMP', False))
 
     def verify(self, request) -> VerifyResult:
         from .models import WebhookStatus
@@ -68,29 +95,40 @@ class AppyPayVerifier(BaseVerifier):
             return VerifyResult(False, fail_status=WebhookStatus.MISSING_SIGNATURE)
 
         body = request.body or b''
-        # AppyPay docs: HMAC-SHA256(secret, body) hex-encoded.
-        # If they later add a timestamp, we'll fold it in here.
-        expected = hmac.new(secret.encode('utf-8'), body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, sig):
-            return VerifyResult(False, fail_status=WebhookStatus.SIGNATURE_INVALID)
+        require_ts = self._require_timestamp()
 
-        # Optional timestamp header — enforce if present
+        # Timestamp parse + freshness — required in strong mode.
         ts_str = request.META.get(self.timestamp_header_name, '').strip()
         ts: Optional[int] = None
         if ts_str:
             try:
                 ts = int(ts_str)
-                if abs(time.time() - ts) > DEFAULT_MAX_TIMESTAMP_AGE_SECONDS:
-                    return VerifyResult(False, fail_status=WebhookStatus.STALE_TIMESTAMP, timestamp=ts)
             except ValueError:
                 return VerifyResult(False, fail_status=WebhookStatus.STALE_TIMESTAMP)
+            if abs(time.time() - ts) > DEFAULT_MAX_TIMESTAMP_AGE_SECONDS:
+                return VerifyResult(False, fail_status=WebhookStatus.STALE_TIMESTAMP, timestamp=ts)
+        elif require_ts:
+            # Strong mode demands a timestamp; absence == missing signature
+            # component, not "stale timestamp" — be honest about the cause.
+            return VerifyResult(False, fail_status=WebhookStatus.MISSING_SIGNATURE)
+
+        # Compute expected signature. Strong mode binds the timestamp
+        # into the HMAC input so an attacker who captures a leaked
+        # secret can't forge signatures outside the freshness window.
+        if require_ts and ts is not None:
+            signed_input = f'{ts}.'.encode('utf-8') + body
+        else:
+            signed_input = body
+        expected = hmac.new(secret.encode('utf-8'), signed_input, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return VerifyResult(False, fail_status=WebhookStatus.SIGNATURE_INVALID, timestamp=ts)
 
         # Parse the body
         try:
             import json
             parsed = json.loads(body.decode('utf-8') or '{}')
         except Exception:
-            return VerifyResult(False, fail_status=WebhookStatus.MALFORMED)
+            return VerifyResult(False, fail_status=WebhookStatus.MALFORMED, timestamp=ts)
         event_type = (parsed.get('event') or parsed.get('type') or '')[:80]
 
         return VerifyResult(True, event_type=event_type, timestamp=ts, parsed=parsed)

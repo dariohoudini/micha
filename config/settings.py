@@ -919,6 +919,30 @@ FX_REFRESH_PAIRS = [
     ('BRL', 'AOA'), ('AOA', 'BRL'),
 ]
 
+# ── Inbound webhook hardening (apps/inbound_webhooks/) ────────
+# Per-webhook body cap. Providers send small JSON; anything larger
+# is almost certainly an attack. 64 KB is generous for normal traffic.
+WEBHOOK_MAX_BODY_BYTES = int(os.environ.get('WEBHOOK_MAX_BODY_BYTES', 64 * 1024))
+
+# Source-IP allowlist per provider (defence-in-depth — signature
+# verification remains the primary control). Empty / missing entry
+# disables IP enforcement for that provider. Populate from each
+# provider's published egress IP ranges.
+#
+# Example (real IPs go in via env in prod):
+#   WEBHOOK_ALLOWED_IPS = {
+#       'appypay': ['41.220.x.y', '102.165.a.b'],
+#       'stripe':  ['54.187.174.169', '54.187.205.235'],
+#   }
+WEBHOOK_ALLOWED_IPS = {}
+
+# Strong-mode AppyPay signing: bind the timestamp into the HMAC input
+# (Stripe-style). Default False for back-compat with the legacy
+# body-only signature; flip to True once AppyPay's signing
+# implementation supports timestamp binding. When True, a leaked
+# secret bounds the forgery window to 5 minutes (DEFAULT_MAX_TIMESTAMP_AGE).
+APPYPAY_REQUIRE_TIMESTAMP = os.environ.get('APPYPAY_REQUIRE_TIMESTAMP', '0') == '1'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

@@ -73,13 +73,79 @@ def _response_for(status: int, body):
     return HttpResponse(body_json, status=status, content_type='application/json')
 
 
+def _max_body_bytes() -> int:
+    """Per-webhook body size cap. Defaults to 64 KB — providers ship
+    small JSON payloads; anything larger is almost certainly garbage
+    or an attack. Override via settings.WEBHOOK_MAX_BODY_BYTES."""
+    try:
+        from django.conf import settings
+        return int(getattr(settings, 'WEBHOOK_MAX_BODY_BYTES', 64 * 1024))
+    except Exception:
+        return 64 * 1024
+
+
+def _allowed_ips_for(provider: str) -> set:
+    """Source-IP allowlist for the given provider. Defence-in-depth:
+    even if the signing secret leaks, an attacker who can't appear from
+    the gateway's known egress IPs can't deliver forged webhooks.
+
+    Configured via settings.WEBHOOK_ALLOWED_IPS — a dict mapping
+    provider key to a list of IP strings:
+
+        WEBHOOK_ALLOWED_IPS = {
+            'appypay': ['41.x.y.z', '102.a.b.c'],
+            'stripe':  ['54.187.174.169', ...],
+        }
+
+    Empty / missing entry = no IP enforcement for that provider
+    (fail-open is acceptable because signature verification is the
+    primary defence; this is the optional second layer).
+    """
+    try:
+        from django.conf import settings
+        mapping = getattr(settings, 'WEBHOOK_ALLOWED_IPS', {}) or {}
+        return set(mapping.get(provider, []) or [])
+    except Exception:
+        return set()
+
+
 def verified_webhook(provider: str):
     """Decorator factory. ``provider`` must match a verifier in the registry."""
     def decorator(view_method):
         @functools.wraps(view_method)
         def wrapper(self, request, *args, **kwargs):
             start = _time.monotonic()
+
+            # ── 0a. Body size cap ─────────────────────────────────────────
+            # Read body length WITHOUT materialising the full payload first.
+            # Django has already loaded request.body by this point (it's a
+            # property that streams + caches), so we check the cached value's
+            # size. The DATA_UPLOAD_MAX_MEMORY_SIZE Django setting is the
+            # absolute outer bound; this cap is webhook-specific.
             body = request.body or b''
+            if len(body) > _max_body_bytes():
+                _safe_log_security(
+                    'webhook_body_too_large', request, 'WARNING',
+                    {'provider': provider, 'bytes': len(body),
+                     'cap': _max_body_bytes()},
+                )
+                return _response_for(413, {'error': 'body_too_large'})
+
+            # ── 0b. Source IP allowlist (defence-in-depth) ────────────────
+            # When configured, ONLY accept webhooks from the known gateway
+            # egress IPs. Empty list = no enforcement (signature verification
+            # alone). When the secret leaks, this is the second wall.
+            allowed = _allowed_ips_for(provider)
+            if allowed:
+                src_ip = _client_ip(request)
+                if src_ip not in allowed:
+                    _safe_log_security(
+                        'webhook_ip_not_allowed', request, 'CRITICAL',
+                        {'provider': provider, 'src_ip': src_ip,
+                         'allowed_count': len(allowed)},
+                    )
+                    return _response_for(403, {'error': 'forbidden'})
+
             body_hash = InboundWebhookEvent.hash_body(body)
             signature_header = (
                 request.META.get('HTTP_X_APPYPAY_SIGNATURE', '')

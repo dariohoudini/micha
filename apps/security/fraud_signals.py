@@ -207,10 +207,15 @@ class AccountTakeoverDetector:
                         description='2FA disabled within 3 days before high-value order',
                     ))
 
-            # New device/IP + immediate high-value order
+            # New device/IP + immediate high-value order.
+            # SECURITY BOUNDARY: this IP becomes the "current device" that
+            # subsequent logins are checked against for ATO detection.
+            # XFF must be honoured ONLY behind a trusted proxy — otherwise
+            # an attacker spoofs XFF and gets a different IP-hash per
+            # request, defeating the new-IP signal entirely.
             if request:
-                forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
-                current_ip = forwarded.split(',')[0].strip() if forwarded else request.META.get('REMOTE_ADDR', '')
+                from middleware.client_ip import get_client_ip
+                current_ip = get_client_ip(request, trusted_only=True)
                 current_ip_hash = hashlib.sha256(current_ip.encode()).hexdigest()[:16]
                 last_ip = user.last_login_ip
 

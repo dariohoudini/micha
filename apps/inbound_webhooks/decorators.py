@@ -46,11 +46,18 @@ log = logging.getLogger(__name__)
 MAX_BODY_EXCERPT = 4000
 
 
-def _client_ip(request):
-    xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    if xff:
-        return xff.split(',')[0].strip()[:45]
-    return (request.META.get('REMOTE_ADDR') or '')[:45]
+def _client_ip(request, *, security_boundary: bool = False):
+    """Resolve client IP.
+
+    For audit-row writes (forensic), the lenient default is acceptable
+    — we want the *claimed* IP for incident review even if it's
+    spoofable. For the SECURITY allowlist gate (``_allowed_ips_for``)
+    we MUST pass ``security_boundary=True``; otherwise the IP allowlist
+    is bypassable by anyone who sends an X-Forwarded-For header
+    claiming a whitelisted IP.
+    """
+    from middleware.client_ip import get_client_ip
+    return get_client_ip(request, trusted_only=security_boundary)
 
 
 def _safe_log_security(event_name, request, severity, details):
@@ -137,7 +144,13 @@ def verified_webhook(provider: str):
             # alone). When the secret leaks, this is the second wall.
             allowed = _allowed_ips_for(provider)
             if allowed:
-                src_ip = _client_ip(request)
+                # SECURITY BOUNDARY: ``security_boundary=True`` means XFF
+                # is honoured ONLY when REMOTE_ADDR is in
+                # ``settings.TRUSTED_PROXY_IPS``. Without this, ANY
+                # client could send ``X-Forwarded-For: <allowed_ip>``
+                # and bypass the allowlist — making the defence layer
+                # decorative.
+                src_ip = _client_ip(request, security_boundary=True)
                 if src_ip not in allowed:
                     _safe_log_security(
                         'webhook_ip_not_allowed', request, 'CRITICAL',

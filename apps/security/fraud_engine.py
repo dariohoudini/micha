@@ -404,9 +404,13 @@ class FraudEngine:
         try:
             from apps.security.models import FraudAlert
 
-            # Get client IP
-            forwarded = self.request.META.get('HTTP_X_FORWARDED_FOR')
-            ip = forwarded.split(',')[0].strip() if forwarded else self.request.META.get('REMOTE_ADDR', '')
+            # Get client IP — SECURITY BOUNDARY. The hashed IP is then
+            # cross-referenced against other users' alerts to detect
+            # shared-attacker patterns. If XFF were honoured from any
+            # source, an attacker could rotate XFF values per request
+            # to defeat the shared-IP correlation entirely.
+            from middleware.client_ip import get_client_ip
+            ip = get_client_ip(self.request, trusted_only=True)
 
             if not ip:
                 return

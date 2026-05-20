@@ -109,10 +109,6 @@ def _band_rates() -> dict:
     }
 
 
-def _trusted_proxies() -> set:
-    return set(_setting('TRUSTED_PROXY_IPS', []) or [])
-
-
 def _skip_paths() -> set:
     return set(_setting('RATE_LIMITER_SKIP_PATHS', ['/health/', '/metrics']) or [])
 
@@ -134,20 +130,17 @@ def _disabled() -> bool:
 
 
 def _client_ip(request) -> str:
-    """Resolve client IP with trusted-proxy XFF.
+    """Resolve client IP with trusted-proxy XFF — delegates to the
+    canonical ``middleware.client_ip.get_client_ip`` helper.
 
-    XFF is honoured ONLY if REMOTE_ADDR is in TRUSTED_PROXY_IPS. This
-    closes the spoof: a direct client can send any XFF header but we
-    only respect it when it comes through a known proxy.
+    Rate limiting IS a security boundary, so ``trusted_only=True``:
+    XFF is honoured ONLY if REMOTE_ADDR is in TRUSTED_PROXY_IPS. A
+    direct client sending an arbitrary X-Forwarded-For header gets
+    its REMOTE_ADDR returned instead — the spoof is defeated at this
+    layer.
     """
-    remote = (request.META.get('REMOTE_ADDR') or '').strip()
-    trusted = _trusted_proxies()
-    if remote and remote in trusted:
-        xff = (request.META.get('HTTP_X_FORWARDED_FOR') or '').strip()
-        if xff:
-            # XFF is comma-separated; the LEFTMOST is the original client.
-            return xff.split(',')[0].strip()[:45]
-    return remote[:45]
+    from middleware.client_ip import get_client_ip
+    return get_client_ip(request, trusted_only=True)
 
 
 def _sliding_window_count(key: str, window_seconds: int, now: float) -> int:

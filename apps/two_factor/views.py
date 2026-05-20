@@ -11,8 +11,15 @@ from .models import UserTOTP, TrustedDevice, BackupCode
 
 
 def _client_ip(request) -> str:
-    xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    return (xff.split(',')[0].strip() if xff else (request.META.get('REMOTE_ADDR') or ''))[:45]
+    """SECURITY BOUNDARY: the IP captured at 2FA enrolment / trusted-
+    device registration is later compared against subsequent login IPs
+    for new-device detection. If XFF were trusted from any source, an
+    attacker spoofing XFF would either: (a) defeat the new-device
+    alert at login time, or (b) trigger it spuriously to drown the
+    user in alert fatigue. Strict mode closes both.
+    """
+    from middleware.client_ip import get_client_ip
+    return get_client_ip(request, trusted_only=True)
 
 
 def _ua(request) -> str:

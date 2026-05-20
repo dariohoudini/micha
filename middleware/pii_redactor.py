@@ -136,6 +136,18 @@ _AUTH_HEADER_RE = re.compile(
     r'(?i)(authorization\s*[:=]\s*)(\S+)'
 )
 
+# Inline credential assignments — common in source code lines captured
+# in tracebacks: ``password="hunter2"``, ``api_key=sk_live_xxx``,
+# ``token: 'abc'``. We catch a small set of credential-named keywords
+# and mask the value. Keeps the keyword so the masked output stays
+# readable; masks the value out to the next quote / comma / whitespace.
+_INLINE_CRED_RE = re.compile(
+    r'(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|'
+    r'access[_-]?token|refresh[_-]?token|cvv|cvc|pan|card[_-]?number|'
+    r'otp|totp|2fa[_-]?code|private[_-]?key)\s*[:=]\s*'
+    r'(["\']?)([^"\'\s,;)\]}]+)\2'
+)
+
 
 _REDACT = '[REDACTED]'
 
@@ -163,6 +175,14 @@ def redact_text(text: str) -> str:
     # Authorization headers: keep the prefix so debugging can see
     # what header was set, scrub the value.
     text = _AUTH_HEADER_RE.sub(lambda m: f'{m.group(1)}{_REDACT}', text)
+
+    # Inline credential assignments (password="x", api_key=foo) — most
+    # commonly hit in source-code lines captured by Sentry stacktraces
+    # and in shell-style log strings.
+    text = _INLINE_CRED_RE.sub(
+        lambda m: f'{m.group(1)}={m.group(2)}{_REDACT}{m.group(2)}',
+        text,
+    )
 
     # OTP-shape with hint: replace the digit run, keep the hint word.
     text = _OTP_HINT_RE.sub(lambda m: f'{m.group(1)} {_REDACT}', text)

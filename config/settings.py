@@ -888,17 +888,30 @@ GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 APPLE_CLIENT_ID = os.environ.get('APPLE_CLIENT_ID', '')
 
 # ── Sentry ────────────────────────────────────────────────────────────────────
+# send_default_pii=False is necessary but NOT sufficient — it strips
+# Django defaults (cookies, body, user) but log breadcrumbs, extra=
+# kwargs, exception messages, stacktrace frame locals, and transaction
+# URLs all carry PII unless we explicitly scrub. before_send delegates
+# to middleware/sentry_scrub.py which reuses the PII redactor
+# (middleware/pii_redactor.py) so the same scrub rules apply to errors
+# and traces as to log lines.
 if SENTRY_DSN:
     try:
         import sentry_sdk
         from sentry_sdk.integrations.django import DjangoIntegration
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.redis import RedisIntegration
+        from middleware.sentry_scrub import (
+            before_send as _sentry_before_send,
+            before_send_transaction as _sentry_before_send_tx,
+        )
         sentry_sdk.init(
             dsn=SENTRY_DSN,
             integrations=[DjangoIntegration(), CeleryIntegration(), RedisIntegration()],
             traces_sample_rate=0.1,
             send_default_pii=False,
+            before_send=_sentry_before_send,
+            before_send_transaction=_sentry_before_send_tx,
         )
     except ImportError:
         pass

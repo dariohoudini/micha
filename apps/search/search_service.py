@@ -49,17 +49,23 @@ class ProductSearchService:
         filters = filters or {}
         qs = Product.objects.filter(is_active=True)
 
-        # Full-text search across name, description, tags
-        if query and query.strip():
-            words = query.strip().split()[:10]
-            q_filter = Q()
-            for word in words:
-                if len(word) > 1:
+        # Full-text search across name + description.
+        # Sanitise BEFORE tokenising — caps total length, strips control
+        # characters, escapes LIKE wildcards (% and _). Untokenised /
+        # unsanitised input was a real pathological-input vector: a 5000-
+        # char single token compiled to a Postgres LIKE that pinned a
+        # worker for seconds.
+        if query:
+            from .safe_query import sanitize_query, tokenize_safe
+            tokens = tokenize_safe(sanitize_query(query))
+            if tokens:
+                q_filter = Q()
+                for tok in tokens:
                     q_filter |= (
-                        Q(name__icontains=word) |
-                        Q(description__icontains=word)
+                        Q(title__icontains=tok) |
+                        Q(description__icontains=tok)
                     )
-            qs = qs.filter(q_filter)
+                qs = qs.filter(q_filter)
 
         # Apply filters
         if filters.get('category'):
@@ -75,14 +81,23 @@ class ProductSearchService:
         if filters.get('is_express'):
             qs = qs.filter(is_express=True)
 
-        # Sorting
+        # Sorting — pick fields that EXIST on Product. The legacy
+        # sort_map referenced fields (total_views / avg_rating /
+        # is_express) that don't live on the current model; building
+        # the orderable list from _meta avoids FieldError at query time
+        # and keeps the contract resilient as the schema evolves.
+        _fields = {f.name for f in Product._meta.get_fields()}
+
+        def _ord(*candidates):
+            return [c for c in candidates if c.lstrip('-') in _fields] or ['-created_at']
+
         sort_map = {
-            'relevance':   ['-total_views', '-avg_rating', '-created_at'],
-            'price_asc':   ['price'],
-            'price_desc':  ['-price'],
-            'newest':      ['-created_at'],
-            'rating':      ['-avg_rating'],
-            'popular':     ['-total_views'],
+            'relevance':   _ord('-views', '-created_at'),
+            'price_asc':   _ord('price'),
+            'price_desc':  _ord('-price'),
+            'newest':      _ord('-created_at'),
+            'rating':      _ord('-views', '-created_at'),
+            'popular':     _ord('-views', '-created_at'),
         }
         qs = qs.order_by(*sort_map.get(sort, sort_map['relevance']))
 
@@ -92,12 +107,20 @@ class ProductSearchService:
         # Compute facets for filter UI
         facets = cls._compute_facets(qs)
 
+        # Project to a stable contract — only fields that actually exist
+        # on the Product model. Unknown fields raise FieldError at query
+        # time which the legacy code masked by never running.
+        from apps.products.models import Product as _P
+        _all_fields = {f.name for f in _P._meta.get_fields()}
+        _projection = [
+            f for f in (
+                'id', 'title', 'price', 'category',
+                'created_at',
+            )
+            if f in _all_fields
+        ]
         return {
-            'products': list(products.values(
-                'id', 'name', 'price', 'category',
-                'avg_rating', 'total_views', 'is_express',
-                'created_at'
-            )),
+            'products': list(products.values(*_projection)),
             'total': total,
             'facets': facets,
             'zero_results': total == 0,
@@ -198,35 +221,50 @@ class AutocompleteService:
 
     @classmethod
     def suggest(cls, prefix: str, limit: int = 8) -> list:
-        """Returns autocomplete suggestions for a search prefix."""
+        """Returns autocomplete suggestions for a search prefix.
+
+        Hardening
+        ──────────
+        • Prefix is sanitised (LIKE-escape, control-strip, length cap)
+          before any DB hit. ``%a`` no longer degenerates to "match
+          anything starting with anything-then-a".
+
+        • Suggestions FROM users' past search queries
+          (SearchQuery.raw_query) are filtered through
+          ``trusted_autocomplete_queries`` — only queries searched by
+          ≥ N DISTINCT users surface. Without this, a single actor
+          could pre-warm the autocomplete stream that every other
+          user sees by hammering the same adversarial query for an
+          hour.
+        """
         if not prefix or len(prefix) < 2:
             return []
 
+        from .safe_query import sanitize_query, trusted_autocomplete_queries
+        safe_prefix = sanitize_query(prefix, max_len=40)
+        if not safe_prefix:
+            return []
+
         from django.core.cache import cache
-        cache_key = f"autocomplete:{prefix.lower()[:20]}"
+        cache_key = f"autocomplete:{safe_prefix.lower()[:20]}"
         cached = cache.get(cache_key)
         if cached:
             return cached
 
         try:
             from apps.products.models import Product
+            # Product names are admin/seller-controlled content, OK to
+            # serve directly. Still bounded by ``limit``.
             suggestions = list(
                 Product.objects.filter(
                     is_active=True,
-                    name__istartswith=prefix
-                ).values_list('name', flat=True)
+                    title__istartswith=safe_prefix,
+                ).values_list('title', flat=True)
                 .distinct()[:limit]
             )
 
-            # Also get category matches
-            from apps.ai_engine.models import SearchQuery
-            popular = list(
-                SearchQuery.objects.filter(
-                    raw_query__istartswith=prefix,
-                    results_count__gt=0,
-                ).values('raw_query').distinct()[:4]
-                .values_list('raw_query', flat=True)
-            )
+            # Trusted-only suggestions from user search history.
+            popular = trusted_autocomplete_queries(safe_prefix, limit=4)
             suggestions = list(dict.fromkeys(suggestions + popular))[:limit]
 
             cache.set(cache_key, suggestions, timeout=300)  # 5 min cache

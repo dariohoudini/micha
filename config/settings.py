@@ -943,6 +943,16 @@ WEBHOOK_ALLOWED_IPS = {}
 # secret bounds the forgery window to 5 minutes (DEFAULT_MAX_TIMESTAMP_AGE).
 APPYPAY_REQUIRE_TIMESTAMP = os.environ.get('APPYPAY_REQUIRE_TIMESTAMP', '0') == '1'
 
+# ── Search input hardening (apps/search/safe_query.py) ────────
+# Caps applied at sanitize_query / tokenize_safe time. The defaults are
+# conservative for a marketplace search: longer queries don't return
+# better results in practice and the cost of permissive limits is
+# pathological-input vulnerability.
+SEARCH_MAX_QUERY_CHARS = int(os.environ.get('SEARCH_MAX_QUERY_CHARS', '80'))
+SEARCH_MAX_TOKENS      = int(os.environ.get('SEARCH_MAX_TOKENS', '10'))
+SEARCH_MAX_TOKEN_CHARS = int(os.environ.get('SEARCH_MAX_TOKEN_CHARS', '40'))
+SEARCH_MIN_TOKEN_CHARS = int(os.environ.get('SEARCH_MIN_TOKEN_CHARS', '2'))
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

@@ -174,8 +174,38 @@ def process_refund(refund) -> 'Refund':
             locked.processed_at = timezone.now()
             locked.last_error = ''
             locked.next_attempt_at = None
+            # Backfill gateway_refund_id from the PaymentEvent audit log
+            # so reconciliation can join Refund rows to gateway records.
+            # PaymentProcessor.refund logs the gateway_refund_id into
+            # the 'refunded' (or 'refund_replay') event's details.
+            try:
+                from apps.payments.models import PaymentEvent
+                from apps.orders.models import Payment
+                pay = Payment.objects.filter(
+                    order_id=locked.order_id,
+                ).order_by('-created_at').first()
+                if pay is not None:
+                    ev = (
+                        PaymentEvent.objects
+                        .filter(
+                            payment=pay,
+                            event_type__in=('refunded', 'refund_replay'),
+                        )
+                        .order_by('-created_at')
+                        .first()
+                    )
+                    if ev is not None:
+                        gw_id = (ev.details or {}).get('gateway_refund_id', '')
+                        if gw_id:
+                            locked.gateway_refund_id = str(gw_id)[:128]
+            except Exception:
+                # Backfill is observability-only — never block the
+                # success path on it.
+                log.warning('refund: gateway_refund_id backfill failed',
+                            exc_info=True)
             locked.save(update_fields=[
                 'status', 'processed_at', 'last_error', 'next_attempt_at',
+                'gateway_refund_id',
             ])
             log.info(
                 'refund processed',

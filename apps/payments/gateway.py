@@ -524,51 +524,151 @@ class PaymentProcessor:
     def refund(self, order, amount: Decimal = None, reason: str = 'customer_request') -> bool:
         """
         Initiate refund for an order.
-        Atomic: debits wallet before sending refund request to gateway.
+
+        Ordering — gateway first, local second
+        ───────────────────────────────────────
+        Prior implementation: debit wallet + flip Payment status + state
+        transition inside an atomic block, THEN call the gateway. If the
+        gateway call raised (network blip, 5xx, timeout), the wallet had
+        already been debited and the order showed 'refunded' — but the
+        buyer's card was NEVER actually credited. Worse, the refund
+        worker would mark the row 'rejected' (because Payment.status was
+        no longer CONFIRMED on retry) and the buyer would be told the
+        refund was issued. Pure financial leak.
+
+        New ordering:
+          1. Call gateway FIRST. Gateway is the source of truth for
+             whether the buyer actually got the money.
+          2. ONLY on gateway success, run the atomic block to update
+             local state (wallet debit, Payment.status, state machine).
+
+        If the gateway call fails: nothing local has changed. The refund
+        worker catches the exception, applies backoff, and retries. The
+        gateway's own deterministic idempotency key
+        (refund_<payment.id>_<amount>) means a retry on the same payment
+        + amount returns the existing refund_id — no double-refund risk.
+
+        If the gateway succeeds but the local atomic block fails: the
+        gateway has the canonical refund. PaymentEvent is the immutable
+        audit; reconciliation can detect the gap by comparing
+        Payment.status against PaymentEvent('refunded') rows for the
+        same payment.
+
+        Idempotency
+        ───────────
+        Calling on an already-REFUNDED payment is a no-op that returns
+        True. The prior version raised "No confirmed payment found",
+        which the refund worker maps to permanent-rejected — incorrect
+        for an already-successful refund.
         """
         from apps.orders.models import Payment
 
+        # Accept already-REFUNDED payments so a retry of an in-flight
+        # refund that succeeded at the gateway but failed locally is
+        # recognised as already-done rather than rejected.
         payment = Payment.objects.filter(
             order=order,
-            status=PaymentState.CONFIRMED,
-        ).first()
+            status__in=(PaymentState.CONFIRMED, PaymentState.REFUNDED),
+        ).order_by('-created_at').first()
 
         if not payment:
             raise PaymentGatewayError('No confirmed payment found for this order')
 
         refund_amount = amount or payment.amount
 
+        # Atomic test-and-set via cache.add — replaces the prior
+        # get-then-set which had a TOCTOU race under any concurrency.
         refund_key = f'refund_lock:{payment.id}'
-        if cache.get(refund_key):
+        if not cache.add(refund_key, True, timeout=60):
             raise PaymentGatewayError('Refund already in progress for this payment')
-        cache.set(refund_key, True, timeout=60)
 
         try:
+            # ── Step 1: Call gateway FIRST (source of truth) ──────────
+            #
+            # If we're already at REFUNDED locally, this is a reconcile
+            # attempt — call the gateway anyway (its idempotency_key
+            # replays the original refund_id) so we get a confirming
+            # response and an audit log. If gateway raises, propagate
+            # to caller; nothing local has been touched yet.
+            gateway_result = self.gateway.refund_payment(
+                payment, refund_amount, reason,
+            )
+            gateway_refund_id = str(gateway_result.get('refund_id', '')) if isinstance(gateway_result, dict) else ''
+
+            # ── Step 2: Local state update — gateway succeeded ────────
             with transaction.atomic():
-                # Debit seller wallet first
+                # Re-fetch under lock — defends against a concurrent
+                # transition that ran while we waited on the gateway.
+                payment_locked = Payment.objects.select_for_update().get(
+                    pk=payment.pk,
+                )
+
+                if payment_locked.status == PaymentState.REFUNDED:
+                    # Already reconciled locally. Log a replay event so
+                    # ops can correlate the duplicate gateway call.
+                    self.logger.log(
+                        payment_locked, 'refund_replay',
+                        {
+                            'amount': str(refund_amount),
+                            'reason': reason,
+                            'gateway_refund_id': gateway_refund_id,
+                        },
+                    )
+                    return True
+
+                # Debit seller wallet (or pending_balance if that's
+                # where the funds live). Wrapped wide because a missing
+                # wallet shouldn't block the refund — the gateway has
+                # already credited the buyer.
                 try:
                     from apps.payments.models import SellerWallet
-                    # select_for_update locks the wallet row for the
-                    # duration of this transaction — no TOCTOU race
-                    # against concurrent refund attempts on this seller.
                     wallet = SellerWallet.objects.select_for_update().get(
-                        seller=order.seller
+                        seller=order.seller,
                     )
                     if wallet.balance >= refund_amount:
                         wallet.debit(
                             refund_amount,
                             f'Refund for order {str(order.id)[:8]}',
-                            reference=f'REFUND-{payment.gateway_reference}',
+                            reference=f'REFUND-{payment_locked.gateway_reference}',
                         )
                     elif wallet.pending_balance >= refund_amount:
                         wallet.pending_balance -= refund_amount
                         wallet.save(update_fields=['pending_balance', 'updated_at'])
+                    else:
+                        # Seller's wallet doesn't cover the refund —
+                        # platform eats the gap. Log it loudly so ops
+                        # can chase clawback.
+                        logger.warning(
+                            'refund: wallet underfunded — platform absorbs gap',
+                            extra={
+                                'payment_id': str(payment_locked.pk),
+                                'order_id': str(order.id),
+                                'amount': str(refund_amount),
+                                'wallet_balance': str(wallet.balance),
+                                'wallet_pending': str(wallet.pending_balance),
+                                'gateway_refund_id': gateway_refund_id,
+                            },
+                        )
+                except SellerWallet.DoesNotExist:
+                    logger.warning(
+                        'refund: seller wallet missing — gateway already refunded',
+                        extra={
+                            'payment_id': str(payment_locked.pk),
+                            'order_id': str(order.id),
+                            'gateway_refund_id': gateway_refund_id,
+                        },
+                    )
                 except Exception as e:
-                    logger.error(f'Wallet debit failed for refund: {e}')
+                    logger.error(
+                        f'refund: wallet debit failed AFTER gateway refunded: {e}',
+                        exc_info=True,
+                    )
 
-                Payment.objects.filter(id=payment.id).update(
+                # Flip Payment to REFUNDED.
+                Payment.objects.filter(pk=payment_locked.pk).update(
                     status=PaymentState.REFUNDED,
                 )
+
                 # Route through the state machine so the refund transition
                 # gets audited + protection-state-recalced. admin_override
                 # because refunds may be initiated from terminal states
@@ -580,16 +680,24 @@ class PaymentProcessor:
                     _state_transition(
                         order, 'refunded',
                         source='gateway:refund_payment',
-                        note=f'Refund {refund_amount} via {payment.method}',
+                        note=f'Refund {refund_amount} via {payment_locked.method}',
                         admin_override=True,
                     )
                 except InvalidTransition:
-                    # Already refunded — idempotent
+                    # Already refunded at state-machine layer — idempotent.
                     pass
 
-            # Send refund to gateway
-            self.gateway.refund_payment(payment, refund_amount, reason)
-            self.logger.log(payment, 'refunded', {'amount': str(refund_amount), 'reason': reason})
+                # PaymentEvent inside the atomic block so the audit row
+                # commits together with the status flip. Carries the
+                # gateway_refund_id for reconciliation joins.
+                self.logger.log(
+                    payment_locked, 'refunded',
+                    {
+                        'amount': str(refund_amount),
+                        'reason': reason,
+                        'gateway_refund_id': gateway_refund_id,
+                    },
+                )
 
             return True
 

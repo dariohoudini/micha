@@ -40,11 +40,36 @@ class ProductSearchService:
     def _search_orm(cls, query: str, filters: dict = None,
                     sort: str = 'relevance', limit: int = 20,
                     offset: int = 0, user=None) -> dict:
-        """Django ORM search — works without Elasticsearch."""
+        """Django ORM search — works without Elasticsearch.
+
+        Wrapped in a 2-second statement_timeout: search MUST fail fast
+        rather than hold a pooled connection. The middleware applies
+        the same cap when this is called through the /api/v1/search/
+        route; the context manager here also covers direct callers
+        (e.g. AI engine, sagas, admin tools).
+        """
+        from middleware.db_timeout import statement_timeout
         try:
             from apps.products.models import Product
         except ImportError:
             return cls._empty_result()
+
+        # Defensive cap. The OperationalError raised on timeout
+        # (psycopg2.errors.QueryCanceled) propagates as a DatabaseError
+        # to the view, which renders 500 via the standard exception
+        # handler. That's correct: a search query that takes > 2s on
+        # well-indexed tables is a bug somewhere, and 500 is the right
+        # signal to incident response.
+        with statement_timeout(2000):
+            return cls.__search_orm_inner(
+                Product, query, filters, sort, limit, offset, user,
+            )
+
+    @classmethod
+    def __search_orm_inner(cls, Product, query, filters, sort, limit, offset, user):
+        """Inner implementation — exists so the outer wrapper can
+        apply the statement_timeout context manager without indenting
+        the whole body."""
 
         filters = filters or {}
         qs = Product.objects.filter(is_active=True)

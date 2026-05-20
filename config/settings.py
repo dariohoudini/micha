@@ -129,6 +129,10 @@ MIDDLEWARE = [
     # AFTER RequestIDMiddleware so 429 responses carry a request_id for
     # incident correlation, but BEFORE all the heavyweight middleware.
     'middleware.rate_limiter.EdgeRateLimiterMiddleware',
+    # Per-path DB statement_timeout. After the rate limiter so banned
+    # IPs don't even cause a SET roundtrip; before view dispatch so the
+    # tighter timeout applies to ALL queries the view runs.
+    'middleware.db_timeout.PerPathStatementTimeoutMiddleware',
     'apps.telemetry.middleware.MetricsMiddleware',
     # QueryBudgetMiddleware OUTSIDE QueryAuditMiddleware so its response-
     # phase code runs AFTER query_audit sets request._db_queries.
@@ -1025,6 +1029,31 @@ TRUSTED_PROXY_IPS = [
     for ip in (os.environ.get('TRUSTED_PROXY_IPS', '') or '').split(',')
     if ip.strip()
 ]
+
+# ── DB statement_timeout (middleware/db_timeout.py) ──────────
+# The DSN-level default is 30s (DATABASES.default.OPTIONS.options).
+# Per-path overrides let hot read endpoints fail FASTER (so one bad
+# query doesn't tie up a pooled connection for 30s), and let admin
+# reports legitimately run LONGER.
+#
+# Lookup is longest-prefix match. Unmatched paths inherit
+# DB_STATEMENT_TIMEOUT_DEFAULT_MS.
+DB_STATEMENT_TIMEOUT_DEFAULT_MS = int(
+    os.environ.get('DB_STATEMENT_TIMEOUT_DEFAULT_MS', '30000')
+)
+DB_STATEMENT_TIMEOUT_BY_PATH = {
+    # Read-heavy public endpoints: fail fast.
+    '/api/v1/search/':       2000,
+    '/api/v1/autocomplete':  1500,
+    '/api/v1/products/':     5000,
+    '/api/v1/categories/':   3000,
+    '/api/v1/store':         5000,
+    # Admin reports + bulk operations: legitimately slow.
+    '/api/v1/admin/reports/':       300_000,  # 5 minutes
+    '/api/v1/admin/exports/':       300_000,
+    '/api/v1/admin/data-rights/':   180_000,  # 3 minutes (GDPR export)
+    '/api/v1/admin/bulk-ops/':      180_000,
+}
 
 LOGGING = {
     'version': 1,

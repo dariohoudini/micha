@@ -1,6 +1,19 @@
 from celery import shared_task
 from django.utils import timezone
 
+@shared_task(name='payments.reconcile_refunds')
+def reconcile_refunds_task(limit=200, window_hours=72):
+    """Detect + repair drift where the gateway refunded but local state
+    didn't catch up. Wraps refund_reconciliation.reconcile_refunds.
+
+    Schedule via CELERY_BEAT_SCHEDULE. Cheap to run every 5 minutes —
+    PaymentProcessor.refund's idempotency makes the repair path safe
+    to re-run even on already-consistent rows.
+    """
+    from .refund_reconciliation import reconcile_refunds
+    return reconcile_refunds(limit=limit, window_hours=window_hours)
+
+
 @shared_task(name='payments.process_pending_refunds')
 def process_pending_refunds_task():
     """Drain Refund(status='pending') rows through the gateway.

@@ -688,6 +688,51 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'high'},
     },
 
+    # ── Refund pipeline (commits 36baec1, 9aa8879, NN) ───────
+    #
+    # Three tasks form the refund-correctness loop:
+    #
+    #  1. process-pending-refunds  — drains Refund(status='pending')
+    #     rows through the gateway. Runs every 2 minutes for tight
+    #     turnaround on disputes / buyer requests / return flows.
+    #
+    #  2. reconcile-refunds        — detects drift where the gateway
+    #     refunded but our local atomic block didn't catch up (the
+    #     "wallet didn't debit but card was credited" residual gap
+    #     left by gateway-first ordering). Idempotent at every layer
+    #     so 5-minute cadence is harmless; runs scoped to last 72h.
+    #
+    #  3. payment-reconciliation   — pre-existing daily sweep that
+    #     reconciles ALL pending Payment rows against the gateway
+    #     (handles missed webhooks). Refund-specific drift is faster
+    #     to find via the dedicated task above.
+    #
+    # All three are queue='high' because refund delay = buyer
+    # complaint = chargeback = much-more-expensive failure.
+
+    'process-pending-refunds': {
+        'task': 'payments.process_pending_refunds',
+        'schedule': 120,  # every 2 minutes
+        'options': {'queue': 'high'},
+    },
+    'reconcile-refunds': {
+        'task': 'payments.reconcile_refunds',
+        'schedule': 300,  # every 5 minutes
+        'options': {'queue': 'high'},
+    },
+
+    # ── Disputes ──────────────────────────────────────────────
+    # SLA sweep auto-resolves disputes where the seller has gone
+    # silent past auto_resolve_at (refund_buyer) OR escalates to
+    # under_review if the seller responded but no admin decision
+    # landed. Without this task, the dispute commit (3812522) is
+    # decorative — disputes sit open forever and NPS tanks.
+    'disputes-sweep-sla': {
+        'task': 'disputes.sweep_dispute_sla',
+        'schedule': crontab(minute='17'),  # hourly at :17 (off-the-hour to spread load)
+        'options': {'queue': 'default'},
+    },
+
     # ── AI Feed Quality ───────────────────────────────────────
     'feed-quality-report': {
         'task': 'ai_engine.check_all_price_drops',  # reuse existing task runner

@@ -124,6 +124,11 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'middleware.logging_middleware.RequestIDMiddleware',
+    # Edge rate limiter — runs EARLY so banned/over-band IPs are
+    # rejected before any view dispatch or DB query happens. Slots in
+    # AFTER RequestIDMiddleware so 429 responses carry a request_id for
+    # incident correlation, but BEFORE all the heavyweight middleware.
+    'middleware.rate_limiter.EdgeRateLimiterMiddleware',
     'apps.telemetry.middleware.MetricsMiddleware',
     # QueryBudgetMiddleware OUTSIDE QueryAuditMiddleware so its response-
     # phase code runs AFTER query_audit sets request._db_queries.
@@ -249,20 +254,41 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
     ],
+    # DRF DEFAULT_THROTTLE_RATES.
+    #
+    # PRIOR BUG: this dict had duplicate keys ('login', 'register', 'otp')
+    # with conflicting values. Python's dict literal silently kept the
+    # LAST value per key, so the table was effectively:
+    #   login=10/minute, register=5/minute, otp=5/minute
+    # The intent of the earlier (forgiving) values was unrecoverable;
+    # the surviving aggressive values are what the security view set
+    # actually relies on (apps/users/views.py uses LoginThrottle +
+    # OTPThrottle on auth endpoints). De-duplicated here to keep the
+    # table truthful.
     'DEFAULT_THROTTLE_RATES': {
+        # Broad bands — apply to authenticated/anonymous traffic by
+        # default. Aggressive vs DDoS but not vs a real human shopping.
         'anon': '10000/hour',
         'user': '10000/hour',
-        'login': '10000/hour',
-        'register': '10000/hour',
-        'otp': '5/hour',
-        'otp_verify': '5/hour',
-        'payment': '20/hour',
-        'login': '10/minute',
-        'register': '5/minute',
-        'otp': '5/minute',
-        'search': '60/minute',
-        'upload': '20/hour',
-        'anon_burst': '30/minute',
+
+        # Auth / OTP — the rates that actually win after dedup.
+        'login':       '10/minute',
+        'register':    '5/minute',
+        'otp':         '5/minute',
+        'otp_verify':  '5/hour',
+
+        # Endpoint-specific scopes (used by view-local Throttle classes).
+        'payment':     '20/hour',
+        'search':      '60/minute',
+        'upload':      '20/hour',
+
+        # Edge guard (middleware/rate_limiter.py) — burst and sustained
+        # bands enforced at the request middleware layer, BEFORE any
+        # DRF processing. These compose with the DRF throttles above:
+        # the middleware shields against IP-scale floods; DRF still
+        # gates per-user / per-endpoint behaviour for everything that
+        # passes the middleware band.
+        'anon_burst':     '30/minute',
         'anon_sustained': '200/hour',
     },
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
@@ -959,6 +985,33 @@ SEARCH_MIN_TOKEN_CHARS = int(os.environ.get('SEARCH_MIN_TOKEN_CHARS', '2'))
 # unauthenticated, unverified bounce/complaint events let an attacker
 # suppress any address by spoofing an SNS-shaped payload.
 SES_WEBHOOK_INSECURE = os.environ.get('SES_WEBHOOK_INSECURE', '0') == '1'
+
+# ── Edge rate limiter (middleware/rate_limiter.py) ───────────
+# Master switch. Disable in dev / tests where the burst band would
+# fire on rapid request loops.
+RATE_LIMITER_ENABLED = os.environ.get('RATE_LIMITER_ENABLED', '1') == '1'
+
+# Paths exempt from rate limiting. Health probes from the load balancer
+# shouldn't count against any band.
+RATE_LIMITER_SKIP_PATHS = ['/health/', '/metrics', '/api/health/']
+
+# Auto-ban escalation. An IP that produces > BAN_THRESHOLD 429s within
+# BAN_THRESHOLD_WINDOW seconds gets banned for BAN_DURATION seconds.
+# Cheap rejection: a banned IP exits at a single cache GET before any
+# band counter increments.
+RATE_LIMITER_BAN_THRESHOLD        = int(os.environ.get('RATE_LIMITER_BAN_THRESHOLD', '5'))
+RATE_LIMITER_BAN_THRESHOLD_WINDOW = int(os.environ.get('RATE_LIMITER_BAN_THRESHOLD_WINDOW', '60'))
+RATE_LIMITER_BAN_DURATION         = int(os.environ.get('RATE_LIMITER_BAN_DURATION', '600'))
+
+# Trusted-proxy IPs for X-Forwarded-For honouring. Without this guard,
+# any client can spoof XFF and look like it's coming from any IP. Set
+# to the load-balancer / reverse-proxy egress IPs (e.g. ['10.0.0.5']).
+# EMPTY in dev so REMOTE_ADDR is used directly.
+TRUSTED_PROXY_IPS = [
+    ip.strip()
+    for ip in (os.environ.get('TRUSTED_PROXY_IPS', '') or '').split(',')
+    if ip.strip()
+]
 
 LOGGING = {
     'version': 1,

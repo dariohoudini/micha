@@ -69,6 +69,8 @@ urlpatterns = [
     path("api/v1/admin/outbox/", include("apps.outbox.urls")),
     path("api/v1/admin/ledger/", include("apps.ledger.urls")),
     path("api/v1/admin/inbound-webhooks/", include("apps.inbound_webhooks.urls")),
+    path("api/v1/admin/outbound-webhooks/", include("apps.webhooks.admin_urls")),
+    path("api/v1/webhooks/", include("apps.webhooks.urls")),
 
     # Legacy /api/ aliases — same includes, no duplicate namespace issue
     path("api/auth/",               include("apps.users.urls")),

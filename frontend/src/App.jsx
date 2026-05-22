@@ -93,18 +93,34 @@ function ProtectedRoute({ children }) {
 }
 
 function SellerRoute({ children }) {
+  // SECURITY: defence-in-depth. The backend enforces role authorization
+  // on every API endpoint via IsSellerOrSuperuser / IsAdminOrSuperuser
+  // permission classes — that's the AUTHORITATIVE check. This component
+  // only gates UI rendering so honest users don't see broken seller UI
+  // before the API rejects their first call.
+  //
+  // PRIOR BUG: these checks were commented out with the note
+  // "Temporarily allow all auth users — remove when JWT is fixed",
+  // which let any authenticated buyer navigate to /seller/* and
+  // attempt seller actions. The backend permission classes still
+  // blocked the actual API calls, but: (a) the broken UI was a real
+  // CX bug, (b) any endpoint with weakly-enforced authz on the
+  // backend was newly reachable.
   const { isAuth, isSeller, isStaff, loading } = useAuthStore()
   if (loading) return <PageLoader />
   if (!isAuth) return <Navigate to="/login" replace />
-  // Temporarily allow all auth users — remove when JWT is fixed
+  // Sellers AND admins (staff can act on behalf of sellers for support).
+  if (!isSeller && !isStaff) return <Navigate to="/home" replace />
   return children
 }
 
 function AdminRoute({ children }) {
+  // SECURITY: defence-in-depth (see SellerRoute comment).
+  // Admin routes must be staff-only.
   const { isAuth, isStaff, loading } = useAuthStore()
   if (loading) return <PageLoader />
   if (!isAuth) return <Navigate to="/login" replace />
-  // Temporarily allow all auth users — remove when JWT is fixed
+  if (!isStaff) return <Navigate to="/home" replace />
   return children
 }
 

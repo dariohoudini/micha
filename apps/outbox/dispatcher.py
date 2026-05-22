@@ -63,9 +63,60 @@ def dispatch_one(event):
         event.last_error = f'{type(e).__name__}: {e}\n{traceback.format_exc()}'[:5000]
         if event.attempts >= event.max_attempts:
             event.status = EventStatus.DEAD
-            logger.error(
-                f'Outbox event {event.id} ({event.topic}) DEAD after {event.attempts} attempts'
+
+            # Severity escalation on DEAD transition.
+            #
+            # The original code logged ``logger.error`` for every DEAD
+            # event regardless of topic. Two problems with that:
+            #
+            #  1. Money-correctness topics (refund.*, payout.*,
+            #     dispute.*, payment.*) reaching DEAD = money at risk.
+            #     ERROR severity gets lost in normal alert noise;
+            #     these need CRITICAL.
+            #
+            #  2. The error message didn't include the redacted
+            #     payload context, so an on-call engineer had to query
+            #     the DB to know what the failed event was about.
+            #
+            # The escalation classifies topic by prefix:
+            #   refund.* / payout.* / dispute.* / payment.* → CRITICAL
+            #   everything else → ERROR (existing behaviour)
+            #
+            # Payload is logged through the PII redactor to avoid
+            # spilling buyer email / phone in the alert.
+            is_critical_topic = (event.topic or '').split('.', 1)[0] in (
+                'refund', 'payout', 'dispute', 'payment',
             )
+
+            try:
+                from middleware.pii_redactor import redact_value
+                payload_safe = redact_value(event.payload or {})
+            except Exception:
+                payload_safe = '<redaction unavailable>'
+
+            log_level = logger.critical if is_critical_topic else logger.error
+            log_level(
+                'outbox.event_dead',
+                extra={
+                    'event_id': str(event.id),
+                    'topic': event.topic,
+                    'attempts': event.attempts,
+                    'payload': payload_safe,
+                    'last_error': (event.last_error or '')[:500],
+                    'ref_type': event.ref_type,
+                    'ref_id': event.ref_id,
+                    'severity_class': 'critical' if is_critical_topic else 'error',
+                },
+            )
+
+            # Per-topic DEAD counter — separate metric from generic
+            # dispatch_failed so alerts can target "events went DEAD"
+            # specifically (vs the high-rate "individual attempt
+            # failed" counter).
+            try:
+                _m.outbox_event_dead.labels(topic=event.topic).inc()
+            except Exception:
+                pass
         else:
             event.status = EventStatus.RETRYING
             event.next_attempt_at = timezone.now() + _next_retry_delay(event.attempts)

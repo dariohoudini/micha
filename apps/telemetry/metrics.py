@@ -142,7 +142,17 @@ outbox_dispatched = Counter(
 )
 outbox_dispatch_failed = Counter(
     'micha_outbox_dispatch_failed_total',
-    'Outbox events whose handler raised.',
+    'Outbox events whose handler raised on a single attempt. '
+    'High rate alone is not actionable — handlers may retry and '
+    'succeed. Pair with outbox_event_dead for "actually failed".',
+    ['topic'],
+)
+outbox_event_dead = Counter(
+    'micha_outbox_event_dead_total',
+    'Outbox events that transitioned to DEAD (max_attempts exhausted). '
+    'This is the ALERT-WORTHY counter — any non-zero rate on a '
+    'money-correctness topic (refund.*, payout.*, dispute.*, '
+    'payment.*) should page on-call.',
     ['topic'],
 )
 outbox_pending = Gauge(

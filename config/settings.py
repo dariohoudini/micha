@@ -995,6 +995,28 @@ WEBHOOK_ALLOWED_IPS = {}
 # secret bounds the forgery window to 5 minutes (DEFAULT_MAX_TIMESTAMP_AGE).
 APPYPAY_REQUIRE_TIMESTAMP = os.environ.get('APPYPAY_REQUIRE_TIMESTAMP', '0') == '1'
 
+# ── Outbox DLQ alerting (apps/outbox/tasks.py:refresh_dlq_metrics) ───
+# Severity escalation thresholds for the periodic DLQ health check.
+#
+# When ANY of these trips, the periodic check logs CRITICAL — which
+# the production logging pipeline (Datadog / CloudWatch / Loki) is
+# expected to route to PagerDuty / Slack via a rule like:
+#
+#     severity=CRITICAL AND logger=outbox.*  →  page on-call
+#
+# Tune carefully:
+#   • Too low: alert fatigue.
+#   • Too high: real outages go unnoticed until manual review.
+OUTBOX_DLQ_CRITICAL_DEAD_COUNT       = int(
+    os.environ.get('OUTBOX_DLQ_CRITICAL_DEAD_COUNT', '10')
+)
+OUTBOX_DLQ_CRITICAL_OLDEST_AGE       = int(
+    os.environ.get('OUTBOX_DLQ_CRITICAL_OLDEST_AGE', '3600')   # 1h
+)
+OUTBOX_DLQ_CRITICAL_STALE_RETRYING   = int(
+    os.environ.get('OUTBOX_DLQ_CRITICAL_STALE_RETRYING', '5')
+)
+
 # ── Search input hardening (apps/search/safe_query.py) ────────
 # Caps applied at sanitize_query / tokenize_safe time. The defaults are
 # conservative for a marketplace search: longer queries don't return

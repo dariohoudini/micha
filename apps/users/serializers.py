@@ -235,26 +235,75 @@ class SocialAuthSerializer(serializers.Serializer):
         return attrs
 
     def _verify_google(self, token):
+        """Verify a Google ID token. Fails CLOSED.
+
+        Previously this had two ship-blocking bugs:
+
+          1. ``getattr(settings, 'GOOGLE_CLIENT_ID', '')`` passed an empty
+             string as the audience when the env var was unset.
+             ``verify_oauth2_token`` with an empty audience accepts tokens
+             from ANY Google project — an attacker presents their own
+             Google-signed JWT and we treat it as authentication for the
+             email claim in their token. Effectively: any Google account
+             on the internet can log in as any MICHA user whose email
+             matches.
+
+          2. ``except ImportError`` fell through to base64-decoding the
+             JWT payload WITHOUT signature verification. If the
+             google-auth package was missing (or removed by a future
+             dependency cleanup), the fallback let an attacker craft a
+             JWT with any email and have it accepted.
+
+        Fix: require ``settings.GOOGLE_CLIENT_ID`` non-empty, fail closed
+        if google-auth is missing, never trust an unverified token.
+        """
+        from django.conf import settings as _settings
+
+        client_id = (getattr(_settings, 'GOOGLE_CLIENT_ID', '') or '').strip()
+        if not client_id:
+            # No audience configured → cannot verify → reject.
+            raise serializers.ValidationError(
+                'Google login is not configured on this server.'
+            )
+
         try:
             from google.oauth2 import id_token
             from google.auth.transport import requests as google_requests
-            from django.conf import settings
-            idinfo = id_token.verify_oauth2_token(
-                token, google_requests.Request(),
-                getattr(settings, 'GOOGLE_CLIENT_ID', '')
-            )
-            return idinfo['email'], idinfo['sub']
         except ImportError:
-            import base64, json
-            try:
-                payload = token.split('.')[1]
-                payload += '=' * (4 - len(payload) % 4)
-                data = json.loads(base64.b64decode(payload))
-                return data.get('email', ''), data.get('sub', token[:50])
-            except Exception:
-                raise serializers.ValidationError('Could not verify Google token.')
-        except Exception as e:
-            raise serializers.ValidationError('Invalid or expired Google token.')
+            # Library missing — fail closed. NEVER fall through to a
+            # base64-decode of an unverified token.
+            raise serializers.ValidationError(
+                'Google login dependency missing on server.'
+            )
+
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                token, google_requests.Request(), client_id,
+            )
+        except Exception:
+            raise serializers.ValidationError(
+                'Invalid or expired Google token.'
+            )
+
+        # Belt-and-braces: even though verify_oauth2_token checks the
+        # audience, double-check the issuer is actually Google. A future
+        # google-auth bug or misuse can't accept self-signed tokens.
+        issuer = (idinfo.get('iss') or '').lower()
+        if issuer not in ('accounts.google.com', 'https://accounts.google.com'):
+            raise serializers.ValidationError(
+                'Token issuer is not Google.'
+            )
+
+        email = (idinfo.get('email') or '').strip().lower()
+        sub = (idinfo.get('sub') or '').strip()
+        email_verified = bool(idinfo.get('email_verified', False))
+
+        if not email or not sub or not email_verified:
+            raise serializers.ValidationError(
+                'Google token missing verified email claim.'
+            )
+
+        return email, sub
 
     def _verify_facebook(self, token):
         import requests

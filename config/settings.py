@@ -32,7 +32,16 @@ def _read_env():
 _read_env()
 
 # ── Core ──────────────────────────────────────────────────────────────────────
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-dev-only-change-in-production')
+# SECRET_KEY MUST be set explicitly in production. The dev-default below is
+# intentionally insecure-named so that a misconfigured deploy refuses to boot
+# (the validate-on-boot check at the bottom of this module raises
+# ImproperlyConfigured when DEBUG=False and the key still matches the default).
+#
+# Why this matters: SECRET_KEY signs JWTs, sessions, CSRF tokens, password-reset
+# tokens, and the field-encryption seed. A leaked or default value means every
+# user is impersonable and every encrypted DB column is decryptable.
+_DEV_SECRET_KEY = 'django-insecure-dev-only-change-in-production'
+SECRET_KEY = os.environ.get('SECRET_KEY', _DEV_SECRET_KEY)
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
@@ -1220,3 +1229,70 @@ CACHES = {
         'TIMEOUT': 300,
     }
 }
+
+
+# ── Boot-time security validation ─────────────────────────────────
+# Runs at import time so a misconfigured production deploy fails BEFORE
+# accepting traffic, rather than booting with insecure defaults.
+#
+# Skipped when DEBUG=True (dev) or when running under pytest / management
+# commands where bypassing the check is intentional.
+
+def _running_under_test_or_mgmt() -> bool:
+    """True when the current invocation is a test runner or a one-shot
+    management command (migrate, makemigrations, shell, etc.). These
+    legitimately may run without prod-grade secrets."""
+    import sys
+    if 'pytest' in sys.modules or 'PYTEST_CURRENT_TEST' in os.environ:
+        return True
+    argv0 = (sys.argv[0] if sys.argv else '') or ''
+    if argv0.endswith('manage.py') or argv0.endswith('manage'):
+        # If a management command is being run, the second arg is the
+        # subcommand. `runserver` and `daphne` are NOT management
+        # commands we want to skip — those serve real traffic.
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ''
+        if cmd and cmd not in ('runserver', 'daphne', 'gunicorn'):
+            return True
+    return False
+
+
+if not DEBUG and not _running_under_test_or_mgmt():
+    from django.core.exceptions import ImproperlyConfigured
+
+    _problems = []
+
+    if SECRET_KEY == _DEV_SECRET_KEY or not SECRET_KEY:
+        _problems.append(
+            'SECRET_KEY: refusing to boot with the dev default. '
+            'Generate with: python -c "import secrets; print(secrets.token_urlsafe(60))" '
+            'and set SECRET_KEY env var.'
+        )
+
+    if len(SECRET_KEY) < 40:
+        _problems.append(
+            f'SECRET_KEY: too short ({len(SECRET_KEY)} chars). '
+            'Use at least 40 chars of secure random data.'
+        )
+
+    if not FIELD_ENCRYPTION_KEY:
+        _problems.append(
+            'FIELD_ENCRYPTION_KEY: not set. EncryptedCharField columns '
+            '(bank accounts, 2FA secrets, IDs) cannot be encrypted.'
+        )
+
+    # If any third-party login is used, its client ID must be set. Empty
+    # client_id is the Google-OAuth-accepts-any-audience bug.
+    _google_login_attempted = bool(os.environ.get('GOOGLE_LOGIN_ENABLED', '0') == '1')
+    if _google_login_attempted and not GOOGLE_CLIENT_ID:
+        _problems.append(
+            'GOOGLE_LOGIN_ENABLED=1 but GOOGLE_CLIENT_ID is empty. '
+            'verify_oauth2_token with empty audience accepts tokens from '
+            'ANY Google project — disabling auth entirely. Set GOOGLE_CLIENT_ID '
+            'or unset GOOGLE_LOGIN_ENABLED.'
+        )
+
+    if _problems:
+        raise ImproperlyConfigured(
+            'MICHA refuses to boot due to insecure configuration:\n  - '
+            + '\n  - '.join(_problems)
+        )

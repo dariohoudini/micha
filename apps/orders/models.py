@@ -235,7 +235,14 @@ class Order(models.Model):
 
 
 class OrderItem(models.Model):
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    # FINANCIAL RECORD: PROTECT prevents accidental cascade-delete when
+    # an Order is removed via raw SQL / queryset .delete() / cascade
+    # from a parent. Order.delete() itself already raises (line 141), but
+    # ``Order.objects.filter(...).delete()`` bypasses the model override.
+    # PROTECT here = belt-and-braces: any deletion path that loses an
+    # OrderItem now fails loudly instead of silently erasing the sale
+    # record.
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="items")
     product = models.ForeignKey("products.Product", on_delete=models.PROTECT, related_name="order_items", db_index=True)
     variant_combo = models.ForeignKey(
         "inventory.ProductVariantCombo",
@@ -266,7 +273,12 @@ class OrderItem(models.Model):
 
 
 class OrderStatusLog(models.Model):
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_logs")
+    # AUDIT TRAIL: PROTECT — status history is the forensic record of
+    # how the order moved through the state machine. Required for
+    # dispute investigation + regulator inquiries (Lei 22/11). Losing
+    # this means losing the ability to answer "when did the seller
+    # mark this shipped?" months after the fact.
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="status_logs")
     from_status = models.CharField(max_length=15)
     to_status = models.CharField(max_length=15)
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
@@ -299,7 +311,9 @@ class OrderTrackingEvent(models.Model):
         "refunded":   "Pedido reembolsado",
     }
 
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="tracking_events")
+    # AUDIT TRAIL: PROTECT — tracking events feed the buyer's order
+    # timeline. Losing them mid-dispute = losing proof of delivery.
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="tracking_events")
     code = models.CharField(
         max_length=30,
         help_text="Status code or custom (e.g. 'shipped', 'in_transit', 'out_for_delivery', 'arrived_hub')",
@@ -320,7 +334,11 @@ class OrderTrackingEvent(models.Model):
 
 class Payment(models.Model):
     STATUS = (("pending","Pending"),("paid","Paid"),("failed","Failed"),("refunded","Refunded"))
-    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="payment")
+    # FINANCIAL RECORD: PROTECT. The Payment row is the source of truth
+    # for whether money was actually charged — losing it via cascade
+    # makes refund disputes unwinnable ("the buyer says they paid but
+    # we have no record"). Always preserve.
+    order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name="payment")
     method = models.CharField(max_length=50, blank=True)
     status = models.CharField(max_length=10, choices=STATUS, default="pending")
     gateway_reference = models.CharField(max_length=200, blank=True)
@@ -382,8 +400,18 @@ class Refund(models.Model):
     )
     DEFAULT_MAX_ATTEMPTS = 8
 
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="refunds")
-    requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="refund_requests")
+    # FINANCIAL RECORD: PROTECT. Refund rows are the disbursement
+    # audit trail — operator must be able to prove "we issued this
+    # refund on this date for this reason" months/years later.
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="refunds")
+    # SET_NULL on the requester so a buyer who deletes their account
+    # (GDPR / Lei 22/11 right-to-erasure) doesn't accidentally also
+    # erase the refund record. The refund stays; the requester field
+    # becomes NULL (anonymised).
+    requested_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="refund_requests",
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     reason = models.TextField()
     status = models.CharField(max_length=10, choices=STATUS, default="pending")

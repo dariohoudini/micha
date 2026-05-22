@@ -292,8 +292,17 @@ class EarningsHold(models.Model):
       • resolution='partial_refund'→ split: portion released to seller,
                                      portion consumed by refund (handled by service)
     """
-    seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='earnings_holds')
-    order = models.ForeignKey('orders.Order', on_delete=models.CASCADE, related_name='earnings_hold')
+    # SET_NULL on seller: if the seller account is GDPR-erased, the
+    # EarningsHold row stays for audit. The held-amount + order context
+    # is still meaningful to ops for reconciling platform balance even
+    # if the seller identity is anonymised.
+    seller = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='earnings_holds',
+    )
+    # PROTECT on order: hold is bound to a specific order's payment;
+    # losing the order ref makes the hold un-reconcilable.
+    order = models.ForeignKey('orders.Order', on_delete=models.PROTECT, related_name='earnings_hold')
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     release_at = models.DateTimeField()
     released = models.BooleanField(default=False)
@@ -320,9 +329,14 @@ class PaymentEvent(models.Model):
     Append-only audit log of every payment event.
     NEVER delete records from this table — it is the financial audit trail.
     """
+    # AUDIT TRAIL: PROTECT. The model's own .delete() and post-init
+    # .save() overrides block direct deletion of individual events, but
+    # CASCADE from Payment would let `Payment.objects.delete()` erase
+    # them transitively — defeating the "append-only audit log"
+    # invariant declared in the docstring.
     payment = models.ForeignKey(
         'orders.Payment',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='events',
     )
     event_type = models.CharField(max_length=50, db_index=True)

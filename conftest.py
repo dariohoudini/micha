@@ -4,9 +4,16 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
 import pytest
 
-@pytest.fixture(scope='session')
-def django_db_setup():
-    pass
+
+# Note: the django_db_setup fixture used to be a no-op (``pass``), which
+# meant pytest-django skipped running migrations on the test DB. That
+# made every test fail with "no such table" on SQLite. We let
+# pytest-django's default fixture do the setup (i.e., run migrations
+# into the test DB once per session) by NOT overriding it.
+#
+# If a CI environment needs to skip migrations (e.g., uses pg_dump of
+# the prod schema), set DJANGO_TEST_SKIP_MIGRATIONS=1 in the env and
+# the conftest in apps/conftest.py can override there.
 
 @pytest.fixture
 def buyer(db):

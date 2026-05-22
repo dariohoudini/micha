@@ -99,7 +99,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     email_change_expires = models.DateTimeField(blank=True, null=True)
 
     two_fa_enabled = models.BooleanField(default=False)
-    two_fa_secret = models.CharField(max_length=64, blank=True, null=True)
+    # SECURITY: encrypted at rest via Fernet. A DB breach exposes only
+    # ciphertext; plaintext requires settings.FIELD_ENCRYPTION_KEY.
+    # max_length=200 accommodates Fernet ciphertext (~150% of input).
+    two_fa_secret = EncryptedCharField(max_length=200, blank=True, null=True)
 
     google_id = models.CharField(max_length=100, blank=True, null=True, unique=True)
     facebook_id = models.CharField(max_length=100, blank=True, null=True, unique=True)

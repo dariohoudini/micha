@@ -741,9 +741,36 @@ class CancelDeletionView(APIView):
 # ── 2FA ───────────────────────────────────────────────────────────────────────
 
 class Setup2FAView(APIView):
+    """GET /2fa/setup/ — begin 2FA enrolment.
+
+    Returns a fresh TOTP secret + provisioning URI so the client can
+    render a QR. The secret is stored in ``User.two_fa_secret``
+    (EncryptedCharField — ciphertext at rest) but NOT yet enabled;
+    the user must complete enrolment by posting a valid TOTP code to
+    /2fa/enable/.
+
+    Refuses to overwrite an active 2FA enrolment
+    ─────────────────────────────────────────────
+    Without this guard, an attacker who steals a session (XSS or
+    cookie theft) on an account with 2FA enabled can simply call
+    /2fa/setup/, get a fresh secret bound to their own authenticator
+    app, and call /2fa/enable/ — silently rotating the second factor
+    they don't actually possess. The user is locked out without
+    realising what happened.
+
+    To rotate 2FA legitimately, the user must first /2fa/disable/
+    (which now requires BOTH password AND current TOTP code), then
+    re-enrol.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def get(self, request):
+        if request.user.two_fa_enabled:
+            return Response(
+                {'error': '2fa_already_enabled',
+                 'detail': 'Disable 2FA first before rotating the secret.'},
+                status=409,
+            )
         try:
             import pyotp
             secret = pyotp.random_base32()
@@ -777,16 +804,76 @@ class Enable2FAView(APIView):
 
 
 class Disable2FAView(APIView):
+    """POST /2fa/disable/ — turn off 2FA.
+
+    Requires BOTH:
+      • current password (something the user knows)
+      • current TOTP code (something the user has)
+
+    Previously this only required the password. That defeats the
+    purpose of 2FA: if a password is leaked (phishing, breach reuse),
+    the attacker could log in with password alone, immediately disable
+    2FA before the user noticed, and then proceed without challenge.
+
+    With this two-factor disable: an attacker who only has the
+    password cannot remove the second factor; they must also have
+    the authenticator app, which is the whole point.
+    """
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def post(self, request):
         password = request.data.get('password', '')
+        code = request.data.get('code', '').strip()
+
         if not request.user.check_password(password):
-            return Response({'error': 'invalid_password', 'detail': 'Incorrect password.'}, status=400)
+            log_security_event(
+                '2fa_disable_bad_password', request=request,
+                severity='HIGH',
+                details={'user_id': request.user.id},
+            )
+            return Response(
+                {'error': 'invalid_password', 'detail': 'Incorrect password.'},
+                status=400,
+            )
+
+        # If 2FA was enabled, demand the second factor too. The window
+        # where two_fa_enabled=False but two_fa_secret is set (i.e.
+        # between Setup and Enable) is OK to disable with password
+        # alone because nothing was relying on the secret yet.
+        if request.user.two_fa_enabled:
+            if not code:
+                return Response(
+                    {'error': '2fa_required',
+                     'detail': 'A current 2FA code is required to disable 2FA.'},
+                    status=400,
+                )
+            try:
+                import pyotp
+                totp = pyotp.TOTP(request.user.two_fa_secret)
+                if not totp.verify(code, valid_window=1):
+                    log_security_event(
+                        '2fa_disable_bad_code', request=request,
+                        severity='HIGH',
+                        details={'user_id': request.user.id},
+                    )
+                    return Response(
+                        {'error': 'invalid_code',
+                         'detail': 'Invalid 2FA code.'},
+                        status=400,
+                    )
+            except ImportError:
+                return Response(
+                    {'error': 'server_error', 'detail': 'pyotp not installed.'},
+                    status=503,
+                )
+
         request.user.two_fa_enabled = False
         request.user.two_fa_secret = None
         request.user.save(update_fields=['two_fa_enabled', 'two_fa_secret'])
-        log_security_event('2fa_disabled', request=request, details={'user_id': request.user.id})
+        log_security_event(
+            '2fa_disabled', request=request,
+            details={'user_id': request.user.id},
+        )
         return Response({'detail': '2FA disabled.'})
 
 

@@ -7,7 +7,40 @@ const api = axios.create({
   timeout: 12000,
 })
 
-// ── Request: attach access token + request ID ─────────────────────────────
+// Path patterns that REQUIRE an Idempotency-Key header on the server side
+// (the backend has @idempotent(required=True) on these views).
+//
+// We auto-attach a generated key on the FIRST request and reuse it for
+// any retry of the same axios config object (e.g., the 401-refresh
+// retry path below sets ``original._retry = true`` and re-runs the
+// same config). Manual "click again" by the user generates a new axios
+// request → new key, which is the correct behaviour (intentional retry
+// = fresh attempt).
+const IDEMPOTENCY_REQUIRED_PATTERNS = [
+  /\/orders\/checkout\/?$/,
+  /\/orders\/[^/]+\/refund\/?$/,
+  /\/orders\/[^/]+\/return\/?$/,
+  /\/orders\/[^/]+\/cancel\/?$/,
+  /\/wallet\/payout\/?$/,
+  /\/products\/?$/,                       // create
+  /\/products\/[^/]+\/variants\/?$/,
+  /\/inventory\/reserve\/?$/,
+  /\/giftcards\/redeem\/?$/,
+  /\/auth\/register\/?$/,
+]
+
+function pathRequiresIdempotency(url) {
+  if (!url) return false
+  return IDEMPOTENCY_REQUIRED_PATTERNS.some((re) => re.test(url))
+}
+
+function generateIdempotencyKey() {
+  if (crypto?.randomUUID) return crypto.randomUUID()
+  // Fallback for environments without crypto.randomUUID
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 12)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+// ── Request: attach access token + request ID + idempotency key ───────────
 api.interceptors.request.use(
   (config) => {
     const token = tokenStorage.getAccessToken()
@@ -17,6 +50,27 @@ api.interceptors.request.use(
     // Correlate requests in server logs
     config.headers['X-Request-ID'] = crypto.randomUUID?.() || Math.random().toString(36).slice(2)
     config.headers['X-App-Version'] = import.meta.env.VITE_APP_VERSION || '1.0.0'
+
+    // Idempotency-Key for money-mutating endpoints.
+    //
+    // Order of precedence:
+    //   1. Caller passed an explicit key in config.headers — respect it.
+    //      (Use case: a hook that wants the SAME key across multiple
+    //      manual retries within a single checkout intent.)
+    //   2. Path matches the required-idempotency set — auto-generate.
+    //   3. Other paths — leave header unset.
+    //
+    // The auto-attached key survives axios's internal retries (401 →
+    // refresh → retry the same config) because the same config object
+    // is re-used. Manual user retries create a new request → new key,
+    // which is intended.
+    const method = (config.method || 'get').toLowerCase()
+    if (['post', 'patch', 'put', 'delete'].includes(method)
+        && !config.headers['Idempotency-Key']
+        && pathRequiresIdempotency(config.url)) {
+      config.headers['Idempotency-Key'] = generateIdempotencyKey()
+    }
+
     // Strip any accidentally included sensitive fields
     if (config.data) {
       const { password, ...rest } = config.data

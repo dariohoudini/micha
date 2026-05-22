@@ -306,21 +306,94 @@ class SocialAuthSerializer(serializers.Serializer):
         return email, sub
 
     def _verify_facebook(self, token):
+        """Verify a Facebook access token. Fails CLOSED.
+
+        Two-call verification flow (the Google bug pattern in another
+        form — Facebook's Graph.me endpoint accepts ANY valid Facebook
+        access token, regardless of which app issued it):
+
+          1. ``GET /debug_token`` — confirms the token was issued to
+             OUR Facebook app, the token is not expired, and the user
+             granted us the requested scopes. Authenticated with
+             ``app_id|app_secret`` (app credentials, not the user's
+             access_token).
+          2. ``GET /me`` — fetches the user profile.
+
+        Without step 1, an attacker who steals a Facebook access token
+        ISSUED TO A DIFFERENT APP can present it to our backend. The
+        ``/me`` call returns their identity ("yes, that's a valid
+        Facebook user"), and we'd issue them a MICHA JWT — even though
+        the user never authorised MICHA. Same audience-binding bug
+        Google had in Sprint 0.
+
+        ``debug_token.data.app_id`` MUST equal our FB_APP_ID. Anything
+        else → reject. The check is constant-time-safe in practice
+        (small integer string compare).
+        """
+        from django.conf import settings as _settings
         import requests
+
+        app_id = (getattr(_settings, 'FB_APP_ID', '') or '').strip()
+        app_secret = (getattr(_settings, 'FB_APP_SECRET', '') or '').strip()
+
+        if not app_id or not app_secret:
+            # No app credentials configured → cannot verify the token's
+            # audience → reject. (The Google bug was the opposite path:
+            # we accepted any audience. Don't repeat it.)
+            raise serializers.ValidationError(
+                'Facebook login is not configured on this server.'
+            )
+
         try:
+            # Step 1: verify audience + freshness via debug_token.
+            debug = requests.get(
+                'https://graph.facebook.com/debug_token',
+                params={
+                    'input_token': token,
+                    'access_token': f'{app_id}|{app_secret}',
+                },
+                timeout=10,
+            )
+            ddata = (debug.json() or {}).get('data') or {}
+
+            if not ddata.get('is_valid'):
+                raise serializers.ValidationError(
+                    'Facebook token is invalid or expired.'
+                )
+
+            token_app_id = str(ddata.get('app_id') or '')
+            if token_app_id != app_id:
+                # Token was issued to a DIFFERENT Facebook app. Reject
+                # loudly — this is the audience-confusion attack.
+                raise serializers.ValidationError(
+                    'Facebook token was not issued to this application.'
+                )
+
+            # Step 2: fetch profile only AFTER audience is confirmed.
             resp = requests.get(
                 'https://graph.facebook.com/me',
                 params={'fields': 'id,email', 'access_token': token},
                 timeout=10,
             )
-            data = resp.json()
+            data = resp.json() or {}
             if 'error' in data:
                 raise serializers.ValidationError('Invalid Facebook token.')
-            return data.get('email', ''), data['id']
+
+            email = (data.get('email') or '').strip().lower()
+            fb_id = data.get('id') or ''
+            if not email or not fb_id:
+                raise serializers.ValidationError(
+                    'Facebook profile is missing email; '
+                    'check the app\'s email scope.'
+                )
+            return email, fb_id
+
         except serializers.ValidationError:
             raise
         except Exception:
-            raise serializers.ValidationError('Could not verify Facebook token.')
+            raise serializers.ValidationError(
+                'Could not verify Facebook token.'
+            )
 
     def _verify_apple(self, token):
         raise serializers.ValidationError('Apple Sign In requires PyJWT — install it first.')

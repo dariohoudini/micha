@@ -59,10 +59,28 @@ class CheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
     throttle_classes = [CheckoutThrottle]
 
-    # Idempotency-Key header is honoured but not required (yet) — flipping
-    # required=True is a frontend-coordinated change. For now: clients that
-    # send a key get safe retry; legacy clients still work.
-    @idempotent(required=False)
+    # Idempotency-Key is MANDATORY on checkout.
+    #
+    # Why required=True now: the prior comment said "flipping
+    # required=True is a frontend-coordinated change." This commit
+    # makes that flip together with the frontend interceptor that
+    # auto-attaches Idempotency-Key on every POST.
+    #
+    # Threat scenario without this:
+    #   1. Buyer clicks 'Place order' on flaky Luanda 4G.
+    #   2. Browser submits POST; checkout starts; payment gateway
+    #      call is sent.
+    #   3. Network drops mid-response. Buyer sees a timeout.
+    #   4. Buyer clicks 'Place order' again.
+    #   5. WITHOUT idempotency: two orders are created, two
+    #      payments charged, two stock decrements. Buyer disputes.
+    #      Refund pipeline activates. Platform eats the cost.
+    #
+    # WITH idempotency: the second POST carries the same key
+    # (frontend hook persists it for the duration of the checkout
+    # intent). Backend sees the key, replays the cached response
+    # from the first attempt. Single charge, single order.
+    @idempotent(required=True)
     def post(self, request):
         from .checkout import CheckoutService, CheckoutError
         from apps.risk.service import assess as risk_assess, record_fingerprint, is_blocking

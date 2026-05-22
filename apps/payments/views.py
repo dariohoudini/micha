@@ -12,7 +12,10 @@ from rest_framework.response import Response
 from rest_framework import generics, permissions, serializers
 from rest_framework.throttling import UserRateThrottle
 
-from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser
+from apps.users.permissions import (
+    IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser,
+    Requires2FAForFinancial,
+)
 from middleware.security import log_security_event
 from apps.inbound_webhooks.decorators import verified_webhook
 from apps.idempotency.decorators import idempotent
@@ -240,7 +243,30 @@ class AdminPayoutListView(generics.ListAPIView):
 
 
 class AdminPayoutActionView(APIView):
-    permission_classes = [IsAdminOrSuperuser]
+    """PATCH /api/v1/admin/payouts/<id>/ — approve / reject / process / complete.
+
+    SECURITY: requires admin + 2FA on every call.
+
+    Why both: IsAdminOrSuperuser proves the caller has the admin role.
+    Requires2FAForFinancial demands a fresh TOTP code in the
+    X-TOTP-Code header on every payout action. Without the 2FA gate,
+    a stolen admin session (phished cookie, hijacked CSRF, abandoned
+    workstation) is enough to drain seller payouts. With it, the
+    attacker also needs the admin's authenticator app — defeating
+    the realistic threat model.
+
+    The 2FA code is verified with valid_window=1 (≈90s clock skew).
+    Each failed verification logs a 'financial_2fa_failed' security
+    event at WARNING severity — feeds into fraud signal correlation.
+
+    Idempotency: each PATCH is treated as a fresh action. Multiple
+    admins clicking 'approve' on the same payout in quick succession
+    is handled by the row-level select_for_update inside
+    SellerWallet.credit / debit; the 2FA challenge is per-request so
+    a session cannot be reused across multiple payouts even within a
+    short window.
+    """
+    permission_classes = [IsAdminOrSuperuser, Requires2FAForFinancial]
 
     def patch(self, request, pk):
         payout = get_object_or_404(PayoutRequest, pk=pk)

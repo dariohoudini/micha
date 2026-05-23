@@ -170,11 +170,35 @@ jobs:
         run: python manage.py check --deploy --fail-level WARNING || python manage.py check
         continue-on-error: true
 
+      - name: Apply migrations to test DB
+        # Bring the Postgres test DB up to the current schema BEFORE
+        # the consistency check + pytest. This also surfaces
+        # migration-time errors (bad SQL in a Migration) that
+        # ``--check`` doesn't run.
+        run: |
+          set -e
+          python manage.py migrate --noinput --verbosity 1 2>&1 | tail -30
+
       - name: Check makemigrations is up to date
         # If a model field was changed but the migration not generated,
-        # this fires. Prevents PRs that would diverge prod schema from
-        # the models.
-        run: python manage.py makemigrations --check --dry-run
+        # this fires. Prevents PRs that diverge prod schema from models.
+        #
+        # The previous CI run failed at this step in 0 seconds with no
+        # surfaced output. Local repro produces no error. This step is
+        # wrapped to capture + DUMP both the --check output AND the
+        # full --dry-run diff so the next failure is debuggable.
+        run: |
+          set +e
+          python manage.py makemigrations --check --dry-run 2>&1 | tee /tmp/mkmig.out
+          EXIT=${PIPESTATUS[0]}
+          echo ""
+          echo "=== exit code: $EXIT ==="
+          if [ "$EXIT" -ne 0 ]; then
+            echo ""
+            echo "──── Re-run without --check to dump what Django wants to generate: ────"
+            python manage.py makemigrations --dry-run --verbosity 2 2>&1 | tail -50
+          fi
+          exit $EXIT
 
       - name: Run pytest with coverage
         run: |

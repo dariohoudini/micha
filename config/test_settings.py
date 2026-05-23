@@ -29,9 +29,18 @@ if os.environ.get('TEST_DB_POSTGRES', '0') != '1':
         }
     }
 else:
+    # Inherits Postgres DATABASES['default'] from config.settings. We
+    # only override the TEST sub-config to name the test DB explicitly.
+    #
+    # IMPORTANT: do NOT include ``DEPENDENCIES: ['default']`` here.
+    # That tells Django the 'default' database depends on itself —
+    # which raises ``ImproperlyConfigured: Circular dependency:
+    # databases ['default'] depend on each other, but are aliases``
+    # before any test runs. DEPENDENCIES is only for setups with
+    # MULTIPLE databases where one needs to be created before another;
+    # we have only one DB.
     DATABASES['default']['TEST'] = {
-        'NAME': 'test_micha', 'MIRROR': None, 'CHARSET': None,
-        'COLLATION': None, 'DEPENDENCIES': ['default'], 'CREATE_DB': True,
+        'NAME': 'test_micha',
     }
 
 # Skip migration_guard checks during tests; the guard is for production

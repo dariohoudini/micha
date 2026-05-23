@@ -1,9 +1,9 @@
-from rest_framework.permissions import AllowAny
-from rest_framework.pagination import PageNumberPagination
 """
 Payments Views — 2FA enforcement on financial operations
 FIX: Requires2FAForFinancial applied to payout, bank account add/delete
 """
+import logging
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
@@ -11,6 +11,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import generics, permissions, serializers
 from rest_framework.throttling import UserRateThrottle
+from rest_framework.permissions import AllowAny
+from rest_framework.pagination import PageNumberPagination
+
+# Module logger used by the AppyPay webhook handler + payment-flow
+# diagnostic logs. Previously missing — every call to ``logger.info()``
+# / ``logger.error()`` in this file would NameError when the webhook
+# fired. Surfaced by flake8 F821.
+logger = logging.getLogger('micha.payments')
 
 from apps.users.permissions import (
     IsNotSuspended, IsSellerOrSuperuser, IsAdminOrSuperuser,

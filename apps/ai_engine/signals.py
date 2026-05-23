@@ -78,4 +78,4 @@ def register_signals():
                     logger.error(f"AI user profile creation signal failed: {e}")
 
     except Exception:
-        logger.debug(f"Suppressed exception: {e}" if "as e" in line else "logger.debug('Suppressed exception')")
+        logger.debug("Suppressed exception", exc_info=True)

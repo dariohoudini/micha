@@ -22,9 +22,19 @@ class ResolveContentFlagView(APIView):
 
 class IPBanView(APIView):
     permission_classes = [IsAdminOrSuperuser]
+
     def get(self, request):
-        bans = bans[:100]  # Limit to prevent DoS
-        return Response([{"ip":b.ip_address,"reason":b.reason,"at":b.created_at} for b in IPBan.objects.all().order_by("-created_at")])
+        # PREVIOUS BUG: ``bans = bans[:100]`` referenced ``bans``
+        # before it was defined — NameError on every call to this
+        # endpoint. Surfaced by flake8 F821 and never exercised by
+        # tests (admin IP-ban list endpoint is rarely hit). The line
+        # was clearly intended as "fetch and cap" — restore that
+        # intent + use the capped queryset for the response.
+        bans = IPBan.objects.all().order_by("-created_at")[:100]
+        return Response([
+            {"ip": b.ip_address, "reason": b.reason, "at": b.created_at}
+            for b in bans
+        ])
     def post(self, request):
         ip = request.data.get("ip_address")
         if not ip: return Response({'error': 'IP required.'}, status=400)

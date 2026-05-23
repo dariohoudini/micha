@@ -109,7 +109,7 @@ def _is_permanent_error(err: Exception) -> bool:
 
 # ─── Public: process_refund ───────────────────────────────────────────
 
-def process_refund(refund) -> 'Refund':
+def process_refund(refund) -> 'Refund':  # noqa: F821 — forward-reference string
     """Process a single Refund row through the gateway.
 
     Atomic across the lock + status update + audit. The gateway call

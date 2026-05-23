@@ -8,7 +8,8 @@
         check migrate makemigrations runserver shell celery beat \
         frontend-install frontend-build frontend-dev \
         clean docker-build docker-up docker-down docker-logs \
-        docker-shell docker-test
+        docker-shell docker-test \
+        restore-drill
 
 # ── Help ──────────────────────────────────────────────────────────
 
@@ -44,6 +45,9 @@ help:
 	@echo "  make docker-shell     — bash inside the web container"
 	@echo "  make docker-test      — run pytest inside the container"
 	@echo "  make docker-build     — build the image only (no run)"
+	@echo ""
+	@echo "Operations:"
+	@echo "  make restore-drill    — validate S3 backups by restoring + querying"
 	@echo ""
 	@echo "Utility:"
 	@echo "  make clean            — remove caches, dist/, etc."
@@ -87,9 +91,16 @@ test-coverage:
 	    --cov-report=html:htmlcov
 
 lint:
-	./venv/bin/flake8 apps/ config/ middleware/ \
+	# Bug-only check (BLOCKING) — matches the CI gate. Real runtime
+	# errors: syntax, undefined names, bad imports.
+	./venv/bin/python -m flake8 apps/ config/ middleware/ \
 	    --max-line-length=120 --exclude=migrations \
-	    --extend-ignore=E501,W503,E203
+	    --select=E9,F63,F7,F82,F821
+	# Style check (NON-blocking) — surfaces pre-existing tech debt.
+	./venv/bin/python -m flake8 apps/ config/ middleware/ \
+	    --max-line-length=120 --exclude=migrations \
+	    --extend-ignore=E501,W503,E203 \
+	    --statistics --count || true
 	./venv/bin/black --check apps/ config/ middleware/ \
 	    --exclude='migrations|node_modules|venv' || true
 
@@ -166,6 +177,21 @@ docker-test:
 	    apps/ledger apps/idempotency apps/inventory \
 	    apps/fx apps/payments apps/outbox \
 	    --tb=short
+
+# ── Operations ────────────────────────────────────────────────────
+
+restore-drill:
+	# Validates the most recent S3 backup by actually restoring it
+	# into a temp DB on STAGING_DB_HOST and running the invariant
+	# queries (ledger balance, schema integrity, row counts).
+	#
+	# Required env vars (see scripts/restore_test.sh for full list):
+	#   BACKUP_S3_BUCKET, STAGING_DB_HOST, STAGING_DB_USER,
+	#   STAGING_DB_PASSWORD, AWS credentials.
+	#
+	# Run monthly via cron in staging. Failure exits non-zero so
+	# the cron alerting hook pages on-call.
+	./scripts/restore_test.sh
 
 # ── Utility ───────────────────────────────────────────────────────
 

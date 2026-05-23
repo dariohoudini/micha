@@ -53,7 +53,7 @@ def personalised_search(query, user=None, filters=None, limit=20):
         ).values('category_id', 'score')
         interest_map = {i['category_id']: i['score'] for i in interests}
     except Exception:
-        logger.debug(f"Suppressed exception: {e}" if "as e" in line else "logger.debug('Suppressed exception')")
+        logger.debug("Suppressed exception", exc_info=True)
 
     # Get recently purchased product IDs to exclude
     purchased_ids = set()
@@ -64,7 +64,7 @@ def personalised_search(query, user=None, filters=None, limit=20):
             ).values_list('product_id', flat=True)[:50]
         )
     except Exception:
-        logger.debug(f"Suppressed exception: {e}" if "as e" in line else "logger.debug('Suppressed exception')")
+        logger.debug("Suppressed exception", exc_info=True)
 
     # Score and rank
     def score_product(product):
@@ -98,7 +98,7 @@ def personalised_search(query, user=None, filters=None, limit=20):
             if perf and perf.tier in ('gold', 'silver'):
                 score += 2
         except Exception:
-            logger.debug(f"Suppressed exception: {e}" if "as e" in line else "logger.debug('Suppressed exception')")
+            logger.debug("Suppressed exception", exc_info=True)
 
         return score
 

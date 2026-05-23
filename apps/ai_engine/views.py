@@ -592,6 +592,23 @@ class HyperPersonalisedFeedView(APIView):
             from apps.ai_engine.weight_optimizer import ABTestManager
             weights = ABTestManager.get_weights(user)
 
+            # PREVIOUSLY undefined: ``interest_scores`` was referenced
+            # in score() without being built. Surfaced by flake8 F821.
+            # Build it from UserInterest now — same pattern personalized.py
+            # uses (apps/search/personalized.py:54).
+            try:
+                from apps.ai_engine.models import UserInterest
+                interest_scores = {
+                    i.category_id: i.score
+                    for i in UserInterest.objects.filter(user=user, score__gt=0)
+                }
+            except Exception:
+                # Best-effort. If the table is missing or query fails,
+                # the score() function falls through cleanly (the
+                # ``if p.category_id in interest_scores`` check
+                # short-circuits on empty dict).
+                interest_scores = {}
+
             def score(p):
                 s = 0.0
 

@@ -147,17 +147,27 @@ def moderate(text: str, target_type: str, target_id,
 
         # REVIEW: write a ContentFlag row. The moderator queue picks
         # this up via apps/moderation/views.py.
+        #
+        # target_user vs flagger: target_user is the *owner* of the
+        # flagged content (used by the escalation engine to count
+        # rejections per user). flagger is who reported it — here it's
+        # an auto-flag so flagger=None. Pre-R4 callers passed
+        # target_user via the flagger= field; we now route it correctly.
         try:
             from .models import ContentFlag
+            tu = target_user if (
+                target_user
+                and getattr(target_user, 'is_authenticated', False)
+            ) else None
             ContentFlag.objects.create(
                 target_type=target_type,
                 target_id=int(target_id) if target_id else 0,
+                target_user=tu,
                 reason=f'Auto-flagged keywords: {", ".join(triggered[:5])}',
                 auto_flagged=True,
-                flagger=target_user if (
-                    target_user
-                    and getattr(target_user, 'is_authenticated', False)
-                ) else None,
+                flagger=None,  # auto-flag — no human reporter
+                severity='medium',
+                status='pending',
             )
         except Exception:
             log.exception('moderation: failed to write ContentFlag row')

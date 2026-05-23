@@ -24,6 +24,14 @@ class AdminActionLog(models.Model):
         ('assign_role', 'Assign Role'),
         ('revoke_role', 'Revoke Role'),
         ('view_encrypted_data', 'View Encrypted Data'),
+        # R4 moderation queue decisions — distinct keys so audit logs
+        # are queryable by intent. ``moderate_approve`` dismisses a
+        # flag (content was OK); ``moderate_reject`` removes content
+        # AND counts toward escalation; ``moderate_escalate`` kicks to
+        # senior review without an infraction count.
+        ('moderate_approve', 'Moderate: Approve (dismiss flag)'),
+        ('moderate_reject', 'Moderate: Reject (remove content)'),
+        ('moderate_escalate', 'Moderate: Escalate (senior review)'),
     )
 
     admin = models.ForeignKey(User, on_delete=models.PROTECT, related_name='admin_actions_taken')

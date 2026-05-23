@@ -229,38 +229,27 @@ jobs:
       - name: Write failing tests to job summary
         # GitHub renders $GITHUB_STEP_SUMMARY as markdown on the job
         # page — VISIBLE WITHOUT REPO-ADMIN AUTH. Critical for
-        # debugging from outside (e.g. fork PRs, third-party
-        # reviewers). Without this the only way to read a CI failure
-        # is to scroll through the raw runner log.
+        # debugging from outside the repo's admin boundary.
+        #
+        # The junit-xml parser lives in scripts/ci_summarize_pytest.py.
+        # The previous inline ``python -c`` block broke YAML parse
+        # because of nested quote escaping.
         if: always() && steps.pytest_run.outcome == 'failure'
         run: |
           {
-            echo "## ❌ pytest failures"
+            echo "## pytest failures"
             echo ""
-            echo "**Full traceback dump from /tmp/pytest.log (last 200 lines):**"
+            echo "**Last 200 lines of pytest output:**"
             echo ""
             echo '```'
-            tail -200 /tmp/pytest.log || echo '(no log)'
+            tail -200 /tmp/pytest.log 2>/dev/null || echo '(no log)'
             echo '```'
             echo ""
-            if [ -f /tmp/pytest_report.xml ]; then
-              echo "### Failed test names (from junit-xml)"
-              echo ""
-              python -c "
-import xml.etree.ElementTree as ET
-t = ET.parse('/tmp/pytest_report.xml').getroot()
-for tc in t.iter('testcase'):
-    failures = list(tc.iter('failure')) + list(tc.iter('error'))
-    if failures:
-        cls = tc.get('classname', '?')
-        name = tc.get('name', '?')
-        print(f'- \`{cls}::{name}\`')
-        for f in failures:
-            msg = (f.get('message') or '')[:200]
-            print(f'  - {msg}')
-" 2>&1 || echo '(could not parse junit xml)'
-            fi
-          } >> $GITHUB_STEP_SUMMARY
+            echo "### Failed test names (parsed from junit-xml)"
+            echo ""
+            python scripts/ci_summarize_pytest.py /tmp/pytest_report.xml 2>&1 \
+              || echo '(parser failed)'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload pytest artifacts (always)
         if: always()

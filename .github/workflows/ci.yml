@@ -201,27 +201,78 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
 
       - name: Run pytest with coverage
+        id: pytest_run
         run: |
+          set +e
+          # JUnit XML is uploaded as artifact + parsed for the
+          # step-summary write-up below. ``--tb=long`` so a failing
+          # test prints the full traceback (was --tb=short which
+          # gave only file:line).
           pytest \
             apps/ledger apps/idempotency apps/inventory \
             apps/fx apps/payments apps/outbox \
             apps/users apps/orders apps/disputes \
-            --tb=short \
+            --tb=long \
+            --junit-xml=/tmp/pytest_report.xml \
             --cov=apps \
             --cov-report=term-missing:skip-covered \
             --cov-report=xml:coverage.xml \
-            -p no:cacheprovider
+            -p no:cacheprovider \
+            2>&1 | tee /tmp/pytest.log
+          EXIT=${PIPESTATUS[0]}
+          echo "PYTEST_EXIT=$EXIT" >> $GITHUB_OUTPUT
+          exit $EXIT
         # We list the test directories explicitly rather than `pytest`
         # auto-discover so we KNOW which apps are covered. New apps
         # with tests must be added here — that's intentional friction.
 
-      - name: Upload coverage artifact
+      - name: Write failing tests to job summary
+        # GitHub renders $GITHUB_STEP_SUMMARY as markdown on the job
+        # page — VISIBLE WITHOUT REPO-ADMIN AUTH. Critical for
+        # debugging from outside (e.g. fork PRs, third-party
+        # reviewers). Without this the only way to read a CI failure
+        # is to scroll through the raw runner log.
+        if: always() && steps.pytest_run.outcome == 'failure'
+        run: |
+          {
+            echo "## ❌ pytest failures"
+            echo ""
+            echo "**Full traceback dump from /tmp/pytest.log (last 200 lines):**"
+            echo ""
+            echo '```'
+            tail -200 /tmp/pytest.log || echo '(no log)'
+            echo '```'
+            echo ""
+            if [ -f /tmp/pytest_report.xml ]; then
+              echo "### Failed test names (from junit-xml)"
+              echo ""
+              python -c "
+import xml.etree.ElementTree as ET
+t = ET.parse('/tmp/pytest_report.xml').getroot()
+for tc in t.iter('testcase'):
+    failures = list(tc.iter('failure')) + list(tc.iter('error'))
+    if failures:
+        cls = tc.get('classname', '?')
+        name = tc.get('name', '?')
+        print(f'- \`{cls}::{name}\`')
+        for f in failures:
+            msg = (f.get('message') or '')[:200]
+            print(f'  - {msg}')
+" 2>&1 || echo '(could not parse junit xml)'
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload pytest artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage.xml
+          name: pytest-output
+          path: |
+            /tmp/pytest.log
+            /tmp/pytest_report.xml
+            coverage.xml
           retention-days: 14
+          if-no-files-found: warn
 
   # ── Frontend: lint + build ────────────────────────────────────────
   # Catches JSX syntax errors, missing imports, type mismatches that

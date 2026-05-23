@@ -1,0 +1,67 @@
+# Reduce build context + image size.
+# Anything matched here is NOT sent to the Docker daemon during build.
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.tox/
+venv/
+.venv/
+env/
+.env*
+!.env.example
+
+# Django dev artifacts
+db.sqlite3
+db.sqlite3-journal
+media/local-uploads/
+staticfiles/
+
+# Frontend (the backend image doesn't need any of this; if you build
+# the frontend in CI you produce a separate static-assets image)
+frontend/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI / GitHub
+.github/
+
+# Docs
+*.md
+docs/
+
+# Logs
+logs/
+*.log
+
+# Local dev
+.envrc
+celerybeat-schedule
+celerybeat.pid
+
+# Claude / agent state
+.claude/
+
+# Locust files
+locustfile.py

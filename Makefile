@@ -7,7 +7,8 @@
 .PHONY: help dev-setup test test-fast test-coverage lint format \
         check migrate makemigrations runserver shell celery beat \
         frontend-install frontend-build frontend-dev \
-        clean docker-build
+        clean docker-build docker-up docker-down docker-logs \
+        docker-shell docker-test
 
 # ── Help ──────────────────────────────────────────────────────────
 
@@ -35,6 +36,14 @@ help:
 	@echo "  make frontend-install — npm ci"
 	@echo "  make frontend-build   — production build (vite)"
 	@echo "  make frontend-dev     — dev server on :5173"
+	@echo ""
+	@echo "Docker (local full-stack: postgres + redis + 4 services):"
+	@echo "  make docker-up        — build + start everything"
+	@echo "  make docker-down      — stop and remove containers"
+	@echo "  make docker-logs      — follow logs from all services"
+	@echo "  make docker-shell     — bash inside the web container"
+	@echo "  make docker-test      — run pytest inside the container"
+	@echo "  make docker-build     — build the image only (no run)"
 	@echo ""
 	@echo "Utility:"
 	@echo "  make clean            — remove caches, dist/, etc."
@@ -120,6 +129,43 @@ frontend-build:
 
 frontend-dev:
 	cd frontend && npm run dev
+
+# ── Docker (full-stack local) ─────────────────────────────────────
+
+docker-build:
+	docker build -f docker/Dockerfile -t micha-backend:dev .
+
+docker-up:
+	docker compose up -d --build
+	@echo ""
+	@echo "✓ MICHA running:"
+	@echo "    web      → http://localhost:8000"
+	@echo "    daphne   → http://localhost:8001 (websocket)"
+	@echo "    postgres → localhost:5432  (micha_dev / micha_user / dev_password_change_me)"
+	@echo "    redis    → localhost:6379"
+	@echo ""
+	@echo "Tail logs:    make docker-logs"
+	@echo "Shell in web: make docker-shell"
+
+docker-down:
+	docker compose down
+
+docker-down-clean:
+	# Also wipe volumes — fresh DB on next docker-up.
+	docker compose down -v
+
+docker-logs:
+	docker compose logs -f
+
+docker-shell:
+	docker compose exec web bash
+
+docker-test:
+	docker compose exec -e TEST_DB_POSTGRES=1 web \
+	    python -m pytest \
+	    apps/ledger apps/idempotency apps/inventory \
+	    apps/fx apps/payments apps/outbox \
+	    --tb=short
 
 # ── Utility ───────────────────────────────────────────────────────
 

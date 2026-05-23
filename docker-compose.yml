@@ -1,0 +1,179 @@
+# MICHA local development orchestration.
+#
+# What this gives you
+# ────────────────────
+# A complete local environment that matches production process layout:
+#   • postgres 16  (test data, isolated from your local Postgres)
+#   • redis 7      (cache + Celery broker + Channels layer)
+#   • web          (gunicorn, port 8000)
+#   • worker       (celery worker — drains the queues)
+#   • beat         (celery beat — fires scheduled tasks)
+#   • daphne       (ASGI / WebSockets, port 8001)
+#
+# How to use
+# ───────────
+#   docker compose up -d           # start everything
+#   docker compose logs -f web     # tail one service
+#   docker compose exec web bash   # shell into the web container
+#   docker compose down            # stop and remove containers
+#   docker compose down -v         # ALSO drop volumes (wipes DB)
+#
+# What this is NOT
+# ─────────────────
+# This is for LOCAL DEVELOPMENT. Production uses k8s / ECS / similar
+# with proper secret management, replica sets, healthchecks, network
+# policies, autoscaling. Don't deploy this compose to prod.
+
+services:
+  # ── Datastore ────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: micha_dev
+      POSTGRES_USER: micha_user
+      POSTGRES_PASSWORD: dev_password_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U micha_user -d micha_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Application ──────────────────────────────────────────────────
+  # All four roles share the same image (built once from docker/Dockerfile)
+  # and the same env vars. Only the command differs. This is the same
+  # pattern production uses — one image, multiple deployments.
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: micha-backend:dev
+    command: ["web"]
+    environment: &backend_env
+      DJANGO_SETTINGS_MODULE: config.settings
+      # Dev defaults. In prod these come from a secret store.
+      SECRET_KEY: dev-secret-key-min-40-chars-aaaaaaaaaaaaaaaaaaaaa
+      DEBUG: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0,web
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: micha_dev
+      DB_USER: micha_user
+      DB_PASSWORD: dev_password_change_me
+      REDIS_URL: redis://redis:6379/0
+      # Real Fernet key so EncryptedCharField works in dev too.
+      # NEVER reuse this in prod — generate a fresh one.
+      FIELD_ENCRYPTION_KEY: XGG4Y1gf3jGtfnchHSORV2lIyeh0Sj6-j8Hn4ECHVJo=
+      # Auto-migrate on startup in dev. In prod this should be a
+      # dedicated init container so replicas don't race migrations.
+      MIGRATE_ON_START: "1"
+      # No external proxy in dev → REMOTE_ADDR is the real client.
+      TRUSTED_PROXY_IPS: ""
+      # Disable rate limiter locally so dev curl loops don't get
+      # banned.
+      RATE_LIMITER_ENABLED: "0"
+      # Skip moderation in local dev to avoid sample products
+      # accidentally tripping keyword rules.
+      MODERATION_ENABLED: "1"
+      # SES bounce webhook in INSECURE mode for local development
+      # (no cryptography signature available, no AWS IP allowlist).
+      SES_WEBHOOK_INSECURE: "1"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount source for live-reload during dev. Production builds bake
+      # the source into the image.
+      - .:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: micha-backend:dev
+    command: ["worker"]
+    environment:
+      <<: *backend_env
+      # Workers don't serve HTTP, no need to migrate. Beat does that
+      # in dev (MIGRATE_ON_START on web above).
+      MIGRATE_ON_START: "0"
+      CELERY_QUEUES: "high,default,low"
+      CELERY_CONCURRENCY: "2"   # lower in dev to save CPU
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: micha-backend:dev
+    command: ["beat"]
+    environment:
+      <<: *backend_env
+      MIGRATE_ON_START: "0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    # Beat MUST be a singleton — never scale this service. The
+    # ``deploy.replicas`` value below documents the invariant
+    # (compose ignores it but it's loud to read).
+    deploy:
+      replicas: 1
+
+  daphne:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: micha-backend:dev
+    command: ["daphne"]
+    environment:
+      <<: *backend_env
+      MIGRATE_ON_START: "0"
+      DAPHNE_PORT: "8001"
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
+  redis_data:

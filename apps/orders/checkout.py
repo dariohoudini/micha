@@ -60,6 +60,30 @@ class CheckoutService:
         # Idempotency key — client generates once, retries use same key
         self.idempotency_key = data.get('idempotency_key') or str(uuid.uuid4())
 
+    @staticmethod
+    def _normalise_country(value):
+        """Map free-form country names to ISO 3166-1 alpha-2 codes.
+
+        The Address model stores 'Angola' (display-friendly) but the
+        tax module keys on ISO codes. Tiny lookup — only the markets
+        MICHA actually serves today. Extend when SADC expansion lands.
+        """
+        v = (value or '').strip()
+        if len(v) == 2:
+            return v.upper()
+        mapping = {
+            'angola':   'AO',
+            'portugal': 'PT',
+            'south africa': 'ZA',
+            'namibia':  'NA',
+            'mozambique': 'MZ',
+        }
+        # Empty fallback (NOT 'AO') so an unmapped country surfaces
+        # NoJurisdiction in the tax service — the right behaviour is
+        # to zero-rate, not to mis-attribute foreign sales as Angolan
+        # for AGT filing purposes.
+        return mapping.get(v.lower(), '')
+
     def execute(self):
         """
         Execute checkout atomically. Returns list of created orders.
@@ -473,7 +497,72 @@ class CheckoutService:
             store_credit = (store_credit * scale).quantize(Decimal('0.01'))
             total_discount = platform_subsidy + seller_subsidy + store_credit
 
-        total = subtotal + shipping_cost - total_discount
+        # R2: IVA tax computation. Applied AFTER discount on the
+        # taxable base (subtotal - discount). Shipping is NOT taxed
+        # in Angola's current IVA framework (Decreto Presidencial
+        # n.º 180/19, art. 7) — treated as a separate accounting line.
+        #
+        # If no jurisdiction is configured for the ship-to address,
+        # tax = 0 — better to under-charge than to refuse the sale
+        # over a config gap. The TaxCalculation row records the
+        # decision either way.
+        tax_amount = Decimal('0.00')
+        try:
+            from apps.tax.service import (
+                calculate as tax_calculate,
+                resolve_jurisdiction,
+                NoJurisdiction, NoRate,
+            )
+            taxable_base = max(subtotal - total_discount, Decimal('0'))
+            ship_to_country = self._normalise_country(
+                getattr(address, 'country', 'Angola')
+            )
+            ship_to_province = getattr(address, 'province', '') or ''
+            # Each cart item is one line — category falls back to STANDARD.
+            tax_lines = [
+                {
+                    'id': f'cart-item-{idx}',
+                    'amount': (
+                        (it.price_at_add or it.product.price)
+                        * it.quantity
+                    ).quantize(Decimal('0.01')),
+                    'category': getattr(it.product, 'tax_category', 'STANDARD'),
+                }
+                for idx, it in enumerate(items)
+            ]
+            # Pro-rate discount across lines so we tax the post-discount
+            # base, not pre-discount.
+            if total_discount > 0 and subtotal > 0:
+                ratio = (taxable_base / subtotal)
+                tax_lines = [
+                    {**ln, 'amount': (ln['amount'] * ratio).quantize(Decimal('0.01'))}
+                    for ln in tax_lines
+                ]
+            try:
+                tax_result = tax_calculate(
+                    tax_lines,
+                    ship_to_country=ship_to_country,
+                    ship_to_province=ship_to_province,
+                    ref_type='order_preview',  # finalised after order create
+                    ref_id='',
+                    log_calc=False,  # we'll log against the real order pk below
+                )
+                tax_amount = Decimal(str(tax_result.get('total_tax', '0'))).quantize(
+                    Decimal('0.01')
+                )
+            except (NoJurisdiction, NoRate):
+                # Acceptable degraded state: ship-to not configured.
+                tax_amount = Decimal('0.00')
+                tax_result = None
+        except Exception:
+            # Defensive: if the tax module explodes for any reason
+            # (import error, DB hiccup), never block checkout. Tax
+            # falls back to 0 and an admin alert should follow.
+            logger.warning('checkout: tax computation failed', exc_info=True)
+            tax_amount = Decimal('0.00')
+            tax_result = None
+
+        total = subtotal + shipping_cost + tax_amount - total_discount
 
         # Build idempotency key per seller (unique per checkout session per seller)
         seller_idem_key = f"{self.idempotency_key}:{seller.pk}"
@@ -494,6 +583,7 @@ class CheckoutService:
             platform_subsidy=platform_subsidy,
             seller_subsidy=seller_subsidy,
             store_credit_used=store_credit,
+            tax_amount=tax_amount,
             total=total,
             coupon_code=','.join(codes_used)[:50] if codes_used else '',
             notes=self.notes,
@@ -509,6 +599,27 @@ class CheckoutService:
             days=Order.PROTECTION_DAYS.get('pending', 2)
         )
         order.save(update_fields=['protection_state', 'protection_deadline_at'])
+
+        # R2: finalise the TaxCalculation audit row against the real
+        # order pk. We pre-computed tax_amount with log=False during
+        # the preview pass; now write the immutable audit row that an
+        # AGT filing report joins against.
+        if tax_amount > 0:
+            try:
+                from apps.tax.service import calculate as tax_calculate
+                tax_calculate(
+                    tax_lines,
+                    ship_to_country=ship_to_country,
+                    ship_to_province=ship_to_province,
+                    ref_type='order',
+                    ref_id=str(order.pk),
+                    log_calc=True,
+                )
+            except Exception:
+                logger.warning(
+                    'checkout: tax audit-row write failed for order %s',
+                    order.pk, exc_info=True,
+                )
 
         # Create order items with price + variant snapshot.
         # IMPORTANT: bulk_create bypasses Model.save(), and OrderItem.save()

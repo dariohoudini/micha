@@ -64,6 +64,15 @@ class Order(models.Model):
         max_digits=10, decimal_places=2, default=0,
         help_text='Portion redeemed from buyer loyalty / store credit',
     )
+    # R2: IVA / sales tax amount applied at checkout time. Stored
+    # separately from total so we can: (a) break it out on receipts;
+    # (b) report per period to AGT (Angola tax authority); (c) refund
+    # the correct portion when an order is partially refunded.
+    # tax_amount is INCLUDED in total — i.e., total = subtotal +
+    # shipping_cost + tax_amount - discount. The matching
+    # TaxCalculation audit row lives in apps.tax via ref_type='order'.
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
     total = models.DecimalField(max_digits=12, decimal_places=2)
     coupon_code = models.CharField(max_length=50, blank=True)
 
@@ -155,7 +164,9 @@ class Order(models.Model):
 
     def verify_total(self):
         computed = sum(item.unit_price * item.quantity for item in self.items.all())
-        computed_total = computed + self.shipping_cost - self.discount
+        # R2: include tax_amount in the invariant. Pre-R2 orders have
+        # tax_amount=0 (DB default) so the equation still holds.
+        computed_total = computed + self.shipping_cost + (self.tax_amount or 0) - self.discount
         if abs(float(computed_total) - float(self.total)) > 0.01:
             raise ValueError(
                 f"Order total mismatch: stored={self.total}, computed={computed_total}"

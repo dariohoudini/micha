@@ -362,6 +362,13 @@ class PaymentEvent(models.Model):
         super().save(*args, **kwargs)
 
 
+# R2: chargeback workflow — re-exported from chargebacks module so
+# Django's app registry picks up the model and migrations get
+# generated. Living in a sibling module keeps the service logic out
+# of this already-large models.py.
+from .chargebacks import Chargeback  # noqa: F401,E402
+
+
 class PaymentReconciliationLog(models.Model):
     """
     Tracks reconciliation runs — comparing our DB against gateway.

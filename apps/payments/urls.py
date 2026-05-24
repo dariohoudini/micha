@@ -6,6 +6,10 @@ from .views import (
     AdminPayoutListView, AdminPayoutActionView,
     WebhookView,
 )
+from .chargeback_views import (
+    ChargebackInboundView, ChargebackListView, ChargebackDetailView,
+    ChargebackRespondView, ChargebackAcceptView, ChargebackResolveView,
+)
 
 
 urlpatterns = [
@@ -18,4 +22,18 @@ urlpatterns = [
     path("payout/admin/<uuid:pk>/", AdminPayoutActionView.as_view(), name="admin-payout-action"),
     path("webhook/", WebhookView.as_view(), name="payment-webhook"),
     path("payouts/schedule/", PayoutScheduleView.as_view(), name="payout-schedule"),
+
+    # R2: chargeback workflow (PSP inbound + admin handling).
+    path("chargebacks/inbound/", ChargebackInboundView.as_view(),
+         name="chargeback-inbound"),
+    path("chargebacks/", ChargebackListView.as_view(),
+         name="chargeback-list"),
+    path("chargebacks/<int:pk>/", ChargebackDetailView.as_view(),
+         name="chargeback-detail"),
+    path("chargebacks/<int:pk>/respond/", ChargebackRespondView.as_view(),
+         name="chargeback-respond"),
+    path("chargebacks/<int:pk>/accept/", ChargebackAcceptView.as_view(),
+         name="chargeback-accept"),
+    path("chargebacks/<int:pk>/resolve/", ChargebackResolveView.as_view(),
+         name="chargeback-resolve"),
 ]

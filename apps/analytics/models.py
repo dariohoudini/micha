@@ -86,3 +86,7 @@ class GeoSalesData(models.Model):
     class Meta:
         unique_together = ("city", "period")
         indexes = [models.Index(fields=["period", "-total_revenue"])]
+
+
+# R7: UTM attribution model — re-exported so Django picks it up.
+from .attribution import AttributionTouch  # noqa: F401,E402

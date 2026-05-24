@@ -27,6 +27,12 @@ urlpatterns = [
          apple_app_site_association, name="aasa"),
     path(".well-known/assetlinks.json",
          assetlinks_json, name="assetlinks"),
+    # R7: server-rendered product page shells for SEO (Googlebot,
+    # social-share previews). Humans get JS-redirected to the SPA;
+    # crawlers see <title>/<meta>/JSON-LD without executing JS.
+    path("p/<slug:slug>/",
+         __import__('apps.seo.prerender', fromlist=['render_product_seo']).render_product_seo,
+         name="seo-product"),
 
     path("api/v1/auth/",            include("apps.users.urls")),
     path("api/v1/verification/",    include("apps.verification.urls")),

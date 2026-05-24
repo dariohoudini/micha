@@ -4,6 +4,7 @@ from .views import (
     PushTokenRegisterView, PushTokenUnregisterView,
     UnsubscribeView, SESWebhookView,
 )
+from .whatsapp_webhook import whatsapp_webhook
 
 
 urlpatterns = [
@@ -26,4 +27,8 @@ urlpatterns = [
     # SES → SNS bounce + complaint webhook. NO auth — SNS RSA signature
     # is the auth (or IP allowlist fallback when cryptography unavailable).
     path("ses-webhook/", SESWebhookView.as_view(), name="ses-webhook"),
+
+    # R5: WhatsApp Business webhook. GET=Meta subscription verification,
+    # POST=event delivery (HMAC-signed via WHATSAPP_APP_SECRET).
+    path("whatsapp/webhook/", whatsapp_webhook, name="whatsapp-webhook"),
 ]

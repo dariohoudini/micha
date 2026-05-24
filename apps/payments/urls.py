@@ -13,6 +13,9 @@ from .chargeback_views import (
 from .settlement_views import (
     SettlementUploadView, SettlementRunListView, SettlementRunDetailView,
 )
+from .aml_views import (
+    AMLAlertListView, AMLAlertDetailView, AMLAlertReviewView,
+)
 
 
 urlpatterns = [
@@ -47,4 +50,11 @@ urlpatterns = [
          name="settlement-runs"),
     path("settlement/runs/<int:pk>/", SettlementRunDetailView.as_view(),
          name="settlement-run-detail"),
+
+    # R2: AML alert queue (admin only).
+    path("aml/alerts/", AMLAlertListView.as_view(), name="aml-alerts"),
+    path("aml/alerts/<int:pk>/", AMLAlertDetailView.as_view(),
+         name="aml-alert-detail"),
+    path("aml/alerts/<int:pk>/review/", AMLAlertReviewView.as_view(),
+         name="aml-alert-review"),
 ]

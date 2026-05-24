@@ -1,0 +1,122 @@
+# ops/nginx/micha.conf.example
+# ────────────────────────────
+#
+# Reference nginx site config for MICHA production. Copy to
+# /etc/nginx/sites-available/micha.conf, fill TLS cert paths, then
+# ``ln -s … sites-enabled/``.
+#
+# Architecture
+# ────────────
+#   nginx     edge proxy + static asset serving (frontend/dist)
+#   gunicorn  Django (apps/* via WSGI)
+#   daphne    websocket layer (apps/chat)
+#   workers   Celery on separate hosts/processes (NOT in nginx)
+#
+# This file ties nginx → gunicorn for /api/, → daphne for /ws/,
+# serves the SPA bundle for everything else.
+
+upstream micha_api {
+    server 127.0.0.1:8000 max_fails=3 fail_timeout=30s;
+    keepalive 32;
+}
+
+upstream micha_ws {
+    server 127.0.0.1:8001 max_fails=3 fail_timeout=30s;
+}
+
+# HTTP → HTTPS redirect (declarative; HSTS enforces too).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name micha.ao www.micha.ao;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name micha.ao www.micha.ao;
+
+    # TLS — fill with your cert paths.
+    ssl_certificate     /etc/letsencrypt/live/micha.ao/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/micha.ao/privkey.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    # R1 Sprint 3: defence-in-depth security headers.
+    include /etc/nginx/conf.d/csp.conf;
+
+    # Body size — image uploads can be big.
+    client_max_body_size 25M;
+
+    # Backend API.
+    location /api/ {
+        proxy_pass http://micha_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 5s;
+    }
+
+    # Health + admin (same upstream, listed for clarity).
+    location ~ ^/(healthz|readyz|metrics)$ {
+        proxy_pass http://micha_api;
+        access_log off;
+    }
+
+    # Apple/Google deep-link verification files. Apple insists on
+    # application/json content-type with no extension — Django serves
+    # both correctly via apps/seo/well_known.py.
+    location ^~ /.well-known/ {
+        proxy_pass http://micha_api;
+        proxy_set_header Host $host;
+        # 1h cache at the edge — Apple/Google fetch periodically.
+        proxy_cache_valid 200 1h;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    # Websocket (chat).
+    location /ws/ {
+        proxy_pass http://micha_ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;  # long-lived websockets
+    }
+
+    # SPA bundle — versioned assets immutable.
+    location ~* ^/assets/.+\.(js|css|woff2?|svg|webp|avif|png|jpg)$ {
+        root /srv/micha/frontend/dist;
+        access_log off;
+        # Vite emits hashed filenames — safe to lock for a year.
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # Everything else — SPA fallback (react-router takes over client-side).
+    location / {
+        root /srv/micha/frontend/dist;
+        try_files $uri $uri/ /index.html;
+        # index.html itself must NOT be aggressively cached — it
+        # references the hashed bundle, and a new release replaces both.
+        add_header Cache-Control "public, max-age=0, must-revalidate";
+    }
+
+    # Rate-limit specific endpoints at the edge (defence-in-depth on
+    # top of middleware/rate_limiter.py).
+    location /api/v1/auth/login/ {
+        limit_req zone=auth burst=10 nodelay;
+        proxy_pass http://micha_api;
+    }
+}
+
+# Rate-limit zones — defined at http {} level.
+# Put this in a separate file or in nginx.conf's http block:
+#
+#   limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;

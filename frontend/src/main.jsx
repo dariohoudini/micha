@@ -10,6 +10,9 @@ import '@/styles/index.css'
 import App from './App.jsx'
 import { queryClient } from '@/lib/queryClient'
 import { ToastProvider } from '@/components/ui/Toast'
+// R1 Sprint 3: lazy Sentry init. No-op when VITE_SENTRY_DSN unset.
+import { initSentry } from '@/lib/sentry'
+initSentry()
 
 async function init() {
   // ── Capacitor native setup ─────────────────────────────────────────────

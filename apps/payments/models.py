@@ -367,6 +367,8 @@ class PaymentEvent(models.Model):
 # generated. Living in a sibling module keeps the service logic out
 # of this already-large models.py.
 from .chargebacks import Chargeback  # noqa: F401,E402
+# R2: settlement reconciliation models — same re-export pattern.
+from .settlement import SettlementReconRun, SettlementDrift  # noqa: F401,E402
 
 
 class PaymentReconciliationLog(models.Model):

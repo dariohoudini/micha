@@ -10,6 +10,9 @@ from .chargeback_views import (
     ChargebackInboundView, ChargebackListView, ChargebackDetailView,
     ChargebackRespondView, ChargebackAcceptView, ChargebackResolveView,
 )
+from .settlement_views import (
+    SettlementUploadView, SettlementRunListView, SettlementRunDetailView,
+)
 
 
 urlpatterns = [
@@ -36,4 +39,12 @@ urlpatterns = [
          name="chargeback-accept"),
     path("chargebacks/<int:pk>/resolve/", ChargebackResolveView.as_view(),
          name="chargeback-resolve"),
+
+    # R2: PSP settlement reconciliation (admin only).
+    path("settlement/upload/", SettlementUploadView.as_view(),
+         name="settlement-upload"),
+    path("settlement/runs/", SettlementRunListView.as_view(),
+         name="settlement-runs"),
+    path("settlement/runs/<int:pk>/", SettlementRunDetailView.as_view(),
+         name="settlement-run-detail"),
 ]

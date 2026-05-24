@@ -3,6 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from apps.seo.views import HealthCheckView, robots_txt, sitemap_xml
+from apps.seo.well_known import apple_app_site_association, assetlinks_json
 from apps.monitoring.health import healthz, readyz
 
 ADMIN_URL = getattr(settings, "ADMIN_URL", "admin/")
@@ -17,6 +18,15 @@ urlpatterns = [
     path("metrics", include("apps.telemetry.urls")),
     path("robots.txt", robots_txt, name="robots-txt"),
     path("sitemap.xml", sitemap_xml, name="sitemap"),
+
+    # R5-C: native deep-link verification files. MUST be at the
+    # domain root (Apple/Google ignore them under any prefix). No
+    # auth, no CSRF — they're public verification metadata, fetched
+    # by Apple's CDN and Google's Play Services.
+    path(".well-known/apple-app-site-association",
+         apple_app_site_association, name="aasa"),
+    path(".well-known/assetlinks.json",
+         assetlinks_json, name="assetlinks"),
 
     path("api/v1/auth/",            include("apps.users.urls")),
     path("api/v1/verification/",    include("apps.verification.urls")),

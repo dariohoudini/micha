@@ -6,6 +6,7 @@ import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { attachCartSync } from '@/lib/cartSync'
+import { useDeepLinks } from '@/lib/deepLinks'
 import { toast } from '@/components/ui/Toast'
 
 // Onboarding
@@ -147,6 +148,10 @@ function GlobalSetup() {
       toast.success(body ? `${title}: ${body}` : title, { duration: 5000 })
     },
   })
+  // R5-C: universal-link / app-link route handler. Subscribes to
+  // Capacitor's appUrlOpen event and forwards into react-router.
+  // No-op on web builds.
+  useDeepLinks()
 
   // R5-B: attach the offline-aware cart sync engine. Re-runs when
   // ``isAuth`` flips so that login immediately triggers a /merge/

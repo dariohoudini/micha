@@ -43,6 +43,15 @@ export const useAuthStore = create(
       logout: async () => {
         try {
           const { default: api } = await import('@/api/client')
+          // R5: deactivate this device's push token BEFORE the auth
+          // call. If we did it after the auth refresh-token is
+          // invalidated, the unregister call would 401 and the device
+          // would keep receiving pushes intended for the next user
+          // who logs in here. Empty body = deactivate all tokens for
+          // the calling user.
+          try {
+            await api.post('/api/v1/notifications/push/unregister/', {})
+          } catch {}
           await api.post('/api/v1/auth/logout/', { refresh: tokenStorage.getRefreshToken() })
         } catch {}
         tokenStorage.clearAll()

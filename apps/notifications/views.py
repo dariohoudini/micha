@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.users.permissions import IsNotSuspended
 from middleware.pagination import FeedCursorPagination
+from .device_models import DeviceToken
 from .models import Notification
 
 
@@ -172,3 +173,109 @@ class SESWebhookView(APIView):
         return Response({'detail': 'ok', 'result': result})
 
 
+# ─── R5: Push device registration ────────────────────────────────────
+
+class PushTokenSerializer(serializers.Serializer):
+    """Payload accepted by /push/register/.
+
+    ``platform`` is best-effort — the frontend sends Capacitor's
+    ``getPlatform()`` which returns 'ios' / 'android' / 'web'. Unknown
+    values are normalised to 'web'.
+    """
+    token = serializers.CharField(min_length=10, max_length=4096)
+    platform = serializers.CharField(
+        required=False, allow_blank=True, default='', max_length=20,
+    )
+    device_info = serializers.DictField(
+        required=False, default=dict,
+    )
+
+    def validate_platform(self, value: str) -> str:
+        v = (value or '').strip().lower()
+        if v in ('ios', 'android', 'web'):
+            return v
+        # Frontend sometimes sends "iphone" / "ipad" — map to ios.
+        if v in ('iphone', 'ipad'):
+            return 'ios'
+        return 'web'
+
+
+class PushTokenRegisterView(APIView):
+    """POST /api/v1/notifications/push/register/
+
+    Frontend (Capacitor PushNotifications.addListener('registration'))
+    calls this with the FCM/APNs token. Behaviour:
+
+      • Token already registered to THIS user → idempotent: update
+        platform + last_seen_at + reactivate if previously deactivated.
+      • Token registered to a DIFFERENT user → reassign FK (someone
+        logged out + new user logged in on the same device). Audit
+        log entry would be nice — out of scope here, the reassign
+        itself is the audit (the old user no longer receives pushes).
+      • Brand new token → create row.
+
+    Auth required. Suspended users can still register (a suspended
+    user might still need account-status notifications).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        ser = PushTokenSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        token = ser.validated_data['token'].strip()
+        platform = ser.validated_data['platform'] or 'web'
+        device_info = ser.validated_data.get('device_info') or {}
+
+        existing = DeviceToken.objects.filter(token=token).first()
+        if existing is None:
+            DeviceToken.objects.create(
+                user=request.user,
+                token=token,
+                platform=platform,
+                device_info=device_info,
+            )
+            return Response({'detail': 'registered', 'created': True}, status=201)
+
+        # Existing row — reactivate / reassign as needed.
+        changed_fields = []
+        if existing.user_id != request.user.pk:
+            existing.user = request.user
+            changed_fields.append('user')
+        if existing.platform != platform:
+            existing.platform = platform
+            changed_fields.append('platform')
+        if not existing.is_active:
+            existing.is_active = True
+            existing.deactivation_reason = ''
+            changed_fields.extend(['is_active', 'deactivation_reason'])
+        if device_info:
+            existing.device_info = device_info
+            changed_fields.append('device_info')
+        # Always bump last_seen on a register call.
+        existing.last_seen_at = timezone.now()
+        changed_fields.append('last_seen_at')
+        existing.save(update_fields=list(set(changed_fields + ['updated_at'])))
+        return Response({'detail': 'registered', 'created': False}, status=200)
+
+
+class PushTokenUnregisterView(APIView):
+    """POST /api/v1/notifications/push/unregister/
+
+    Called from the frontend on logout. Deactivates (soft-deletes) the
+    token. Accepts ``{token}`` in the body OR no body — in the latter
+    case, deactivates ALL tokens for the calling user. The "all"
+    behaviour is useful when the frontend has lost the token reference
+    but knows the user is signing out.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        token = (request.data.get('token') or '').strip()
+        qs = DeviceToken.objects.filter(user=request.user, is_active=True)
+        if token:
+            qs = qs.filter(token=token)
+        count = 0
+        for t in qs:
+            t.deactivate(reason='logout')
+            count += 1
+        return Response({'detail': 'unregistered', 'deactivated': count})

@@ -14,6 +14,7 @@ User = settings.AUTH_USER_MODEL
 # of concerns (different lifecycle, different retention).
 from .suppression_models import SuppressedEmail  # noqa: F401,E402
 from .notification_log_models import NotificationLog  # noqa: F401,E402
+from .device_models import DeviceToken  # noqa: F401,E402  R5: multi-device push
 
 
 class Notification(models.Model):
@@ -85,18 +86,32 @@ class Notification(models.Model):
             reference_id=reference_id,
         )
 
-        # Send FCM push if user has token and push is enabled
-        if user.fcm_token and user.push_notifications:
+        # R5: multi-device push fan-out. Pre-R5 this checked
+        # ``user.fcm_token`` (a single field) which broke when a user
+        # had more than one device. push_service.send_to_user enumerates
+        # active DeviceToken rows and sends to each, with FCM error
+        # responses driving token deactivation.
+        #
+        # send_to_user also honours user.push_notifications and the
+        # back-compat legacy fcm_token field, so this call stays the
+        # single chokepoint.
+        if getattr(user, 'push_notifications', True):
             try:
-                from apps.recommendations.tasks import send_push
-                send_push.delay(
-                    token=user.fcm_token,
+                from apps.notifications.push_service import send_to_user
+                send_to_user(
+                    user,
                     title=title,
                     body=message[:100],
-                    data={'type': type, 'reference_id': reference_id, **(data or {})},
+                    data={
+                        'type': type,
+                        'reference_id': reference_id,
+                        **(data or {}),
+                    },
                 )
             except Exception:
-                pass  # Push failure never blocks notification creation
+                # Push failure never blocks notification creation —
+                # the in-app row is still there for next app open.
+                pass
 
         return notification
 

@@ -38,6 +38,14 @@ export const useAuthStore = create(
         tokenStorage.setUser(userData)
         syncLanguage(userData)
         set({ user: userData, isAuth: true, isSeller: userData.is_seller || false, isStaff: userData.is_staff || false })
+        // R5-B: fire-and-forget cart sync. The effect in GlobalSetup
+        // also reacts to isAuth changes, but triggering here gives a
+        // crisper sync moment for the user who just logged in with
+        // items in their anon cart. Dynamic import so the cart-sync
+        // module isn't pulled into the auth-store chunk.
+        import('@/lib/cartSync')
+          .then(m => m.triggerCartSync())
+          .catch(() => {})
       },
 
       logout: async () => {

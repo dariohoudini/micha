@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
+import { attachCartSync } from '@/lib/cartSync'
 import { toast } from '@/components/ui/Toast'
 
 // Onboarding
@@ -138,6 +139,7 @@ const A = ({ children }) => <AdminRoute>{children}</AdminRoute>
 
 function GlobalSetup() {
   const setOnline = useUIStore(s => s.setOnline)
+  const isAuth = useAuthStore(s => s.isAuth)
   usePushNotifications({
     onNotification: (notification) => {
       const title = notification.title || 'MICHA'
@@ -145,6 +147,16 @@ function GlobalSetup() {
       toast.success(body ? `${title}: ${body}` : title, { duration: 5000 })
     },
   })
+
+  // R5-B: attach the offline-aware cart sync engine. Re-runs when
+  // ``isAuth`` flips so that login immediately triggers a /merge/
+  // of the anonymous local cart into the user's server cart —
+  // closing the "I added 5 items as a guest then signed in and they
+  // disappeared" bug that bounced buyers in early testing.
+  useEffect(() => {
+    const cleanup = attachCartSync()
+    return cleanup
+  }, [isAuth])
 
   useEffect(() => {
     const on = () => setOnline(true)

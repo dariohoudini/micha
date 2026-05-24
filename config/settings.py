@@ -463,6 +463,16 @@ CELERY_TASK_ROUTES = {
 }
 CELERY_BEAT_SCHEDULE = {
 
+    # ── R6: Data retention enforcement ───────────────────────
+    # Nightly purge of rows past their retention window. The policy
+    # itself lives in apps.data_rights.retention; tweak via
+    # DATA_RETENTION_POLICY in settings.
+    'enforce-data-retention-nightly': {
+        'task': 'data_rights.enforce_retention',
+        'schedule': crontab(hour=3, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+
     # ── Users ─────────────────────────────────────────────────
     'cleanup-expired-otps': {
         'task': 'users.cleanup_expired_otps',

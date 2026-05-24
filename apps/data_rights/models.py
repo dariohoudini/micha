@@ -76,3 +76,8 @@ class DataSubjectRequest(models.Model):
 
     def __str__(self):
         return f'{self.kind}#{self.id} ({self.status})'
+
+
+# R6: cookie consent — re-export from cookie_consent module so Django
+# picks up the model.
+from .cookie_consent import CookieConsent  # noqa: F401,E402

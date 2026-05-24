@@ -206,6 +206,27 @@ class RequestPayoutView(APIView):
             return Response({'error': 'validation_error',
                              "detail": "Invalid amount."}, status=400)
 
+        # R2: KYC tier gating. Below Tier 3, sellers have monthly
+        # payout caps. Refuses the request BEFORE wallet/bank lookups
+        # so fraudsters can't enumerate wallet state.
+        from apps.payments.kyc_gating import check_payout_allowed
+        allowed, err_code, details = check_payout_allowed(request.user, amount)
+        if not allowed:
+            log_security_event(
+                'payout_kyc_blocked', request=request, severity='WARNING',
+                details={'user_id': request.user.id,
+                         'error': err_code, **details},
+            )
+            return Response(
+                {'error': err_code,
+                 'detail': details.get('message', 'Payout not allowed.'),
+                 'tier': details.get('tier'),
+                 'cap': details.get('cap'),
+                 'used': details.get('used'),
+                 'remaining': details.get('remaining')},
+                status=403,
+            )
+
         wallet, _ = SellerWallet.objects.get_or_create(seller=request.user)
         # Re-read with lock to prevent TOCTOU
         wallet = SellerWallet.objects.select_for_update(of=('self',)).get(pk=wallet.pk)

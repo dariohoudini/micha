@@ -169,6 +169,11 @@ MIDDLEWARE = [
     # request so we don't double-log. This middleware is the safety
     # net for endpoints nobody remembered to instrument.
     'apps.admin_actions.middleware.AdminActionAuditMiddleware',
+    # R3: per-request cost estimate. OFF in DEBUG (would spam dev
+    # console), ON in prod. Emits a structured log line + Prometheus
+    # counter labelled by route+method+status. Disabled by setting
+    # COST_TELEMETRY_ENABLED=False.
+    'middleware.cost_telemetry.CostTelemetryMiddleware',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False
@@ -245,9 +250,36 @@ else:
         }
     }
 
-# FIX: Read replica routing — analytics + reports hit replica, writes hit primary
-# Uncomment when you have a read replica
-# DATABASE_ROUTERS = ['config.db_router.ReadReplicaRouter']
+# R3: Read replica routing.
+# When DB_REPLICA_HOST is set in env, register a 'replica' database
+# alias and activate the router. Analytics / search / recommendations
+# / collections / reviews / i18n / seo reads route to the replica;
+# financial / auth-critical apps (payments / orders / users / etc.)
+# stay on primary. Writes always go to primary.
+#
+# Safe default: when DB_REPLICA_HOST is unset, the router is NOT
+# registered. db_router.ReadReplicaRouter is also defensive — if
+# 'replica' isn't in DATABASES at runtime, all reads route to default.
+if os.environ.get('DB_REPLICA_HOST'):
+    DATABASES['replica'] = {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('DB_REPLICA_NAME', os.environ.get('DB_NAME', '')),
+        'USER': os.environ.get('DB_REPLICA_USER', os.environ.get('DB_USER', 'postgres')),
+        'PASSWORD': os.environ.get('DB_REPLICA_PASSWORD', os.environ.get('DB_PASSWORD', '')),
+        'HOST': os.environ.get('DB_REPLICA_HOST'),
+        'PORT': os.environ.get('DB_REPLICA_PORT', '5432'),
+        'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', 60)),
+        'CONN_HEALTH_CHECKS': True,
+        'OPTIONS': {
+            'connect_timeout': 10,
+            'options': (
+                '-c statement_timeout=30000'
+                ' -c lock_timeout=5000'
+                ' -c idle_in_transaction_session_timeout=60000'
+            ),
+        },
+    }
+    DATABASE_ROUTERS = ['config.db_router.ReadReplicaRouter']
 
 AUTH_USER_MODEL = 'users.User'
 
@@ -386,24 +418,48 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # FIX: Dead letter queue — failed tasks go here instead of silently disappearing
+# R3 fix: there was a stray ``'TEST': {'NAME': 'test_micha'}`` block
+# embedded INSIDE the 'default' queue dict — copy-paste of a DATABASES
+# fragment that ended up here. Celery silently accepted the garbage
+# (it ignores unknown keys), but it polluted the routing dict shape.
+# Removed.
+#
+# R3: queue separation. webhooks / media / nightly added so a slow
+# image-resize task doesn't block a payment-confirmation push.
 CELERY_TASK_QUEUES = {
-    'high': {'exchange': 'high', 'routing_key': 'high'},
-    'default': {
-        'TEST': {
-            'NAME': 'test_micha',
-        },'exchange': 'default', 'routing_key': 'default'},
-    'low': {'exchange': 'low', 'routing_key': 'low'},
+    'high':        {'exchange': 'high',        'routing_key': 'high'},
+    'default':     {'exchange': 'default',     'routing_key': 'default'},
+    'low':         {'exchange': 'low',         'routing_key': 'low'},
+    'webhooks':    {'exchange': 'webhooks',    'routing_key': 'webhooks'},
+    'media':       {'exchange': 'media',       'routing_key': 'media'},
+    'nightly':     {'exchange': 'nightly',     'routing_key': 'nightly'},
+    'ai_heavy':    {'exchange': 'ai_heavy',    'routing_key': 'ai_heavy'},
     'dead_letter': {'exchange': 'dead_letter', 'routing_key': 'dead_letter'},
 }
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 CELERY_TASK_ROUTES = {
-    'orders.*': {'queue': 'high'},
+    # Hot money paths — must drain fast. Worker pool size = high.
+    'orders.*':        {'queue': 'high'},
+    'payments.*':      {'queue': 'high'},
     'notifications.*': {'queue': 'high'},
-    'payments.*': {'queue': 'high'},
-    'recommendations.weekly_digest': {'queue': 'low'},
-    'recommendations.recalculate_similarity': {'queue': 'low'},
-    'collections.record_price_history': {'queue': 'low'},
-    
+
+    # Outbound webhooks — sellers' integrations expect us to fire fast
+    # OR retry. Separate queue so a slow webhook target doesn't block
+    # in-process notifications.
+    'webhooks.*':      {'queue': 'webhooks'},
+    'outbox.*':        {'queue': 'webhooks'},
+
+    # Image processing — slow + CPU heavy, run on its own pool so it
+    # never starves the high queue.
+    'media.*':         {'queue': 'media'},
+    'products.image_*': {'queue': 'media'},
+
+    # Long-running reports / exports / nightly aggregates.
+    'analytics.*':     {'queue': 'nightly'},
+    'collections.record_price_history': {'queue': 'nightly'},
+    'recommendations.weekly_digest':    {'queue': 'nightly'},
+    'recommendations.recalculate_similarity': {'queue': 'nightly'},
+    'ai_engine.embed_all_products_nightly': {'queue': 'ai_heavy'},
 }
 CELERY_BEAT_SCHEDULE = {
 

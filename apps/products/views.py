@@ -24,13 +24,38 @@ from .serializers import (
 )
 
 
-class CategoryListView(generics.ListAPIView):
+class _PublicCacheMixin:
+    """R3: Mark public list responses cacheable at the CDN.
+
+    All authenticated paths and POST/PATCH/DELETE bypass automatically
+    (we only set the header on 200 responses to GET). Cache TTL kept
+    short (60s) because product catalogues do change — a 5min stale
+    window is what the CDN's stale-while-revalidate header gives us
+    anyway.
+    """
+    public_cache_max_age = 60
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.method == 'GET' and 200 <= response.status_code < 300:
+            ttl = int(self.public_cache_max_age)
+            response['Cache-Control'] = (
+                f'public, max-age={ttl}, s-maxage={ttl}, '
+                f'stale-while-revalidate=300'
+            )
+            response.setdefault('Vary', 'Accept-Language, Accept-Encoding')
+        return response
+
+
+class CategoryListView(_PublicCacheMixin, generics.ListAPIView):
     serializer_class = CategorySerializer
     permission_classes = [AllowAny]
     queryset = Category.objects.filter(parent=None).prefetch_related("subcategories")
+    # Category list changes very rarely — bump the TTL.
+    public_cache_max_age = 300
 
 
-class ProductListView(generics.ListAPIView):
+class ProductListView(_PublicCacheMixin, generics.ListAPIView):
     """GET /api/products/ — public, supports ?fields and faceted filters.
 
     Filters:

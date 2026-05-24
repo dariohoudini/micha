@@ -27,6 +27,12 @@ class Notification(models.Model):
         ('system', 'System'),
         ('verification', 'Verification'),
         ('dispute', 'Dispute'),
+        # R5: cart-abandonment push reminder type. Adding here keeps
+        # the choices set complete + lets admin filtering see them.
+        # Choices on CharField don't enforce at DB level, so no schema
+        # migration is needed — but Django will still generate a no-op
+        # AlterField migration for the choices update.
+        ('cart_abandonment', 'Cart Abandonment Reminder'),
     )
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')

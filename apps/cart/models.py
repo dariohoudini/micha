@@ -16,8 +16,23 @@ class Cart(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # R5: cart-abandonment ping dedup. Updated by the
+    # cart.send_abandonment_nudge Celery task each time we push the
+    # buyer a "you left items in your cart" reminder. NULL means we've
+    # never pinged this cart. The task only re-pings if 24h have
+    # elapsed since the previous ping.
+    last_abandonment_ping_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
-        indexes = [models.Index(fields=["user"])]
+        indexes = [
+            models.Index(fields=["user"]),
+            # Hot path for the abandonment task: scan recently-updated
+            # carts. Compound index on updated_at + last_abandonment_ping_at
+            # would help but the task runs hourly and the table stays
+            # small (one row per active user); a single-column index
+            # on updated_at is plenty.
+            models.Index(fields=["updated_at"]),
+        ]
 
     @property
     def total(self):

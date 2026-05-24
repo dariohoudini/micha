@@ -215,3 +215,164 @@ class TestCartMergeIdempotency:
     def test_merge_rejects_non_list_items(self, buyer_client):
         r = buyer_client.post(MERGE_URL, {'items': 'not-a-list'}, format='json')
         assert r.status_code == 400
+
+
+# ─── R5: cart abandonment Celery task ────────────────────────────────
+#
+# Pre-R5 this task was broken three ways (see apps/cart/tasks.py
+# docstring). These tests pin the post-R5 contract: eligibility
+# window, dedup, push delivery, graceful degradation.
+
+
+from datetime import timedelta  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from django.utils import timezone  # noqa: E402
+
+
+@pytest.mark.django_db
+class TestCartAbandonmentTask:
+
+    def _make_cart_with_item(self, buyer, product, *, updated_ago_hours):
+        """Create a cart with one item whose updated_at is set to a
+        specific time in the past. ``auto_now=True`` on Cart.updated_at
+        would clobber any value we set via ``updated_at=`` — so we
+        bypass that with a queryset update after the row is created.
+        """
+        from apps.cart.models import Cart, CartItem
+        cart, _ = Cart.objects.get_or_create(user=buyer)
+        CartItem.objects.create(
+            cart=cart, product=product, quantity=1,
+            price_at_add=product.price,
+        )
+        target = timezone.now() - timedelta(hours=updated_ago_hours)
+        Cart.objects.filter(pk=cart.pk).update(updated_at=target)
+        cart.refresh_from_db()
+        return cart
+
+    def test_cart_in_eligibility_window_gets_pinged(self, buyer, product):
+        """3h-old cart with items → ping sent + ping timestamp recorded."""
+        from apps.cart.tasks import send_abandonment_nudge
+        from apps.notifications.models import Notification
+
+        cart = self._make_cart_with_item(buyer, product, updated_ago_hours=3)
+        before = timezone.now()
+        with patch('apps.notifications.push_service.send_to_user') as mock_send:
+            mock_send.return_value = {'sent': 1, 'failed': 0,
+                                       'deactivated': 0, 'skipped': 0}
+            summary = send_abandonment_nudge()
+
+        assert summary['eligible'] == 1
+        assert summary['sent'] == 1
+        cart.refresh_from_db()
+        assert cart.last_abandonment_ping_at is not None
+        assert cart.last_abandonment_ping_at >= before
+        # In-app row created with the correct (R5-fixed) field names.
+        n = Notification.objects.filter(user=buyer, type='cart_abandonment').first()
+        assert n is not None
+
+    def test_cart_too_young_not_pinged(self, buyer, product):
+        """30min-old cart is below the 1h minimum → no ping (don't be spammy)."""
+        from apps.cart.tasks import send_abandonment_nudge
+        self._make_cart_with_item(buyer, product, updated_ago_hours=0.5)
+        summary = send_abandonment_nudge()
+        assert summary['eligible'] == 0
+        assert summary['sent'] == 0
+
+    def test_cart_too_old_not_pinged(self, buyer, product):
+        """48h-old cart is past the 25h cold-lead cutoff → no ping."""
+        from apps.cart.tasks import send_abandonment_nudge
+        self._make_cart_with_item(buyer, product, updated_ago_hours=48)
+        summary = send_abandonment_nudge()
+        assert summary['eligible'] == 0
+        assert summary['sent'] == 0
+
+    def test_already_pinged_within_24h_dedup(self, buyer, product):
+        """Cart pinged 5h ago should NOT be re-pinged this run."""
+        from apps.cart.models import Cart
+        from apps.cart.tasks import send_abandonment_nudge
+        cart = self._make_cart_with_item(buyer, product, updated_ago_hours=3)
+        Cart.objects.filter(pk=cart.pk).update(
+            last_abandonment_ping_at=timezone.now() - timedelta(hours=5),
+        )
+        summary = send_abandonment_nudge()
+        assert summary['eligible'] == 0
+        assert summary['sent'] == 0
+
+    def test_pinged_over_24h_ago_eligible_again(self, buyer, product):
+        """Re-ping eligibility kicks back in after the 24h interval."""
+        from apps.cart.models import Cart
+        from apps.cart.tasks import send_abandonment_nudge
+        cart = self._make_cart_with_item(buyer, product, updated_ago_hours=3)
+        Cart.objects.filter(pk=cart.pk).update(
+            last_abandonment_ping_at=timezone.now() - timedelta(hours=30),
+        )
+        with patch('apps.notifications.push_service.send_to_user') as mock_send:
+            mock_send.return_value = {'sent': 1, 'failed': 0,
+                                       'deactivated': 0, 'skipped': 0}
+            summary = send_abandonment_nudge()
+        assert summary['eligible'] == 1
+        assert summary['sent'] == 1
+
+    def test_empty_cart_not_pinged(self, buyer):
+        """Cart with no items is skipped even if updated_at is in window."""
+        from apps.cart.models import Cart
+        from apps.cart.tasks import send_abandonment_nudge
+        cart, _ = Cart.objects.get_or_create(user=buyer)
+        Cart.objects.filter(pk=cart.pk).update(
+            updated_at=timezone.now() - timedelta(hours=3),
+        )
+        summary = send_abandonment_nudge()
+        assert summary['eligible'] == 0
+
+    def test_inactive_user_skipped(self, buyer, product):
+        """is_active=False user shouldn't get spammed (banned/closed accounts)."""
+        from apps.cart.tasks import send_abandonment_nudge
+        self._make_cart_with_item(buyer, product, updated_ago_hours=3)
+        buyer.is_active = False
+        buyer.save(update_fields=['is_active'])
+        with patch('apps.notifications.push_service.send_to_user') as mock_send:
+            mock_send.return_value = {'skipped': 1, 'sent': 0,
+                                       'failed': 0, 'deactivated': 0}
+            summary = send_abandonment_nudge()
+        # Eligibility query catches it (cart has items + window OK), but
+        # the inner loop check filters inactive users — so skipped++.
+        assert summary['sent'] == 0
+        assert summary['skipped'] >= 1
+
+    def test_push_failure_does_not_abort_run(self, buyer, product):
+        """One bad push must not deny other users their reminder."""
+        from apps.cart.tasks import send_abandonment_nudge
+        from django.contrib.auth import get_user_model
+        # Create a second user + cart so we can verify the loop
+        # continues past a failure.
+        User = get_user_model()
+        buyer2 = User.objects.create_user(
+            email='buyer2@test.com', password='TestPass123!',
+            is_email_verified=True, status='active',
+        )
+        self._make_cart_with_item(buyer, product, updated_ago_hours=3)
+        # Cart for buyer2 — same product, eligible.
+        self._make_cart_with_item(buyer2, product, updated_ago_hours=3)
+
+        call_count = {'n': 0}
+
+        def flaky_send(*args, **kwargs):
+            call_count['n'] += 1
+            if call_count['n'] == 1:
+                raise RuntimeError('push gateway down')
+            return {'sent': 1, 'failed': 0, 'deactivated': 0, 'skipped': 0}
+
+        # Patch at the Notification.send level so the first user's
+        # whole flow raises (mirrors a real-world Notification.send
+        # exception bubbling up).
+        with patch(
+                'apps.notifications.models.Notification.send',
+                side_effect=flaky_send,
+        ):
+            summary = send_abandonment_nudge()
+
+        # Both eligible, one errored, one sent.
+        assert summary['eligible'] == 2
+        assert summary['errors'] == 1
+        assert summary['sent'] == 1

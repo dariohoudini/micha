@@ -576,8 +576,13 @@ CELERY_BEAT_SCHEDULE = {
 
     # ── Cart ──────────────────────────────────────────────────
     'cart-abandonment-nudge': {
+        # R5: rewritten task — see apps/cart/tasks.py docstring for
+        # the pre-R5 bug history (broken field names + no push delivery
+        # + spammy dedup). Hourly cadence aligned with the 24h per-cart
+        # re-ping interval; running more often just wastes worker
+        # cycles without sending more pushes.
         'task': 'cart.send_abandonment_nudge',
-        'schedule': 1800,  # every 30 min
+        'schedule': 3600,  # every hour
         'options': {'queue': 'default'},
     },
 

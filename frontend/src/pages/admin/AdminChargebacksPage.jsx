@@ -1,14 +1,16 @@
 /**
- * AdminChargebacksPage
- * ─────────────────────
- * Consumes R2 backend:
- *   GET  /api/v1/payments/chargebacks/[?status=&overdue=1]
- *   POST .../<id>/respond/    { evidence }
- *   POST .../<id>/accept/     { note }
- *   POST .../<id>/resolve/    { won, note }
+ * AdminChargebacksPage — production polish pass.
+ *
+ * Skeleton + EmptyState + ErrorState. Confirmation modal replaces
+ * raw prompt() for note collection. Action toasts.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
+import EmptyState from '@/components/ui/EmptyState'
+import ErrorState from '@/components/ui/ErrorState'
+import { QueueListSkeleton } from '@/components/ui/AdminSkeletons'
+import { useApiQuery } from '@/hooks/useApiKit'
+import { toast } from '@/components/ui/Toast'
 import client from '@/api/client'
 
 
@@ -21,10 +23,10 @@ const STATUS_COLOR = {
 }
 
 
-function Pill({ value }) {
+function Pill({ value, ariaLabel }) {
   const c = STATUS_COLOR[value] || { bg: 'rgba(148,163,184,0.12)', fg: '#94A3B8' }
   return (
-    <span style={{
+    <span aria-label={ariaLabel || value} style={{
       background: c.bg, color: c.fg,
       padding: '3px 9px', borderRadius: 999,
       fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
@@ -33,21 +35,84 @@ function Pill({ value }) {
 }
 
 
+function ConfirmDialog({ title, label, placeholder, onConfirm, onCancel }) {
+  const [note, setNote] = useState('')
+  // Focus trap + ESC close handled inline (no library).
+  return (
+    <div
+      role="dialog" aria-modal="true" aria-label={title}
+      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(6,6,8,0.7)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16,
+      }}
+    >
+      <div style={{
+        background: ADMIN_COLORS.card,
+        border: `1px solid ${ADMIN_COLORS.border}`,
+        borderRadius: 12, padding: 16, maxWidth: 480, width: '100%',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+      }}>
+        <h2 style={{ margin: 0, fontSize: 16, color: ADMIN_COLORS.text,
+                     marginBottom: 12 }}>{title}</h2>
+        <label htmlFor="cb-note" style={{ display: 'block', fontSize: 12,
+                                          color: ADMIN_COLORS.muted, marginBottom: 6 }}>
+          {label}
+        </label>
+        <textarea
+          id="cb-note"
+          autoFocus
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            background: ADMIN_COLORS.surface,
+            border: `1px solid ${ADMIN_COLORS.border}`,
+            borderRadius: 6, color: ADMIN_COLORS.text,
+            padding: 10, fontSize: 13, resize: 'vertical',
+            minHeight: 60,
+          }}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{
+            background: 'transparent', color: ADMIN_COLORS.muted,
+            border: `1px solid ${ADMIN_COLORS.border}`,
+            padding: '8px 16px', borderRadius: 6, fontSize: 13,
+            cursor: 'pointer', minHeight: 40,
+          }}>Cancel</button>
+          <button onClick={() => onConfirm(note)} style={{
+            background: '#6366F1', color: 'white', border: 'none',
+            padding: '8px 16px', borderRadius: 6, fontSize: 13,
+            fontWeight: 600, cursor: 'pointer', minHeight: 40,
+          }}>Confirm</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function ChargebackRow({ row, onChanged }) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [dialog, setDialog] = useState(null)  // {title, label, placeholder, onSubmit}
 
-  const act = async (path, body = {}) => {
-    setBusy(true); setError('')
+  const act = async (path, body) => {
+    setBusy(true)
     try {
       const { data } = await client.post(
         `/api/v1/payments/chargebacks/${row.id}/${path}/`, body,
       )
+      toast.success(`Chargeback ${data.status}`)
       onChanged?.(data)
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Falhou')
+      toast.error(e?.response?.data?.detail || 'Falhou')
     } finally {
       setBusy(false)
+      setDialog(null)
     }
   }
 
@@ -56,151 +121,171 @@ function ChargebackRow({ row, onChanged }) {
   const overdue = row.overdue
 
   return (
-    <div style={{
-      background: ADMIN_COLORS.card, border: `1px solid ${ADMIN_COLORS.border}`,
-      borderRadius: 12, padding: 14, marginBottom: 12,
-    }}>
-      <div style={{
-        display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8,
-        flexWrap: 'wrap',
-      }}>
-        <Pill value={row.status} />
-        {overdue && (
-          <span style={{
-            background: 'rgba(239,68,68,0.2)', color: '#F87171',
-            padding: '3px 9px', borderRadius: 999,
-            fontSize: 11, fontWeight: 600,
-          }}>OVERDUE</span>
+    <>
+      <article aria-label={`Chargeback case ${row.external_case_id}`}
+               style={{
+                 background: ADMIN_COLORS.card,
+                 border: `1px solid ${overdue ? '#EF4444' : ADMIN_COLORS.border}`,
+                 borderRadius: 12, padding: 14, marginBottom: 12,
+                 opacity: busy ? 0.6 : 1,
+                 transition: 'opacity 120ms ease',
+               }}>
+        <header style={{ display: 'flex', gap: 8, alignItems: 'center',
+                         marginBottom: 8, flexWrap: 'wrap' }}>
+          <Pill value={row.status} ariaLabel={`Status: ${row.status}`} />
+          {overdue && (
+            <span style={{
+              background: 'rgba(239,68,68,0.2)', color: '#F87171',
+              padding: '3px 9px', borderRadius: 999,
+              fontSize: 11, fontWeight: 600,
+            }}>OVERDUE</span>
+          )}
+          <span style={{ fontSize: 12, color: ADMIN_COLORS.muted }}>
+            Case #{row.external_case_id}
+          </span>
+          {due && (
+            <time dateTime={row.deadline_at}
+                  style={{ marginLeft: 'auto', fontSize: 11, color: ADMIN_COLORS.muted }}>
+              Due {due.toLocaleDateString()}
+            </time>
+          )}
+        </header>
+
+        <div style={{ fontSize: 16, color: ADMIN_COLORS.text, marginBottom: 4 }}>
+          {row.amount} {row.currency} — {row.reason_code}
+        </div>
+
+        {row.reason_text && (
+          <p style={{ fontSize: 13, color: ADMIN_COLORS.muted, marginBottom: 8,
+                      margin: '0 0 8px 0' }}>
+            {row.reason_text}
+          </p>
         )}
-        <span style={{ fontSize: 12, color: ADMIN_COLORS.muted }}>
-          Case #{row.external_case_id}
-        </span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: ADMIN_COLORS.muted }}>
-          {due ? `Due ${due.toLocaleDateString()}` : ''}
-        </span>
-      </div>
 
-      <div style={{ fontSize: 16, color: ADMIN_COLORS.text, marginBottom: 4 }}>
-        {row.amount} {row.currency} — {row.reason_code}
-      </div>
-
-      {row.reason_text && (
-        <div style={{ fontSize: 13, color: ADMIN_COLORS.muted, marginBottom: 8 }}>
-          {row.reason_text}
+        <div style={{ fontSize: 11, color: ADMIN_COLORS.muted, marginBottom: 10 }}>
+          Order: {row.order_id || '—'} | Payment: {row.payment_id || '—'}
         </div>
-      )}
 
-      <div style={{ fontSize: 11, color: ADMIN_COLORS.muted, marginBottom: 10 }}>
-        Order: {row.order_id || '—'} | Payment: {row.payment_id || '—'}
-      </div>
+        {!isTerminal && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {row.status === 'received' && (
+              <>
+                <button onClick={() => setDialog({
+                  title: 'Submit evidence',
+                  label: 'Evidence summary (will be sent to issuer)',
+                  placeholder: 'Tracking number, delivery confirmation, buyer chat refs…',
+                  onSubmit: (note) => act('respond', { evidence: { admin_note: note } }),
+                })} disabled={busy} style={btn('#22C55E')}>
+                  Submit Evidence
+                </button>
+                <button onClick={() => setDialog({
+                  title: 'Accept loss',
+                  label: 'Reason (internal note)',
+                  placeholder: 'Cheaper to accept than fight…',
+                  onSubmit: (note) => act('accept', { note }),
+                })} disabled={busy} style={btn('#94A3B8')}>
+                  Accept Loss
+                </button>
+              </>
+            )}
+            {row.status === 'evidence' && (
+              <>
+                <button onClick={() => setDialog({
+                  title: 'Mark as won',
+                  label: 'Resolution note',
+                  placeholder: 'Issuer ruled in our favour…',
+                  onSubmit: (note) => act('resolve', { won: true, note }),
+                })} disabled={busy} style={btn('#22C55E')}>
+                  Mark Won
+                </button>
+                <button onClick={() => setDialog({
+                  title: 'Mark as lost',
+                  label: 'Resolution note',
+                  placeholder: 'Funds reversed…',
+                  onSubmit: (note) => act('resolve', { won: false, note }),
+                })} disabled={busy} style={btn('#EF4444')}>
+                  Mark Lost
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </article>
 
-      {error && (
-        <div style={{
-          background: 'rgba(239,68,68,0.1)', color: '#F87171',
-          padding: 8, borderRadius: 6, marginBottom: 8, fontSize: 12,
-        }}>{error}</div>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={dialog.onSubmit}
+          onCancel={() => setDialog(null)}
+        />
       )}
-
-      {!isTerminal && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {row.status === 'received' && (
-            <>
-              <button onClick={() => {
-                const note = prompt('Evidence summary?') || ''
-                act('respond', { evidence: { admin_note: note } })
-              }} disabled={busy} style={btnStyle('#22C55E')}>
-                Submit Evidence
-              </button>
-              <button onClick={() => {
-                const note = prompt('Reason for accepting loss?') || ''
-                act('accept', { note })
-              }} disabled={busy} style={btnStyle('#94A3B8')}>
-                Accept Loss
-              </button>
-            </>
-          )}
-          {row.status === 'evidence' && (
-            <>
-              <button onClick={() => {
-                const note = prompt('Resolution note?') || ''
-                act('resolve', { won: true, note })
-              }} disabled={busy} style={btnStyle('#22C55E')}>
-                Mark Won
-              </button>
-              <button onClick={() => {
-                const note = prompt('Resolution note?') || ''
-                act('resolve', { won: false, note })
-              }} disabled={busy} style={btnStyle('#EF4444')}>
-                Mark Lost
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
-function btnStyle(color) {
+
+function btn(color) {
   return {
     background: 'transparent', color,
     border: `1px solid ${color}55`,
-    padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-    cursor: 'pointer',
+    padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', minHeight: 36,
   }
 }
 
 
 export default function AdminChargebacksPage() {
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('open')  // open | overdue | all
+  const [filter, setFilter] = useState('open')
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = {}
-      if (filter === 'overdue') params.overdue = 1
-      else if (filter !== 'all') params.status = 'received'
-      const { data } = await client.get('/api/v1/payments/chargebacks/', { params })
-      setRows(data?.results || [])
-    } catch {
-      setRows([])
-    } finally {
-      setLoading(false)
-    }
+  const params = useMemo(() => {
+    if (filter === 'overdue') return { overdue: 1 }
+    if (filter === 'all') return {}
+    return { status: 'received' }
   }, [filter])
 
-  useEffect(() => { load() }, [load])
+  const query = useApiQuery('/api/v1/payments/chargebacks/', params)
+  const rows = query.data?.results || []
 
   return (
     <AdminLayout title="Chargebacks">
       <div style={{ padding: 16 }}>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        <div role="tablist" aria-label="Filter" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
           {['open', 'overdue', 'all'].map(v => (
             <button key={v}
+                    role="tab" aria-selected={filter === v}
                     onClick={() => setFilter(v)}
                     style={{
                       background: filter === v ? '#6366F1' : 'transparent',
                       color: filter === v ? 'white' : ADMIN_COLORS.text,
                       border: `1px solid ${ADMIN_COLORS.border}`,
-                      padding: '6px 14px', borderRadius: 6,
+                      padding: '8px 14px', borderRadius: 6,
                       fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      textTransform: 'capitalize',
+                      textTransform: 'capitalize', minHeight: 36,
                     }}>{v}</button>
           ))}
         </div>
 
-        {loading ? (
-          <div style={{ color: ADMIN_COLORS.muted, padding: 20 }}>Loading…</div>
+        {query.isLoading ? (
+          <QueueListSkeleton count={4} />
+        ) : query.isError ? (
+          <ErrorState
+            variant={query.error?.variant || 'generic'}
+            detail={query.error?.detail}
+            onRetry={query.refetch}
+          />
         ) : rows.length === 0 ? (
-          <div style={{ color: ADMIN_COLORS.muted, padding: 20, textAlign: 'center' }}>
-            No chargebacks.
-          </div>
+          <EmptyState
+            icon={<div style={{ fontSize: 48 }} aria-hidden>💳</div>}
+            title="Sem chargebacks"
+            description={
+              filter === 'overdue'
+              ? 'Nenhum chargeback atrasado. Bom trabalho.'
+              : 'Nada para revisão neste filtro.'
+            }
+          />
         ) : (
           rows.map(r => (
-            <ChargebackRow key={r.id} row={r}
-                           onChanged={() => load()} />
+            <ChargebackRow key={r.id} row={r} onChanged={() => query.refetch()} />
           ))
         )}
       </div>

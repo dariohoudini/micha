@@ -1,18 +1,16 @@
 /**
- * SellerDashboardR7Page
- * ──────────────────────
- * Consumes the R7 backend:
- *   GET /api/v1/analytics/seller/dashboard/?days=7|30|90|365
- *
- * One round-trip serves the entire dashboard.
+ * SellerDashboardR7Page — production polish pass.
  */
-import { useEffect, useState } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar, Cell,
+  ResponsiveContainer, BarChart, Bar,
 } from 'recharts'
 import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
-import client from '@/api/client'
+import { DashboardSkeleton } from '@/components/ui/AdminSkeletons'
+import EmptyState from '@/components/ui/EmptyState'
+import ErrorState from '@/components/ui/ErrorState'
+import { useApiQuery } from '@/hooks/useApiKit'
+import { useState } from 'react'
 
 
 function fmtKz(n) {
@@ -47,65 +45,87 @@ function StatCard({ label, value, sub }) {
 }
 
 
+function Section({ title, children, empty }) {
+  return (
+    <section aria-label={title} style={{
+      background: ADMIN_COLORS.card,
+      border: `1px solid ${ADMIN_COLORS.border}`,
+      borderRadius: 12, padding: 14, marginBottom: 12,
+    }}>
+      <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700,
+                   color: ADMIN_COLORS.text, marginBottom: 10 }}>
+        {title}
+      </h3>
+      {empty ? (
+        <div style={{ color: ADMIN_COLORS.muted, padding: 8, fontSize: 13 }}>
+          {empty}
+        </div>
+      ) : children}
+    </section>
+  )
+}
+
+
 export default function SellerDashboardR7Page() {
   const [days, setDays] = useState(30)
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    setLoading(true); setError('')
-    client.get('/api/v1/analytics/seller/dashboard/', { params: { days } })
-      .then(r => setData(r.data))
-      .catch(e => setError(e?.response?.data?.detail || 'Failed to load'))
-      .finally(() => setLoading(false))
-  }, [days])
+  const query = useApiQuery('/api/v1/analytics/seller/dashboard/', { days })
 
   return (
     <AdminLayout title="Analytics">
       <div style={{ padding: 16 }}>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        <div role="tablist" aria-label="Time window"
+             style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
           {[7, 30, 90, 365].map(d => (
             <button key={d}
+                    role="tab" aria-selected={days === d}
                     onClick={() => setDays(d)}
                     style={{
                       background: days === d ? '#6366F1' : 'transparent',
                       color: days === d ? 'white' : ADMIN_COLORS.text,
                       border: `1px solid ${ADMIN_COLORS.border}`,
-                      padding: '6px 14px', borderRadius: 6,
+                      padding: '8px 14px', borderRadius: 6,
                       fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      minHeight: 36,
                     }}>{d}d</button>
           ))}
         </div>
 
-        {loading ? (
-          <div style={{ color: ADMIN_COLORS.muted, padding: 20 }}>Loading…</div>
-        ) : error ? (
-          <div style={{
-            background: 'rgba(239,68,68,0.1)', color: '#F87171',
-            padding: 12, borderRadius: 8,
-          }}>{error}</div>
-        ) : data && (
+        {query.isLoading ? (
+          <DashboardSkeleton />
+        ) : query.isError ? (
+          <ErrorState
+            variant={query.error?.variant || 'generic'}
+            detail={query.error?.detail}
+            onRetry={query.refetch}
+            description={
+              query.error?.variant === 'forbidden'
+              ? 'Esta página está disponível apenas para vendedores ou admins.'
+              : undefined
+            }
+          />
+        ) : query.data && (
           <>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap',
-                          marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
               <StatCard label="Gross Revenue"
-                        value={`${fmtKz(data.totals.gross_revenue)} Kz`}
-                        sub={`${data.totals.order_count} orders`} />
+                        value={`${fmtKz(query.data.totals.gross_revenue)} Kz`}
+                        sub={`${query.data.totals.order_count} orders`} />
               <StatCard label="Net Revenue"
-                        value={`${fmtKz(data.totals.net_revenue)} Kz`}
-                        sub={`${fmtKz(data.totals.refunded)} Kz refunded`} />
+                        value={`${fmtKz(query.data.totals.net_revenue)} Kz`}
+                        sub={`${fmtKz(query.data.totals.refunded)} Kz refunded`} />
               <StatCard label="Avg Order Value"
-                        value={`${fmtKz(data.totals.avg_order_value)} Kz`} />
+                        value={`${fmtKz(query.data.totals.avg_order_value)} Kz`} />
               <StatCard label="Repeat Rate"
-                        value={`${data.repeat_rate.rate_pct}%`}
-                        sub={`${data.repeat_rate.repeat_buyers}/${data.repeat_rate.total_buyers} buyers`} />
+                        value={`${query.data.repeat_rate.rate_pct}%`}
+                        sub={`${query.data.repeat_rate.repeat_buyers}/${query.data.repeat_rate.total_buyers} buyers`} />
             </div>
 
-            <Section title="Revenue (daily)">
+            <Section title="Revenue (daily)"
+                     empty={query.data.totals.order_count === 0
+                            ? 'Sem vendas no período. Tenta uma janela maior.'
+                            : null}>
               <div style={{ height: 220 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={data.revenue}>
+                  <AreaChart data={query.data.revenue}>
                     <defs>
                       <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#6366F1" stopOpacity={0.4} />
@@ -138,10 +158,10 @@ export default function SellerDashboardR7Page() {
               <div style={{ height: 200 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={[
-                    { stage: 'View', n: data.funnel.counts.view },
-                    { stage: 'Cart', n: data.funnel.counts.add_cart },
-                    { stage: 'Checkout', n: data.funnel.counts.checkout },
-                    { stage: 'Purchase', n: data.funnel.counts.purchase },
+                    { stage: 'View', n: query.data.funnel.counts.view },
+                    { stage: 'Cart', n: query.data.funnel.counts.add_cart },
+                    { stage: 'Checkout', n: query.data.funnel.counts.checkout },
+                    { stage: 'Purchase', n: query.data.funnel.counts.purchase },
                   ]}>
                     <CartesianGrid strokeDasharray="3 3" stroke={ADMIN_COLORS.border} />
                     <XAxis dataKey="stage" stroke={ADMIN_COLORS.muted}
@@ -156,17 +176,15 @@ export default function SellerDashboardR7Page() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{
-                marginTop: 8, fontSize: 12, color: ADMIN_COLORS.muted,
-              }}>
-                View → purchase: {data.funnel.view_to_purchase_pct}%
+              <div style={{ marginTop: 8, fontSize: 12, color: ADMIN_COLORS.muted }}>
+                View → purchase: {query.data.funnel.view_to_purchase_pct}%
               </div>
             </Section>
 
-            <Section title="Top Products by Revenue">
-              {(data.top_products?.by_revenue || []).length === 0 ? (
-                <div style={{ color: ADMIN_COLORS.muted, padding: 8 }}>No sales yet.</div>
-              ) : data.top_products.by_revenue.map(p => (
+            <Section title="Top Products by Revenue"
+                     empty={(query.data.top_products?.by_revenue || []).length === 0
+                            ? 'Sem vendas neste período.' : null}>
+              {(query.data.top_products?.by_revenue || []).map(p => (
                 <div key={p.product_id} style={{
                   display: 'flex', justifyContent: 'space-between',
                   padding: '6px 0', borderBottom: `1px solid ${ADMIN_COLORS.border}`,
@@ -180,10 +198,9 @@ export default function SellerDashboardR7Page() {
               ))}
             </Section>
 
-            <Section title="Top Cities">
-              {data.geo.length === 0 ? (
-                <div style={{ color: ADMIN_COLORS.muted, padding: 8 }}>No regional data.</div>
-              ) : data.geo.map(g => (
+            <Section title="Top Cities"
+                     empty={query.data.geo.length === 0 ? 'Sem dados geográficos.' : null}>
+              {query.data.geo.map(g => (
                 <div key={g.city} style={{
                   display: 'flex', justifyContent: 'space-between',
                   padding: '6px 0', borderBottom: `1px solid ${ADMIN_COLORS.border}`,
@@ -200,22 +217,5 @@ export default function SellerDashboardR7Page() {
         )}
       </div>
     </AdminLayout>
-  )
-}
-
-
-function Section({ title, children }) {
-  return (
-    <div style={{
-      background: ADMIN_COLORS.card,
-      border: `1px solid ${ADMIN_COLORS.border}`,
-      borderRadius: 12, padding: 14, marginBottom: 12,
-    }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: ADMIN_COLORS.text,
-                    marginBottom: 10 }}>
-        {title}
-      </div>
-      {children}
-    </div>
   )
 }

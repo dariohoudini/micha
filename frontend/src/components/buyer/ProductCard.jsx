@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import SellerTrustChip from './SellerTrustChip'
 
 const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
@@ -111,19 +112,28 @@ export default function ProductCard({ product, onPress, size = 'normal' }) {
 
       {/* Info */}
       <div style={{ padding: isSmall ? '10px 10px 12px' : '12px 12px 14px' }}>
-        {/* Seller */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+        {/* Seller + R4 trust chip.
+            Backend SellerTrustScore exposes badge_level; the card may
+            receive it via product.seller_trust_badge OR fall back to
+            the legacy ``seller_verified`` boolean by mapping to
+            'verified'. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
           <span style={{
             fontFamily: "'DM Sans', sans-serif",
             fontSize: 10, color: '#9A9A9A',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            maxWidth: '70%',
           }}>
             {product.seller}
           </span>
-          {product.seller_verified && (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="#C9A84C">
-              <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          )}
+          <SellerTrustChip
+            size="xs"
+            compact
+            level={
+              product.seller_trust_badge
+              || (product.seller_verified ? 'verified' : null)
+            }
+          />
         </div>
 
         {/* Name */}

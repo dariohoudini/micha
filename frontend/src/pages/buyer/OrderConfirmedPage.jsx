@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import OrderSuccessAnimation from '@/components/shared/OrderSuccessAnimation'
 import { SocialOrderShareCard } from '@/components/shared/MichaUXComponents'
+import PushPermissionPrompt from '@/components/buyer/PushPermissionPrompt'
 import { haptic } from '@/hooks/useUX'
 import trackInteraction, { INTERACTION_TYPES } from '@/api/tracking'
 import client from '@/api/client'
@@ -182,6 +183,15 @@ export default function OrderConfirmedPage() {
             )}
           </div>
         )}
+
+        {/* R5-A: post-checkout is THE highest-intent moment for the
+            push permission ask. User just succeeded; they're emotionally
+            committed. Custom pre-prompt → if accepted, the OS dialog
+            fires; if declined, we record without burning the OS prompt.
+            Industry: this pattern ~2x opt-in vs cold ask at launch. */}
+        <div style={{ width: '100%' }}>
+          <PushPermissionPrompt context="order" />
+        </div>
 
         {/* Steps */}
         <div style={{ background: CARD, borderRadius: 16, border: `1px solid ${BORDER}`, padding: 16, width: '100%', marginBottom: 16 }}>

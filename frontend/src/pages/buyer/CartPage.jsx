@@ -4,6 +4,10 @@ import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import SwipeToDelete from '@/components/shared/SwipeToDelete'
+import CartSyncIndicator from '@/components/CartSyncIndicator'
+import EmptyCartRecovery from '@/components/buyer/EmptyCartRecovery'
+import FreeShippingBar from '@/components/buyer/FreeShippingBar'
+import { ProductCardSkeleton } from '@/components/ui/Skeleton'
 import { haptic } from '@/hooks/useUX'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -63,23 +67,37 @@ export function CartPage() {
 
   return (
     <BuyerLayout>
-      <div style={{ padding: '52px 16px 12px', flexShrink: 0 }}>
-        <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: '#FFFFFF' }}>Carrinho</h1>
-        {items.length > 0 && <p style={{ ...S, fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>{items.length} {items.length === 1 ? 'item' : 'itens'}</p>}
+      <div style={{ padding: '52px 16px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: '#FFFFFF', margin: 0 }}>Carrinho</h1>
+          {items.length > 0 && <p style={{ ...S, fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>{items.length} {items.length === 1 ? 'item' : 'itens'}</p>}
+        </div>
+        {/* R5-B: cart sync status pill — visible feedback when items
+            are syncing to the server, especially valuable on flaky AO
+            connections. Hidden in 'idle' state. */}
+        <CartSyncIndicator />
       </div>
 
       <div className="screen" style={{ flex: 1 }}>
         {loading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
-            <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #C9A84C', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }}><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>
+          // Skeleton matching the cart-line item shape, no more
+          // anonymous spinner.
+          <div style={{ padding: '16px 16px 120px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i}
+                style={{ background: '#141414', borderRadius: 14, border: '1px solid #1E1E1E', padding: 14 }}>
+                <ProductCardSkeleton />
+              </div>
+            ))}
           </div>
         ) : items.length === 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50%', gap: 16 }}>
-            <p style={{ ...S, fontSize: 14, color: '#9A9A9A' }}>O seu carrinho está vazio.</p>
-            <button onClick={() => navigate('/explore')} style={{ padding: '10px 24px', borderRadius: 12, border: 'none', background: '#C9A84C', ...S, fontSize: 13, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>Explorar produtos</button>
-          </div>
+          <EmptyCartRecovery />
         ) : (
           <div style={{ padding: '16px 16px 120px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* Free-shipping progress — only when delivery is non-zero. */}
+            {delivery > 0 && (
+              <FreeShippingBar subtotal={subtotal} />
+            )}
             {items.map(item => {
               const product = item.product || item
               const price = Number(item.price || product.price || 0)

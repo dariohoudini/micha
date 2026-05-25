@@ -77,6 +77,10 @@ class IPBan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(null=True, blank=True)
 
+# R4: brand protection registry — re-export so Django picks up model.
+from .brand_registry import ProtectedBrand  # noqa: F401,E402
+
+
 class BuyerProtectionClaim(models.Model):
     order = models.OneToOneField("orders.Order", on_delete=models.CASCADE, related_name="buyer_protection")
     buyer = models.ForeignKey(User, on_delete=models.CASCADE)

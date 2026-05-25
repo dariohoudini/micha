@@ -2,6 +2,7 @@ from django.urls import path
 from .views import *
 from .seller_dashboard import SellerDashboardView
 from .attribution import AttributionTouchView, AttributionReportView
+from .cohorts import CohortRetentionView
 
 urlpatterns = [
     path('track/', TrackFunnelEventView.as_view(), name='track'),
@@ -16,6 +17,8 @@ urlpatterns = [
     path('touch/', AttributionTouchView.as_view(), name='attribution-touch'),
     path('attribution/', AttributionReportView.as_view(),
          name='attribution-report'),
+    # R7: cohort retention analysis (admin only).
+    path('cohorts/', CohortRetentionView.as_view(), name='cohorts'),
     path('admin/geo/', AdminGeoAnalyticsView.as_view(), name='geo-analytics'),
     path('admin/realtime/', AdminRealTimeView.as_view(), name='realtime'),
 ]

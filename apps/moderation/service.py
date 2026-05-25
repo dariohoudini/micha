@@ -142,7 +142,23 @@ def moderate(text: str, target_type: str, target_id,
         text_l = str(text).lower()
         triggered = [kw for kw in _REVIEW_KEYWORDS if kw in text_l]
 
-        if not triggered:
+        # R4: brand registry. Flag protected-brand mentions on top of
+        # the keyword pass. A brand 'block' policy promotes BLOCK; a
+        # 'review' policy adds it to the REVIEW path with severity=high.
+        brand_matches = []
+        try:
+            from .brand_registry import classify, has_block_match
+            brand_matches = classify(text)
+            if has_block_match(brand_matches):
+                log.info('moderation_brand_block',
+                         extra={'target_type': target_type,
+                                'target_id': str(target_id),
+                                'matches': [m['brand_name'] for m in brand_matches]})
+                return ModerationDecision.BLOCK
+        except Exception:
+            log.exception('moderation: brand classify failed')
+
+        if not triggered and not brand_matches:
             return ModerationDecision.ALLOW
 
         # REVIEW: write a ContentFlag row. The moderator queue picks
@@ -159,14 +175,23 @@ def moderate(text: str, target_type: str, target_id,
                 target_user
                 and getattr(target_user, 'is_authenticated', False)
             ) else None
+            severity = 'high' if brand_matches else 'medium'
+            reason_parts = []
+            if triggered:
+                reason_parts.append(
+                    f'Auto-flagged keywords: {", ".join(triggered[:5])}'
+                )
+            if brand_matches:
+                names = ', '.join(m['brand_name'] for m in brand_matches[:3])
+                reason_parts.append(f'Brand match: {names}')
             ContentFlag.objects.create(
                 target_type=target_type,
                 target_id=int(target_id) if target_id else 0,
                 target_user=tu,
-                reason=f'Auto-flagged keywords: {", ".join(triggered[:5])}',
+                reason=' | '.join(reason_parts) or 'Auto-flagged',
                 auto_flagged=True,
                 flagger=None,  # auto-flag — no human reporter
-                severity='medium',
+                severity=severity,
                 status='pending',
             )
         except Exception:

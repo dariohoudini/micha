@@ -473,6 +473,30 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'nightly'},
     },
 
+    # ── R7: Email lifecycle ───────────────────────────────────
+    # Each fires once per day at a staggered time so SES isn't
+    # bursted. Disable globally via EMAIL_LIFECYCLE_ENABLED=False.
+    'lifecycle-welcome': {
+        'task': 'notifications.lifecycle_welcome',
+        'schedule': crontab(hour=8, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'lifecycle-engagement-nudge': {
+        'task': 'notifications.lifecycle_engagement',
+        'schedule': crontab(hour=8, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'lifecycle-winback': {
+        'task': 'notifications.lifecycle_winback',
+        'schedule': crontab(hour=8, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'lifecycle-reactivation': {
+        'task': 'notifications.lifecycle_reactivation',
+        'schedule': crontab(hour=8, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+
     # ── Users ─────────────────────────────────────────────────
     'cleanup-expired-otps': {
         'task': 'users.cleanup_expired_otps',

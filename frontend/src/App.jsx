@@ -74,6 +74,7 @@ const AdminModerationQueuePage = lazy(() => import('@/pages/admin/AdminModeratio
 const AdminChargebacksPage  = lazy(() => import('@/pages/admin/AdminChargebacksPage'))
 const AdminAMLPage          = lazy(() => import('@/pages/admin/AdminAMLPage'))
 const SellerDashboardR7Page = lazy(() => import('@/pages/seller/SellerDashboardR7Page'))
+const AdminCommandCenterPage = lazy(() => import('@/pages/admin/AdminCommandCenterPage'))
 
 function PageLoader() {
   return (
@@ -267,6 +268,7 @@ export default function App() {
             <Route path="/admin/chargebacks"   element={<A><AdminChargebacksPage /></A>} />
             <Route path="/admin/aml"           element={<A><AdminAMLPage /></A>} />
             <Route path="/seller/analytics-r7" element={<S><SellerDashboardR7Page /></S>} />
+            <Route path="/admin/command-center" element={<A><AdminCommandCenterPage /></A>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -14,6 +14,11 @@ import { ToastProvider } from '@/components/ui/Toast'
 import { initSentry } from '@/lib/sentry'
 initSentry()
 
+// Tier 7: opportunistic service-worker registration. Caches hashed
+// assets cache-first + SPA shell network-first. No-op in dev.
+import { registerServiceWorker } from '@/lib/sw-register'
+registerServiceWorker()
+
 async function init() {
   // ── Capacitor native setup ─────────────────────────────────────────────
   if (window.Capacitor?.isNativePlatform?.()) {

@@ -7,11 +7,60 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 // ─── Haptic feedback ─────────────────────────────────────────────
+// Tier 6: prefer Capacitor Haptics on native (iOS Taptic Engine /
+// Android system vibrator). Falls back to navigator.vibrate on web.
+// All calls are fire-and-forget — never throw, never block.
+let _capHaptics = null
+let _capCheckStarted = false
+
+function _ensureCapHaptics() {
+  if (_capCheckStarted) return
+  _capCheckStarted = true
+  try {
+    const isNative = (typeof window !== 'undefined'
+      && window.Capacitor?.isNativePlatform?.())
+    if (!isNative) return
+    import('@capacitor/haptics')
+      .then((mod) => { _capHaptics = mod })
+      .catch(() => {})
+  } catch {}
+}
+
+function _vibrate(pattern) {
+  try { navigator.vibrate?.(pattern) } catch {}
+}
+
+function _notify(type, pattern) {
+  _ensureCapHaptics()
+  if (_capHaptics?.Haptics?.notification) {
+    _capHaptics.Haptics.notification({ type }).catch(() => {})
+  }
+  _vibrate(pattern)
+}
+
+function _impact(style, pattern) {
+  _ensureCapHaptics()
+  if (_capHaptics?.Haptics?.impact) {
+    _capHaptics.Haptics.impact({ style }).catch(() => {})
+  }
+  _vibrate(pattern)
+}
+
 export const haptic = {
-  success: () => navigator.vibrate?.([50]),
-  error:   () => navigator.vibrate?.([100, 50, 100]),
-  tap:     () => navigator.vibrate?.([30]),
-  heavy:   () => navigator.vibrate?.([80]),
+  success:   () => _notify('SUCCESS', [50]),
+  error:     () => _notify('ERROR',   [100, 50, 100]),
+  warning:   () => _notify('WARNING', [60, 30, 60]),
+  tap:       () => _impact('LIGHT',   [20]),
+  light:     () => _impact('LIGHT',   [20]),
+  medium:    () => _impact('MEDIUM',  [40]),
+  heavy:     () => _impact('HEAVY',   [80]),
+  selection: () => {
+    _ensureCapHaptics()
+    if (_capHaptics?.Haptics?.selectionChanged) {
+      _capHaptics.Haptics.selectionChanged().catch(() => {})
+    }
+    _vibrate([10])
+  },
 }
 
 // ─── Swipe back gesture (#2) ─────────────────────────────────────

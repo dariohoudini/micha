@@ -5,6 +5,8 @@ import { useOrder } from '@/hooks/useQueries'
 import client from '@/api/client'
 import ReturnFilingModal from '@/components/buyer/ReturnFilingModal'
 import BuyerProtectionBanner from '@/components/buyer/BuyerProtectionBanner'
+import OrderETABanner from '@/components/buyer/OrderETABanner'
+import SellerMiniCard from '@/components/buyer/SellerMiniCard'
 
 const RETURN_STATUS = {
   pending:   { label: 'Em análise',  color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
@@ -287,11 +289,35 @@ export default function OrderDetailPage() {
       <div className="screen" style={{ flex: 1 }}>
         <div style={{ padding: '0 16px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+          {/* R5-A: ETA banner — answers the single most-scanned
+              question on this page ("when does it arrive?") above the
+              timeline. Hidden on terminal states. */}
+          <OrderETABanner
+            status={order.status}
+            estimatedDeliveryAt={order.estimated_delivery_at || order.eta}
+            shippedAt={order.shipped_at}
+            protectionDeadlineAt={order.protection_deadline_at}
+          />
+
           {/* Buyer Protection */}
           {order.protection_state && order.protection_state !== 'none' && (
             <BuyerProtectionBanner
               state={order.protection_state}
               deadlineAt={order.protection_deadline_at}
+            />
+          )}
+
+          {/* Seller mini-card — buyer can DM the seller inline (no
+              route change). Critical for "where's my order?" questions. */}
+          {order.seller_store && (
+            <SellerMiniCard
+              store={order.seller_store}
+              trustBadge={order.seller_trust_badge}
+              responseTime={
+                order.seller_store.avg_response_minutes
+                ? `Responde em ~${Math.max(1, Math.round(order.seller_store.avg_response_minutes))}min`
+                : null
+              }
             />
           )}
 

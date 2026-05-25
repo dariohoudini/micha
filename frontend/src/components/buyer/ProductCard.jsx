@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import SellerTrustChip from './SellerTrustChip'
+import BrandProtectedBadge from './BrandProtectedBadge'
 
 const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
@@ -134,6 +135,9 @@ export default function ProductCard({ product, onPress, size = 'normal' }) {
               || (product.seller_verified ? 'verified' : null)
             }
           />
+          {product.brand_protected && (
+            <BrandProtectedBadge icon brand={product.brand || ''} />
+          )}
         </div>
 
         {/* Name */}

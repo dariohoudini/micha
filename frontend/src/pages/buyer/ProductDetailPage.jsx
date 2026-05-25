@@ -20,6 +20,8 @@ import ProductRail from '@/components/buyer/ProductRail'
 import OtherOffersRail from '@/components/buyer/OtherOffersRail'
 import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
 import BuyerTrustBanner from '@/components/buyer/BuyerTrustBanner'
+import SellerMiniCard from '@/components/buyer/SellerMiniCard'
+import BrandProtectedBadge from '@/components/buyer/BrandProtectedBadge'
 
 // Live flash sale lookup for this product
 function useFlashSaleForProduct(productId) {
@@ -629,6 +631,26 @@ export default function ProductDetailPage() {
                 </div>
               )}
               <ReviewsSection productId={id} />
+            </div>
+          )}
+
+          {/* R4 seller mini-card + brand protected badge — visible above
+              the bottom-of-page tabs so trust signals land before the
+              user goes back to the sticky add-to-cart. */}
+          {product?.store && (
+            <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {product.brand_protected && (
+                <BrandProtectedBadge brand={product.brand} />
+              )}
+              <SellerMiniCard
+                store={product.store}
+                trustBadge={product.seller_trust_badge}
+                responseTime={
+                  product.store.avg_response_minutes
+                  ? `Responde em ~${Math.max(1, Math.round(product.store.avg_response_minutes))}min`
+                  : null
+                }
+              />
             </div>
           )}
 

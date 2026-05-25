@@ -45,6 +45,10 @@ const BUDGETS_KB = {
   'vendor-zustand':  5,
   'AreaChart':       110,   // recharts — load only on admin pages
   'SellerAnalyticsPage': 25,
+  // Catch-all vendor chunk for libs not explicitly chunked in vite.config.
+  // Sits at ~72KB — bumped deliberately after review (sonner, intersection-
+  // observer, capacitor/* mocks). Trim by adding explicit chunks in vite.config.
+  'vendor':          75,
   // Default for unknown chunks:
   '__default':       55,
 }

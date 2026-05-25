@@ -4,6 +4,7 @@ import ErrorBoundary from '@/components/shared/ErrorBoundary'
 import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
+import CookieConsentBanner from '@/components/CookieConsentBanner'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { attachCartSync } from '@/lib/cartSync'
 import { useDeepLinks } from '@/lib/deepLinks'
@@ -69,6 +70,10 @@ const AdminChatPage         = lazy(() => import('@/pages/admin/AdminChatPage'))
 const AdminFraudPage        = lazy(() => import('@/pages/admin/AdminFraudPage'))
 const AdminMonitoringPage   = lazy(() => import('@/pages/admin/AdminMonitoringPage'))
 const AdminOpsQueuePage     = lazy(() => import('@/pages/admin/AdminOpsQueuePage'))
+const AdminModerationQueuePage = lazy(() => import('@/pages/admin/AdminModerationQueuePage'))
+const AdminChargebacksPage  = lazy(() => import('@/pages/admin/AdminChargebacksPage'))
+const AdminAMLPage          = lazy(() => import('@/pages/admin/AdminAMLPage'))
+const SellerDashboardR7Page = lazy(() => import('@/pages/seller/SellerDashboardR7Page'))
 
 function PageLoader() {
   return (
@@ -194,6 +199,7 @@ export default function App() {
           Saltar para o conteúdo principal
         </a>
         <OfflineBanner />
+        <CookieConsentBanner />
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Onboarding */}
@@ -257,6 +263,10 @@ export default function App() {
             <Route path="/admin/fraud"         element={<A><AdminFraudPage /></A>} />
             <Route path="/admin/monitoring"    element={<A><AdminMonitoringPage /></A>} />
             <Route path="/admin/ops"           element={<A><AdminOpsQueuePage /></A>} />
+            <Route path="/admin/moderation"    element={<A><AdminModerationQueuePage /></A>} />
+            <Route path="/admin/chargebacks"   element={<A><AdminChargebacksPage /></A>} />
+            <Route path="/admin/aml"           element={<A><AdminAMLPage /></A>} />
+            <Route path="/seller/analytics-r7" element={<S><SellerDashboardR7Page /></S>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

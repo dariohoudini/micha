@@ -6,6 +6,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { useCartStore } from '@/stores/cartStore'
 import { DeliverySlotPicker, GuestCheckoutOption, SplitPaymentUI } from '@/components/shared/MichaUXComponents'
 import { CheckoutProgressBar, MulticaixaPaymentUI, OrderSummary, SavedAddresses, PromoCodeInput } from '@/components/buyer/CheckoutUX'
+import CheckoutSubmittingOverlay from '@/components/buyer/CheckoutSubmittingOverlay'
+import BuyerTrustBanner from '@/components/buyer/BuyerTrustBanner'
 import { haptic } from '@/hooks/useUX'
 import promotionsAPI from '@/api/promotions'
 
@@ -281,15 +283,32 @@ export default function CheckoutPage() {
           )}
 
           {error && <div style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 10, padding: 12 }}><p style={{ ...S, fontSize: 13, color: '#ef4444' }}>{error}</p></div>}
+
+          {/* Compact trust banner immediately above the confirm button.
+              Reinforces buyer protection at the moment of commitment. */}
+          <BuyerTrustBanner compact />
         </div>
       </div>
 
       <div style={{ padding: '14px 16px', paddingBottom: 'max(28px, env(safe-area-inset-bottom))', borderTop: '1px solid #1E1E1E', flexShrink: 0 }}>
         <button onClick={handleCheckout} disabled={loading}
-          style={{ width: '100%', padding: '15px 0', borderRadius: 14, border: 'none', background: loading ? 'rgba(201,168,76,0.5)' : '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
+          aria-busy={loading}
+          aria-label={`Confirmar pedido de ${fmt(finalTotal)}`}
+          style={{ width: '100%', padding: '15px 0', borderRadius: 14, border: 'none', background: loading ? 'rgba(201,168,76,0.5)' : '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#0A0A0A', cursor: loading ? 'not-allowed' : 'pointer', minHeight: 48 }}>
           {loading ? 'A processar...' : `Confirmar — ${fmt(finalTotal)}`}
         </button>
       </div>
+
+      {/* Full-screen "do not close app" overlay during PSP confirmation.
+          Multicaixa Express calls take 5-15s on AO 4G; without this,
+          users believe the app is frozen and force-quit, orphaning
+          orders that idempotency-key-replay then double-charges. */}
+      <CheckoutSubmittingOverlay
+        open={loading}
+        message={payment === 'multicaixa'
+          ? 'A confirmar com Multicaixa Express'
+          : 'A processar o teu pagamento'}
+      />
     </div>
   )
 }

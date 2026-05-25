@@ -312,6 +312,15 @@ export default function AdminModerationQueuePage() {
     [],
   )
 
+  // Clamp focusIdx when items are removed (optimistic action shrinks
+  // the visible array; pre-fix focusIdx could point past the end).
+  useEffect(() => {
+    setFocusIdx((i) => {
+      if (visible.length === 0) return 0
+      return Math.min(i, visible.length - 1)
+    })
+  }, [visible.length])
+
   // Page-level keyboard nav.
   useEffect(() => {
     const handler = (e) => {

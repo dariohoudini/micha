@@ -63,6 +63,15 @@ export const useAuthStore = create(
           await api.post('/api/v1/auth/logout/', { refresh: tokenStorage.getRefreshToken() })
         } catch {}
         tokenStorage.clearAll()
+        // Clear per-device flags that should NOT survive into the next
+        // user's session on the same device. Pre-fix: a user who denied
+        // push on this device would never let user-B get re-prompted
+        // because the flag was permanently sticky.
+        try {
+          localStorage.removeItem('micha-push-asked-v1')
+          // Cookie consent IS scoped per-key — keep it; it represents
+          // the device user's choice and the next sign-in carries it.
+        } catch {}
         set({ user: null, isAuth: false, isSeller: false, isStaff: false })
       },
 

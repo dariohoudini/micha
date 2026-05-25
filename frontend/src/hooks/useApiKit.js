@@ -55,19 +55,35 @@ export function useApiQuery(path, params) {
     () => (params ? JSON.stringify(params) : ''),
     [params],
   )
-  const cancelRef = useRef({ cancelled: false })
+  // Real cancellation via AbortController (replaces the previous
+  // soft-flag approach that left the network request running on
+  // unmount, wasting mobile bandwidth on flaky connections).
+  const abortRef = useRef(null)
 
   const fetcher = useCallback(async () => {
-    cancelRef.current.cancelled = true
-    const localToken = { cancelled: false }
-    cancelRef.current = localToken
+    // Cancel any in-flight request first.
+    if (abortRef.current) {
+      try { abortRef.current.abort() } catch {}
+    }
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
     setState((s) => ({ ...s, status: 'loading', error: null }))
     try {
-      const res = await client.get(path, { params })
-      if (localToken.cancelled) return
+      const res = await client.get(path, { params, signal: ctrl.signal })
+      if (ctrl.signal.aborted) return
       setState({ status: 'success', data: res.data, error: null })
     } catch (e) {
-      if (localToken.cancelled) return
+      // Axios surfaces aborted requests with code 'ERR_CANCELED' OR
+      // the request gets a CanceledError. Treat both as silent.
+      if (
+        ctrl.signal.aborted
+        || e?.code === 'ERR_CANCELED'
+        || e?.name === 'CanceledError'
+        || e?.message === 'canceled'
+      ) {
+        return
+      }
       const status = e?.response?.status
       const detail = e?.response?.data?.detail || e?.message || 'unknown'
       setState({
@@ -86,7 +102,11 @@ export function useApiQuery(path, params) {
 
   useEffect(() => {
     fetcher()
-    return () => { cancelRef.current.cancelled = true }
+    return () => {
+      if (abortRef.current) {
+        try { abortRef.current.abort() } catch {}
+      }
+    }
   }, [fetcher])
 
   return {

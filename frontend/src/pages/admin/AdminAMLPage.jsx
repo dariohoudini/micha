@@ -6,6 +6,7 @@ import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
 import EmptyState from '@/components/ui/EmptyState'
 import ErrorState from '@/components/ui/ErrorState'
 import { QueueListSkeleton } from '@/components/ui/AdminSkeletons'
+import ConfirmSheet from '@/components/ui/ConfirmSheet'
 import { useApiQuery } from '@/hooks/useApiKit'
 import { toast } from '@/components/ui/Toast'
 import client from '@/api/client'
@@ -15,89 +16,6 @@ const SEVERITY = {
   low:    '#4ADE80',
   medium: '#FBBF24',
   high:   '#F87171',
-}
-
-
-function ReviewDialog({ defaultAction, onSubmit, onCancel }) {
-  const [action, setAction] = useState(defaultAction)
-  const [note, setNote] = useState('')
-
-  return (
-    <div role="dialog" aria-modal="true" aria-label="Review AML alert"
-         onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
-         style={{
-           position: 'fixed', inset: 0, zIndex: 100,
-           background: 'rgba(6,6,8,0.7)',
-           display: 'flex', alignItems: 'center', justifyContent: 'center',
-           padding: 16,
-         }}>
-      <div style={{
-        background: ADMIN_COLORS.card,
-        border: `1px solid ${ADMIN_COLORS.border}`,
-        borderRadius: 12, padding: 16, maxWidth: 500, width: '100%',
-      }}>
-        <h2 style={{ margin: 0, fontSize: 16, color: ADMIN_COLORS.text, marginBottom: 12 }}>
-          Review AML alert
-        </h2>
-
-        <fieldset style={{ border: 'none', padding: 0, marginBottom: 12 }}>
-          <legend style={{ fontSize: 12, color: ADMIN_COLORS.muted, marginBottom: 6 }}>
-            Decision
-          </legend>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13,
-                            color: ADMIN_COLORS.text, cursor: 'pointer' }}>
-              <input type="radio" name="action" value="report"
-                     checked={action === 'report'}
-                     onChange={() => setAction('report')} />
-              File STR (Report to FIU)
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13,
-                            color: ADMIN_COLORS.text, cursor: 'pointer' }}>
-              <input type="radio" name="action" value="dismiss"
-                     checked={action === 'dismiss'}
-                     onChange={() => setAction('dismiss')} />
-              Dismiss (False positive)
-            </label>
-          </div>
-        </fieldset>
-
-        <label htmlFor="aml-note" style={{ display: 'block', fontSize: 12,
-                                           color: ADMIN_COLORS.muted, marginBottom: 6 }}>
-          {action === 'report' ? 'FIU reference / submission ID' : 'Reason for dismissing'}
-        </label>
-        <textarea id="aml-note"
-                  autoFocus
-                  value={note} onChange={(e) => setNote(e.target.value)}
-                  rows={3}
-                  placeholder={action === 'report'
-                    ? 'UIF-2026-001234, submitted via secure portal'
-                    : 'Confirmed legitimate transaction. Verified with seller…'}
-                  style={{
-                    width: '100%', boxSizing: 'border-box',
-                    background: ADMIN_COLORS.surface,
-                    border: `1px solid ${ADMIN_COLORS.border}`,
-                    borderRadius: 6, color: ADMIN_COLORS.text,
-                    padding: 10, fontSize: 13, resize: 'vertical',
-                  }} />
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} style={{
-            background: 'transparent', color: ADMIN_COLORS.muted,
-            border: `1px solid ${ADMIN_COLORS.border}`,
-            padding: '8px 16px', borderRadius: 6, fontSize: 13,
-            cursor: 'pointer', minHeight: 40,
-          }}>Cancel</button>
-          <button onClick={() => onSubmit(action, note)} style={{
-            background: action === 'report' ? '#F87171' : '#6366F1',
-            color: 'white', border: 'none',
-            padding: '8px 16px', borderRadius: 6, fontSize: 13,
-            fontWeight: 600, cursor: 'pointer', minHeight: 40,
-          }}>Confirm {action}</button>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 
@@ -207,13 +125,20 @@ export default function AdminAMLPage() {
         ))}
       </div>
 
-      {reviewing && (
-        <ReviewDialog
-          defaultAction={reviewing.action}
-          onSubmit={submit}
-          onCancel={() => setReviewing(null)}
-        />
-      )}
+      <ConfirmSheet
+        open={!!reviewing}
+        title="Review AML alert"
+        description="Decide whether to file a Suspicious Transaction Report (STR) with the FIU or dismiss the alert as a false positive."
+        noteLabel="Note"
+        notePlaceholder="UIF-2026-001234, submitted via secure portal • or • Confirmed legitimate transaction…"
+        initialActionId={reviewing?.action || 'report'}
+        actions={[
+          { id: 'report',  label: 'File STR', color: 'red' },
+          { id: 'dismiss', label: 'Dismiss',  color: 'neutral', isPrimary: true },
+        ]}
+        onConfirm={(actionId, note) => submit(actionId, note)}
+        onCancel={() => setReviewing(null)}
+      />
     </AdminLayout>
   )
 }

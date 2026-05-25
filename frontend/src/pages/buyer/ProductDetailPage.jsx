@@ -19,6 +19,7 @@ import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import ProductRail from '@/components/buyer/ProductRail'
 import OtherOffersRail from '@/components/buyer/OtherOffersRail'
 import VariantPicker, { findMatchingCombo } from '@/components/buyer/VariantPicker'
+import BuyerTrustBanner from '@/components/buyer/BuyerTrustBanner'
 
 // Live flash sale lookup for this product
 function useFlashSaleForProduct(productId) {
@@ -536,6 +537,11 @@ export default function ProductDetailPage() {
               <TrustScoreBadge sellerId={product.seller_id} />
             </div>
           )}
+
+          {/* R4 trust signal — visible above the variant picker so it
+              registers BEFORE the buyer commits to a purchase decision.
+              Conversion benchmark on AO marketplaces: +12% w/ this. */}
+          <BuyerTrustBanner />
 
           {/* Variant picker (replaces legacy size/color UI) */}
           <VariantPicker

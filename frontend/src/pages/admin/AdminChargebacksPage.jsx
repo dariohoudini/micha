@@ -9,6 +9,7 @@ import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
 import EmptyState from '@/components/ui/EmptyState'
 import ErrorState from '@/components/ui/ErrorState'
 import { QueueListSkeleton } from '@/components/ui/AdminSkeletons'
+import ConfirmSheet from '@/components/ui/ConfirmSheet'
 import { useApiQuery } from '@/hooks/useApiKit'
 import { toast } from '@/components/ui/Toast'
 import client from '@/api/client'
@@ -35,70 +36,11 @@ function Pill({ value, ariaLabel }) {
 }
 
 
-function ConfirmDialog({ title, label, placeholder, onConfirm, onCancel }) {
-  const [note, setNote] = useState('')
-  // Focus trap + ESC close handled inline (no library).
-  return (
-    <div
-      role="dialog" aria-modal="true" aria-label={title}
-      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: 'rgba(6,6,8,0.7)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 16,
-      }}
-    >
-      <div style={{
-        background: ADMIN_COLORS.card,
-        border: `1px solid ${ADMIN_COLORS.border}`,
-        borderRadius: 12, padding: 16, maxWidth: 480, width: '100%',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-      }}>
-        <h2 style={{ margin: 0, fontSize: 16, color: ADMIN_COLORS.text,
-                     marginBottom: 12 }}>{title}</h2>
-        <label htmlFor="cb-note" style={{ display: 'block', fontSize: 12,
-                                          color: ADMIN_COLORS.muted, marginBottom: 6 }}>
-          {label}
-        </label>
-        <textarea
-          id="cb-note"
-          autoFocus
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder={placeholder}
-          rows={3}
-          style={{
-            width: '100%', boxSizing: 'border-box',
-            background: ADMIN_COLORS.surface,
-            border: `1px solid ${ADMIN_COLORS.border}`,
-            borderRadius: 6, color: ADMIN_COLORS.text,
-            padding: 10, fontSize: 13, resize: 'vertical',
-            minHeight: 60,
-          }}
-        />
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} style={{
-            background: 'transparent', color: ADMIN_COLORS.muted,
-            border: `1px solid ${ADMIN_COLORS.border}`,
-            padding: '8px 16px', borderRadius: 6, fontSize: 13,
-            cursor: 'pointer', minHeight: 40,
-          }}>Cancel</button>
-          <button onClick={() => onConfirm(note)} style={{
-            background: '#6366F1', color: 'white', border: 'none',
-            padding: '8px 16px', borderRadius: 6, fontSize: 13,
-            fontWeight: 600, cursor: 'pointer', minHeight: 40,
-          }}>Confirm</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
 function ChargebackRow({ row, onChanged }) {
   const [busy, setBusy] = useState(false)
-  const [dialog, setDialog] = useState(null)  // {title, label, placeholder, onSubmit}
+  const [dialog, setDialog] = useState(null)
+  // dialog: {title, noteLabel, placeholder, confirmLabel, color,
+  //          onSubmit: (note) => Promise}
 
   const act = async (path, body) => {
     setBusy(true)
@@ -172,16 +114,18 @@ function ChargebackRow({ row, onChanged }) {
               <>
                 <button onClick={() => setDialog({
                   title: 'Submit evidence',
-                  label: 'Evidence summary (will be sent to issuer)',
+                  noteLabel: 'Evidence summary (will be sent to issuer)',
                   placeholder: 'Tracking number, delivery confirmation, buyer chat refs…',
+                  color: 'green', confirmLabel: 'Submit',
                   onSubmit: (note) => act('respond', { evidence: { admin_note: note } }),
                 })} disabled={busy} style={btn('#22C55E')}>
                   Submit Evidence
                 </button>
                 <button onClick={() => setDialog({
                   title: 'Accept loss',
-                  label: 'Reason (internal note)',
+                  noteLabel: 'Reason (internal note)',
                   placeholder: 'Cheaper to accept than fight…',
+                  color: 'neutral', confirmLabel: 'Accept loss',
                   onSubmit: (note) => act('accept', { note }),
                 })} disabled={busy} style={btn('#94A3B8')}>
                   Accept Loss
@@ -192,16 +136,18 @@ function ChargebackRow({ row, onChanged }) {
               <>
                 <button onClick={() => setDialog({
                   title: 'Mark as won',
-                  label: 'Resolution note',
+                  noteLabel: 'Resolution note',
                   placeholder: 'Issuer ruled in our favour…',
+                  color: 'green', confirmLabel: 'Won',
                   onSubmit: (note) => act('resolve', { won: true, note }),
                 })} disabled={busy} style={btn('#22C55E')}>
                   Mark Won
                 </button>
                 <button onClick={() => setDialog({
                   title: 'Mark as lost',
-                  label: 'Resolution note',
+                  noteLabel: 'Resolution note',
                   placeholder: 'Funds reversed…',
+                  color: 'red', confirmLabel: 'Lost',
                   onSubmit: (note) => act('resolve', { won: false, note }),
                 })} disabled={busy} style={btn('#EF4444')}>
                   Mark Lost
@@ -212,13 +158,19 @@ function ChargebackRow({ row, onChanged }) {
         )}
       </article>
 
-      {dialog && (
-        <ConfirmDialog
-          {...dialog}
-          onConfirm={dialog.onSubmit}
-          onCancel={() => setDialog(null)}
-        />
-      )}
+      <ConfirmSheet
+        open={!!dialog}
+        title={dialog?.title || ''}
+        noteLabel={dialog?.noteLabel || 'Note'}
+        notePlaceholder={dialog?.placeholder || ''}
+        actions={dialog ? [
+          { id: 'confirm', label: dialog.confirmLabel || 'Confirm',
+            color: dialog.color || 'indigo', isPrimary: true },
+        ] : []}
+        busy={busy}
+        onConfirm={(_, note) => dialog?.onSubmit?.(note)}
+        onCancel={() => setDialog(null)}
+      />
     </>
   )
 }

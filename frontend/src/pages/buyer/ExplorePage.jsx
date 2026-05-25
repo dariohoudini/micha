@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
+// Tier 3 F11: extracted from inline definitions below. The new
+// FilterSheet has a real focus trap + ESC + sticky CTA + focus restore;
+// the prior inline version had none.
+import FilterSheet from '@/components/buyer/FilterSheet'
+import ActiveFilterPills from '@/components/buyer/ActiveFilterPills'
 
 const fmt = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 const S = { fontFamily: "'DM Sans', sans-serif" }
@@ -102,145 +107,15 @@ function SkeletonCard() {
   )
 }
 
-function FilterSheet({ filters, facets, onChange, onClose }) {
-  const [local, setLocal] = useState(filters)
-  const set = (k, v) => setLocal(p => ({ ...p, [k]: v }))
-  const toggleBrand = (name) => {
-    setLocal(p => {
-      const next = new Set(p.brands)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
-      return { ...p, brands: [...next] }
-    })
-  }
-
-  const labelStyle = { ...S, fontSize: 12, fontWeight: 600, color: '#9A9A9A', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }
-  const inputStyle = { flex: 1, background: '#141414', border: '1px solid #2A2A2A', borderRadius: 10, padding: '10px 12px', ...S, fontSize: 13, color: '#FFF', outline: 'none' }
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.4)' }}
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: '#0F0F0F', borderRadius: '20px 20px 0 0', border: '1px solid #1E1E1E', borderBottom: 'none', padding: '0 0 max(24px,env(safe-area-inset-bottom))', maxHeight: '85vh', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, background: '#2A2A2A' }} />
-        </div>
-
-        <div style={{ padding: '0 20px 16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <h2 style={{ ...S, fontSize: 16, fontWeight: 700, color: '#FFF' }}>Filtros</h2>
-            <button onClick={() => setLocal(DEFAULT_FILTERS)}
-              style={{ ...S, fontSize: 13, color: '#C9A84C', background: 'none', border: 'none', cursor: 'pointer' }}>
-              Limpar tudo
-            </button>
-          </div>
-
-          {/* Quick toggles */}
-          {facets && (
-            <div style={{ marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <button onClick={() => set('hasDiscount', !local.hasDiscount)}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 12, border: `1px solid ${local.hasDiscount ? '#C9A84C' : '#2A2A2A'}`, background: local.hasDiscount ? 'rgba(201,168,76,0.08)' : '#141414', ...S, fontSize: 13, color: '#FFF', cursor: 'pointer' }}>
-                <span>🔥 Apenas com desconto {facets?.discount_count != null && <span style={{ color: '#9A9A9A', fontSize: 11 }}> · {facets.discount_count.toLocaleString()}</span>}</span>
-                <span style={{ width: 18, height: 18, borderRadius: 4, border: `1.5px solid ${local.hasDiscount ? '#C9A84C' : '#555'}`, background: local.hasDiscount ? '#C9A84C' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {local.hasDiscount && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>}
-                </span>
-              </button>
-            </div>
-          )}
-
-          {/* Price range */}
-          <div style={{ marginBottom: 24 }}>
-            <p style={labelStyle}>Intervalo de preço</p>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <input value={local.minPrice} onChange={e => set('minPrice', e.target.value)} placeholder="Mín. Kz" type="number" inputMode="numeric" style={inputStyle} />
-              <span style={{ ...S, fontSize: 13, color: '#9A9A9A' }}>—</span>
-              <input value={local.maxPrice} onChange={e => set('maxPrice', e.target.value)} placeholder="Máx. Kz" type="number" inputMode="numeric" style={inputStyle} />
-            </div>
-            {facets?.price_range?.max > 0 && (
-              <p style={{ ...S, fontSize: 11, color: '#555', marginTop: 6 }}>
-                Intervalo: {facets.price_range.min.toLocaleString()} – {facets.price_range.max.toLocaleString()} Kz
-              </p>
-            )}
-          </div>
-
-          {/* Brands (multi) */}
-          {facets?.brands?.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <p style={labelStyle}>Marca {local.brands?.length > 0 && <span style={{ color: '#C9A84C' }}>· {local.brands.length}</span>}</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 180, overflowY: 'auto' }}>
-                {facets.brands.map(b => {
-                  const sel = local.brands?.includes(b.name)
-                  return (
-                    <button key={b.name} onClick={() => toggleBrand(b.name)}
-                      style={{ padding: '6px 12px', borderRadius: 20, border: `1px solid ${sel ? '#C9A84C' : '#2A2A2A'}`, background: sel ? 'rgba(201,168,76,0.1)' : '#141414', ...S, fontSize: 12, color: sel ? '#C9A84C' : '#FFF', cursor: 'pointer' }}>
-                      {b.name} <span style={{ color: '#9A9A9A', fontSize: 11 }}>({b.count})</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Province */}
-          <div style={{ marginBottom: 24 }}>
-            <p style={labelStyle}>Província</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {PROVINCES.map(p => (
-                <button key={p} onClick={() => set('province', p)}
-                  style={{ padding: '6px 14px', borderRadius: 20, border: `1px solid ${local.province === p ? '#C9A84C' : '#2A2A2A'}`, background: local.province === p ? 'rgba(201,168,76,0.1)' : '#141414', ...S, fontSize: 12, color: local.province === p ? '#C9A84C' : '#9A9A9A', cursor: 'pointer' }}>
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Condition with counts */}
-          <div style={{ marginBottom: 24 }}>
-            <p style={labelStyle}>Estado</p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {CONDITIONS.map(c => {
-                const facetCount = facets?.conditions?.find(x => x.value === c.v)?.count
-                return (
-                  <button key={c.v} onClick={() => set('condition', c.v)}
-                    style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: `1px solid ${local.condition === c.v ? '#C9A84C' : '#2A2A2A'}`, background: local.condition === c.v ? 'rgba(201,168,76,0.1)' : '#141414', ...S, fontSize: 12, color: local.condition === c.v ? '#C9A84C' : '#9A9A9A', cursor: 'pointer' }}>
-                    {c.l}{c.v && facetCount != null && <span style={{ color: '#555', fontSize: 10, marginLeft: 4 }}>({facetCount})</span>}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Min rating */}
-          <div style={{ marginBottom: 24 }}>
-            <p style={labelStyle}>Avaliação mínima</p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {[0, 3, 4, 5].map(r => (
-                <button key={r} onClick={() => set('minRating', r)}
-                  style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: `1px solid ${local.minRating === r ? '#C9A84C' : '#2A2A2A'}`, background: local.minRating === r ? 'rgba(201,168,76,0.1)' : '#141414', ...S, fontSize: 12, color: local.minRating === r ? '#C9A84C' : '#9A9A9A', cursor: 'pointer' }}>
-                  {r === 0 ? 'Todos' : `${r}★+`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button onClick={() => { onChange(local); onClose() }}
-            style={{ width: '100%', padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', ...S, fontSize: 14, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
-            {facets?.total != null ? `Mostrar ${facets.total.toLocaleString()} produtos` : 'Aplicar filtros'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const DEFAULT_FILTERS = { minPrice: '', maxPrice: '', province: 'Todas', condition: '', minRating: 0, brands: [], hasDiscount: false }
-
-function FilterChip({ label, onRemove }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 20, border: '1px solid rgba(201,168,76,0.3)', background: 'rgba(201,168,76,0.08)', ...S, fontSize: 11, color: '#C9A84C', cursor: 'default' }}>
-      {label}
-      <button onClick={onRemove} style={{ background: 'none', border: 'none', color: '#C9A84C', cursor: 'pointer', padding: 0, fontSize: 13, lineHeight: 1 }}>×</button>
-    </span>
-  )
+// Tier 3 F11: FilterSheet + FilterChip extracted to
+//   frontend/src/components/buyer/FilterSheet.jsx
+//   frontend/src/components/buyer/ActiveFilterPills.jsx
+// The pre-extraction inline copies have been deleted from this file.
+// DEFAULT_FILTERS stays here because ExplorePage owns the filter
+// state and uses it as the reset baseline.
+const DEFAULT_FILTERS = {
+  minPrice: '', maxPrice: '', province: 'Todas', condition: '',
+  minRating: 0, brands: [], hasDiscount: false,
 }
 
 export default function ExplorePage() {
@@ -387,34 +262,19 @@ export default function ExplorePage() {
 
       {/* Results count + active filter chips */}
       {(total > 0 || activeFiltersCount > 0) && (
-        <div style={{ padding: '0 16px 8px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
-          {total > 0 && <span style={{ ...S, fontSize: 12, color: '#9A9A9A', marginRight: 4 }}>{total.toLocaleString()} resultado{total !== 1 ? 's' : ''}</span>}
-
-          {(filters.minPrice || filters.maxPrice) && (
-            <FilterChip label={`${filters.minPrice || '0'}–${filters.maxPrice || '∞'} Kz`} onRemove={() => removeFilter('price')} />
+        <div style={{ flexShrink: 0 }}>
+          {total > 0 && (
+            <div style={{ padding: '0 16px 6px' }}>
+              <span style={{ ...S, fontSize: 12, color: '#9A9A9A' }}>
+                {total.toLocaleString()} resultado{total !== 1 ? 's' : ''}
+              </span>
+            </div>
           )}
-          {(filters.brands || []).map(b => (
-            <FilterChip key={b} label={b} onRemove={() => removeFilter('brand', b)} />
-          ))}
-          {filters.condition && (
-            <FilterChip label={CONDITIONS.find(c => c.v === filters.condition)?.l || filters.condition} onRemove={() => removeFilter('condition')} />
-          )}
-          {filters.province !== 'Todas' && (
-            <FilterChip label={filters.province} onRemove={() => removeFilter('province')} />
-          )}
-          {filters.minRating > 0 && (
-            <FilterChip label={`${filters.minRating}★+`} onRemove={() => removeFilter('minRating')} />
-          )}
-          {filters.hasDiscount && (
-            <FilterChip label="Com desconto" onRemove={() => removeFilter('hasDiscount')} />
-          )}
-
-          {activeFiltersCount > 1 && (
-            <button onClick={() => setFilters(DEFAULT_FILTERS)}
-              style={{ ...S, fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px' }}>
-              Limpar tudo
-            </button>
-          )}
+          <ActiveFilterPills
+            filters={filters}
+            onRemove={removeFilter}
+            onClearAll={() => setFilters(DEFAULT_FILTERS)}
+          />
         </div>
       )}
 
@@ -456,7 +316,16 @@ export default function ExplorePage() {
         </div>
       </div>
 
-      {showFilters && <FilterSheet filters={filters} facets={facets} onChange={setFilters} onClose={() => setShowFilters(false)} />}
+      <FilterSheet
+        open={showFilters}
+        filters={filters}
+        facets={facets}
+        defaults={DEFAULT_FILTERS}
+        provinces={PROVINCES}
+        conditions={CONDITIONS}
+        onChange={setFilters}
+        onClose={() => setShowFilters(false)}
+      />
     </BuyerLayout>
   )
 }

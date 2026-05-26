@@ -40,7 +40,8 @@ help:
 	@echo ""
 	@echo "Phone testing (try the app on your own device):"
 	@echo "  make phone            — open in mobile browser over WiFi"
-	@echo "  make phone-ios        — build + open iOS native shell"
+	@echo "  make phone-ios        — build + open Xcode (one-shot setup)"
+	@echo "  make phone-ios-reset  — revert capacitor.config to prod-safe"
 	@echo "  make phone-android-setup  — one-time Android project init"
 	@echo "  make phone-android    — build + open Android native shell"
 	@echo ""
@@ -134,9 +135,16 @@ phone:
 	./scripts/dev-phone.sh
 
 phone-ios:
-	# Open the iOS native project in Xcode after building the frontend.
-	# Requires: macOS + Xcode + Apple Developer account for device run.
-	cd frontend && npm run build && npx cap sync ios && npx cap open ios
+	# Full iOS setup: xcode-select switch + CocoaPods install +
+	# Capacitor live-reload config + build + open Xcode.
+	# Run `make phone` in another terminal FIRST so the dev server
+	# is up. See ops/PHONE_DEV.md for full instructions.
+	./scripts/dev-phone-ios.sh
+
+phone-ios-reset:
+	# Revert capacitor.config.json to production-safe (removes the
+	# dev server.url). Run before building a production .ipa.
+	./scripts/dev-phone-ios.sh --reset
 
 phone-android-setup:
 	# One-time Android setup. Requires Android Studio + ANDROID_HOME.

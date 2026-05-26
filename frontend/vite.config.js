@@ -10,9 +10,21 @@ export default defineConfig({
   },
 
   server: {
+    // ``host: true`` binds to 0.0.0.0 so phones on the same WiFi can
+    // reach the dev server at http://<dev-machine-LAN-IP>:5173/.
+    // Without this, Vite binds 127.0.0.1 and phones get connection
+    // refused. See ops/PHONE_DEV.md for the full workflow.
+    host: true,
     port: 5173,
+    strictPort: false,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      // Dev-only proxy: when phone hits 172.x.x.x:5173 the page
+      // makes calls to "/api/..." (relative), Vite forwards to the
+      // Django dev server on 127.0.0.1:8000.
+      '/api':  { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/ws':   { target: 'ws://127.0.0.1:8001',   ws: true, changeOrigin: true },
+      // Backend serves AASA + sitemap + robots at the root.
+      '/.well-known': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
 

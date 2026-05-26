@@ -38,6 +38,12 @@ help:
 	@echo "  make frontend-build   — production build (vite)"
 	@echo "  make frontend-dev     — dev server on :5173"
 	@echo ""
+	@echo "Phone testing (try the app on your own device):"
+	@echo "  make phone            — open in mobile browser over WiFi"
+	@echo "  make phone-ios        — build + open iOS native shell"
+	@echo "  make phone-android-setup  — one-time Android project init"
+	@echo "  make phone-android    — build + open Android native shell"
+	@echo ""
 	@echo "Docker (local full-stack: postgres + redis + 4 services):"
 	@echo "  make docker-up        — build + start everything"
 	@echo "  make docker-down      — stop and remove containers"
@@ -120,6 +126,26 @@ makemigrations:
 
 runserver:
 	./venv/bin/python manage.py runserver 0.0.0.0:8000
+
+phone:
+	# Launch backend + frontend bound to all interfaces so your phone
+	# (on the same WiFi) can access the dev server. Prints the URL to
+	# type on your phone. See ops/PHONE_DEV.md for full instructions.
+	./scripts/dev-phone.sh
+
+phone-ios:
+	# Open the iOS native project in Xcode after building the frontend.
+	# Requires: macOS + Xcode + Apple Developer account for device run.
+	cd frontend && npm run build && npx cap sync ios && npx cap open ios
+
+phone-android-setup:
+	# One-time Android setup. Requires Android Studio + ANDROID_HOME.
+	cd frontend && npx cap add android && npx cap sync android
+	@echo ""
+	@echo "✓ Android project created. Run: make phone-android"
+
+phone-android:
+	cd frontend && npm run build && npx cap sync android && npx cap open android
 
 shell:
 	./venv/bin/python manage.py shell

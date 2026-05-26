@@ -1,8 +1,18 @@
 import axios from 'axios'
 import { tokenStorage } from './tokenStorage'
 
+// ── Base URL resolution ──────────────────────────────────────────
+// Dev: relative '/api' so the Vite proxy forwards to the backend.
+// Makes the dev server work from ANY host — laptop browser, phone
+// over LAN, ngrok tunnel — without rebuilding env config.
+// Prod / Capacitor native: VITE_API_BASE_URL must be set to the
+// absolute backend URL since the native shell doesn't have a proxy.
+const DEFAULT_BASE = import.meta.env?.DEV
+  ? '/api'
+  : 'http://127.0.0.1:8000/api'
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_BASE,
   headers: { 'Content-Type': 'application/json' },
   timeout: 12000,
 })

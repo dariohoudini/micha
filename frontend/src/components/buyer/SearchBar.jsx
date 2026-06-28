@@ -57,10 +57,12 @@ function writeRecents(list) {
 function normaliseSuggestions(raw) {
   if (!raw) return []
   if (Array.isArray(raw)) {
+    // Optional-chain item access: a malformed API response with a null
+    // entry (e.g. ['', null, 'real']) must not crash the dropdown.
     return raw.map((s) => ({
       type: 'product',
-      text: typeof s === 'string' ? s : (s.text || s.name || ''),
-      count: typeof s === 'object' ? s.count : undefined,
+      text: typeof s === 'string' ? s : (s?.text || s?.name || ''),
+      count: typeof s === 'object' ? s?.count : undefined,
     })).filter(s => s.text)
   }
   // Preferred grouped shape.

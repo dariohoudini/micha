@@ -1,18 +1,20 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { loginSchema } from '@/lib/validation'
 import { useAuthStore } from '@/stores/authStore'
-import { authAPI } from '@/api/auth'
+import { authAPI, profileAPI } from '@/api/auth'
 import { toast } from '@/components/ui/Toast'
 import { FormField, Input, ErrorBanner } from '@/components/ui/FormField'
 import { FadeIn } from '@/components/ui/PageTransition'
+import { consumeReturnAction } from '@/lib/authGate'
 
 export default function LoginPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const location = useLocation()
   const login = useAuthStore(s => s.login)
   const [showPassword, setShowPassword] = useState(false)
 
@@ -29,12 +31,53 @@ export default function LoginPage() {
   const onSubmit = async (data) => {
     try {
       const res = await authAPI.login(data.email, data.password)
-      login(res.data.user || { email: data.email }, {
+
+      // The backend's MyTokenObtainPairSerializer returns ONLY
+      // {access, refresh} — no user object. Previously the FE fell
+      // back to `{ email }` here, which meant `is_seller` and
+      // `is_staff` were never populated → SellerRoute / AdminRoute
+      // saw `isSeller: false` for actual sellers and bounced them
+      // back to /home. Bug: registered sellers could only see the
+      // buyer UI and had no way to upload or manage products.
+      //
+      // Fix: stash the tokens (so the next request is authenticated),
+      // then GET /auth/profile/ to load the full UserSerializer
+      // payload (which includes is_seller / is_verified_seller /
+      // is_staff), and only THEN finalise the auth store + navigate.
+      login({ email: data.email }, {
         access: res.data.access,
         refresh: res.data.refresh,
       })
+      try {
+        // NOTE: getProfile lives on `profileAPI`, not `authAPI`. A
+        // prior version of this code called `authAPI.getProfile()`
+        // which is `undefined` → TypeError → caught here silently →
+        // isSeller stayed false → every seller landed on the buyer
+        // home. Don't re-introduce that mistake.
+        const profile = await profileAPI.getProfile()
+        useAuthStore.getState().updateUser(profile.data)
+      } catch {
+        // Profile fetch failed — fall through with minimal user.
+        // Buyer UI still works; seller will need to re-login or
+        // refresh. Better than blocking login on a flaky /profile/.
+      }
+
       toast.success('Bem-vindo de volta!')
-      navigate('/home')
+      // §34.3 — Return Navigation Logic. If the user landed on the
+      // login screen because they tapped a gated button (add-to-cart
+      // on a PDP, "Follow Seller", deep-link into /cart, etc.) we
+      // replay the original action and return them to that screen
+      // instead of dropping them on /home with no context.
+      const returnTo = await consumeReturnAction(location.state)
+      if (returnTo) {
+        navigate(returnTo, { replace: true })
+      } else {
+        // Route by role: staff → /admin, seller → /seller, else /home.
+        const { isStaff, isSeller } = useAuthStore.getState()
+        if (isStaff) navigate('/admin', { replace: true })
+        else if (isSeller) navigate('/seller', { replace: true })
+        else navigate('/home', { replace: true })
+      }
     } catch (err) {
       const detail = err.response?.data?.detail || t('errors.generic')
       setError('root', { message: detail })

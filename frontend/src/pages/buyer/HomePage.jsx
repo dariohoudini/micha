@@ -10,7 +10,6 @@ import {
   trackRecommendationClick,
 } from '@/api/ai'
 import HelperBot from '@/components/shared/HelperBot'
-import usePersonalisedFeed from '@/hooks/usePersonalisedFeed'
 import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
 import ProductRail from '@/components/buyer/ProductRail'
 import { usePullToRefresh, useInfiniteScroll, useScrollRestore } from '@/hooks/useUX'
@@ -19,6 +18,8 @@ import LazyImage from '@/components/ui/LazyImage'
 import RecommendationCarousel from '@/components/buyer/RecommendationCarousel'
 import FlashSaleBanner from '@/components/buyer/FlashSaleBanner'
 import DailyCheckinCard from '@/components/buyer/DailyCheckinCard'
+import TrustBadge from '@/components/buyer/ChoiceBadge'
+import SaleEventBanner from '@/components/buyer/SaleEventBanner'
 import CategoryPills from '@/components/buyer/CategoryPills'
 
 
@@ -73,6 +74,12 @@ function ProductCard({ product, onPress, source = 'home_feed' }) {
 
       {/* Info */}
       <div style={{ padding: '10px 10px 12px', flex: 1 }}>
+        {/* AliExpress 2025 CH 8 trust badge — orange Choice or
+           country-flag local-warehouse. Renders nothing if neither
+           is set on the product, so safe to always include. */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4, minHeight: 14 }}>
+          <TrustBadge product={product} />
+        </div>
         <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#FFFFFF', fontWeight: 500, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
           {product.name}
         </p>
@@ -162,8 +169,15 @@ function useCollections() {
 }
 
 export default function HomePage() {
-  const { products: feedProducts, loading: feedLoading, hasMore, loadMore, refresh } = usePersonalisedFeed()
-  const { pullY, refreshing } = usePullToRefresh(loadFeed)
+  // NOTE: this component previously also called `usePersonalisedFeed()`
+  // and destructured `{ feedProducts, feedLoading, hasMore, loadMore,
+  // refresh }`. None of those were actually rendered — the JSX below
+  // uses the locally-managed `products / loading / loadingMore /
+  // hasMore` populated by the in-component `loadFeed`. The dual setup
+  // also masked a crash: the local `loadFeed` called `setHasMore`,
+  // which only existed as a *value* (not a setter) on the destructure,
+  // so the first successful fetch threw `setHasMore is not a function`.
+  // Collapsed to one source of truth: local state + local `loadFeed`.
   const scrollRef = useScrollRestore('home_feed')
   const navigate = useNavigate()
   const { trackFeedClick } = useFeedTracking()
@@ -171,6 +185,7 @@ export default function HomePage() {
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
   const [offset, setOffset] = useState(0)
   const [algorithm, setAlgorithm] = useState(null)
   const [quizCompleted, setQuizCompleted] = useState(true)
@@ -222,6 +237,12 @@ export default function HomePage() {
       setLoadingMore(false)
     }
   }, [offset])
+
+  // Pull-to-refresh: declared AFTER loadFeed because `const` bindings
+  // are in the TDZ until their declaration line. Calling
+  // usePullToRefresh(loadFeed) above the loadFeed useCallback throws
+  // "Cannot access 'loadFeed' before initialization" → ErrorBoundary.
+  const { pullY, refreshing } = usePullToRefresh(loadFeed)
 
   // Fetch full product data by IDs (AI feed returns IDs only)
   const fetchProductsByIds = async (ids, scores) => {
@@ -392,6 +413,24 @@ export default function HomePage() {
           }
         }} />
       </div>
+
+      {/* AliExpress 2025 CH 4.1 — Coins shortcut bar + Live tap.
+         Two horizontally-placed chips: the user's coin balance
+         (deeplink to /coins) and a live-streams entry point. */}
+      <div style={{ display: 'flex', gap: 8, padding: '0 16px 12px' }}>
+        <button onClick={() => navigate('/coins')}
+          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(201,168,76,0.3)', background: 'linear-gradient(135deg, rgba(201,168,76,0.12), rgba(201,168,76,0.02))', cursor: 'pointer' }}>
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#C9A84C', fontWeight: 700 }}>🪙 As minhas moedas</span>
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#9A9A9A' }}>›</span>
+        </button>
+        <button onClick={() => navigate('/live')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(239,68,68,0.3)', background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.02))', cursor: 'pointer' }}>
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#ef4444', fontWeight: 700 }}>🔴 Live</span>
+        </button>
+      </div>
+
+      {/* AliExpress Complete 2025 CH 17.3 — major sale event hero */}
+      <SaleEventBanner />
 
       {/* Flash sales */}
       <DailyCheckinCard />

@@ -44,8 +44,8 @@ function normaliseSuggestions(raw) {
   if (Array.isArray(raw)) {
     return raw.map((s) => ({
       type: 'product',
-      text: typeof s === 'string' ? s : (s.text || s.name || ''),
-      count: typeof s === 'object' ? s.count : undefined,
+      text: typeof s === 'string' ? s : (s?.text || s?.name || ''),
+      count: typeof s === 'object' ? s?.count : undefined,
     })).filter(s => s.text)
   }
   const out = []

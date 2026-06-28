@@ -6,9 +6,16 @@ export default function SplashPage() {
   const [phase, setPhase] = useState('enter') // enter → logo → exit
 
   useEffect(() => {
+    // User Process Flow Chapter 1+2 — branch by ``micha_onboarded``.
+    // On the very first launch the user lands on the carousel
+    // (Chapter 2). Subsequent launches skip straight to the
+    // language picker → welcome → login as before.
+    let onboarded = false
+    try { onboarded = localStorage.getItem('micha_onboarded') === 'true' } catch {}
+    const dest = onboarded ? '/language' : '/onboarding/carousel'
     const t1 = setTimeout(() => setPhase('logo'), 300)
     const t2 = setTimeout(() => setPhase('exit'), 2200)
-    const t3 = setTimeout(() => navigate('/language'), 2700)
+    const t3 = setTimeout(() => navigate(dest), 2700)
     return () => [t1, t2, t3].forEach(clearTimeout)
   }, [navigate])
 

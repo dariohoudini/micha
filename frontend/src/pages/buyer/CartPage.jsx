@@ -62,6 +62,24 @@ export function CartPage() {
     } catch { setItems(prev => prev.filter(i => i.id !== itemId)) }
   }
 
+  // AliExpress Complete 2025 CH 10.2 — Move to Wishlist.
+  // Delete cart item + push to wishlist + log to UserEvent.
+  const moveToWishlist = async (item) => {
+    haptic.light?.()
+    try {
+      const productId = item.product?.id || item.product_id
+      await Promise.allSettled([
+        client.delete(`/api/v1/cart/items/${item.id}/remove/`),
+        client.post('/api/v1/wishlist/add/', { product_id: productId }),
+      ])
+      setItems(prev => prev.filter(i => i.id !== item.id))
+      // Telemetry handled centrally by axios interceptor, but be
+      // explicit for the user-visible action.
+      import('@/lib/userTrack').then(({ track }) =>
+        track('cart.moved_to_wishlist', { product_id: productId })).catch(() => {})
+    } catch {}
+  }
+
   const subtotal = items.reduce((sum, i) => sum + Number(i.price || i.product?.price || 0) * (i.quantity || 1), 0)
   const S = { fontFamily: "'DM Sans', sans-serif" }
 

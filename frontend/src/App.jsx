@@ -1,6 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Suspense, lazy, useEffect } from 'react'
 import ErrorBoundary from '@/components/shared/ErrorBoundary'
+import SessionGuard from '@/components/shared/SessionGuard'
+import MaintenanceGate from '@/components/shared/MaintenanceGate'
+import { track } from '@/lib/userTrack'
 import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
@@ -12,6 +15,7 @@ import { toast } from '@/components/ui/Toast'
 
 // Onboarding
 const SplashPage         = lazy(() => import('@/pages/SplashPage'))
+const OnboardingCarouselPage = lazy(() => import('@/pages/OnboardingCarouselPage'))
 const LanguagePage       = lazy(() => import('@/pages/LanguagePage'))
 const WelcomePage        = lazy(() => import('@/pages/WelcomePage'))
 const LoginPage          = lazy(() => import('@/pages/LoginPage'))
@@ -32,6 +36,18 @@ const OrdersPage            = lazy(() => import('@/pages/buyer/OrdersPage'))
 const WishlistPage          = lazy(() => import('@/pages/buyer/WishlistPage'))
 const NotificationsPage     = lazy(() => import('@/pages/buyer/NotificationsPage'))
 const ProfilePage           = lazy(() => import('@/pages/buyer/ProfilePage'))
+const AddressesPage         = lazy(() => import('@/pages/buyer/AddressesPage'))
+const VouchersPage          = lazy(() => import('@/pages/buyer/VouchersPage'))
+const LoyaltyPage           = lazy(() => import('@/pages/buyer/LoyaltyPage'))
+const SessionsPage          = lazy(() => import('@/pages/buyer/SessionsPage'))
+const TwoFactorPage         = lazy(() => import('@/pages/buyer/TwoFactorPage'))
+const DeleteAccountPage     = lazy(() => import('@/pages/buyer/DeleteAccountPage'))
+const ReturnRequestPage     = lazy(() => import('@/pages/buyer/ReturnRequestPage'))
+const FlashSalePage         = lazy(() => import('@/pages/buyer/FlashSalePage'))
+const CoinsPage             = lazy(() => import('@/pages/buyer/CoinsPage'))
+const CoinGamesPage         = lazy(() => import('@/pages/buyer/CoinGamesPage'))
+const LiveStreamsPage       = lazy(() => import('@/pages/buyer/LiveStreamsPage'))
+const ReviewWritePage       = lazy(() => import('@/pages/buyer/ReviewWritePage'))
 const ProfileEditPage       = lazy(() => import('@/pages/buyer/ProfileEditPage'))
 const SecurityPage          = lazy(() => import('@/pages/buyer/SecurityPage'))
 const ReferralPage          = lazy(() => import('@/pages/buyer/ReferralPage'))
@@ -49,6 +65,12 @@ const SellerProductEditPage = lazy(() => import('@/pages/seller/SellerProductEdi
 const SellerOrdersPage      = lazy(() => import('@/pages/seller/SellerOrdersPage'))
 const SellerWalletPage      = lazy(() => import('@/pages/seller/SellerWalletPage'))
 const SellerSetupPage       = lazy(() => import('@/pages/seller/SellerSetupPage'))
+const SellerMyStorePage     = lazy(() => import('@/pages/seller/SellerMyStorePage'))
+const SellerOnboardingPage  = lazy(() => import('@/pages/seller/SellerOnboardingPage'))
+const SellerApplicationStatusPage = lazy(() => import('@/pages/seller/SellerApplicationStatusPage'))
+const SellerShippingTemplatesPage = lazy(() => import('@/pages/seller/SellerShippingTemplatesPage'))
+const SellerBusinessAdvisorPage = lazy(() => import('@/pages/seller/SellerBusinessAdvisorPage'))
+const SellerChoicePage      = lazy(() => import('@/pages/seller/SellerChoicePage'))
 const SellerAnalyticsPage   = lazy(() => import('@/pages/seller/SellerAnalyticsPage'))
 const SellerChatPage        = lazy(() => import('@/pages/seller/SellerChatPage'))
 
@@ -96,8 +118,25 @@ function PageLoader() {
 
 function ProtectedRoute({ children }) {
   const { isAuth, loading } = useAuthStore()
+  const location = useLocation()
   if (loading) return <PageLoader />
-  return isAuth ? children : <Navigate to="/login" replace />
+  if (isAuth) return children
+  // §34.3 — Return Navigation Logic. Stash where the guest was going
+  // so LoginPage can replay the navigation (and any pending action)
+  // after successful login/registration. Without this state, the
+  // user who deep-linked into /cart, /checkout, /orders/:id etc.
+  // would be bounced to /home after login and lose context.
+  return (
+    <Navigate
+      to="/login"
+      replace
+      state={{
+        returnTo: location.pathname + (location.search || ''),
+        returnAction: 'navigate',
+        returnParams: {},
+      }}
+    />
+  )
 }
 
 function SellerRoute({ children }) {
@@ -147,6 +186,42 @@ const A = ({ children }) => <AdminRoute>{children}</AdminRoute>
 function GlobalSetup() {
   const setOnline = useUIStore(s => s.setOnline)
   const isAuth = useAuthStore(s => s.isAuth)
+  const user = useAuthStore(s => s.user)
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // §34.4 — Navigation Stack Reset listener. The auth store fires
+  // `micha:auth-stack-reset` from outside the router (sign-out,
+  // banned, forced-update, onboarding-complete). We translate that
+  // to a real `navigate(to, { replace: true })` here so the React
+  // tree actually unmounts the previous root and the user can't
+  // ⌫-back into authenticated screens after sign-out.
+  useEffect(() => {
+    const onReset = (e) => {
+      const to = (e && e.detail && e.detail.to) || '/login'
+      navigate(to, { replace: true })
+    }
+    window.addEventListener('micha:auth-stack-reset', onReset)
+    return () => window.removeEventListener('micha:auth-stack-reset', onReset)
+  }, [navigate])
+
+  // User Process Flow §20.8 — log every navigation to the DB.
+  // Single source of truth: every screen the user lands on writes
+  // a `route.view` row into UserEvent via the batched track API.
+  useEffect(() => {
+    track('route.view', {
+      path: location.pathname,
+      search: location.search || undefined,
+      user_id: user?.id || undefined,
+    })
+  }, [location.pathname, location.search, user?.id])
+
+  // Log launch + auth state transitions exactly once per boot.
+  useEffect(() => { track('app.open', {}) }, [])
+  useEffect(() => {
+    track(isAuth ? 'auth.session_active' : 'auth.session_anonymous',
+          { user_id: user?.id || null })
+  }, [isAuth, user?.id])
   usePushNotifications({
     onNotification: (notification) => {
       const title = notification.title || 'MICHA'
@@ -196,6 +271,8 @@ export default function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <GlobalSetup />
+        <SessionGuard />
+        <MaintenanceGate />
         <a href="#main-content" className="skip-link">
           Saltar para o conteúdo principal
         </a>
@@ -205,6 +282,7 @@ export default function App() {
           <Routes>
             {/* Onboarding */}
             <Route path="/"                element={<SplashPage />} />
+            <Route path="/onboarding/carousel" element={<OnboardingCarouselPage />} />
             <Route path="/language"        element={<LanguagePage />} />
             <Route path="/welcome"         element={<WelcomePage />} />
             <Route path="/login"           element={<LoginPage />} />
@@ -227,6 +305,18 @@ export default function App() {
             <Route path="/notifications"       element={<P><NotificationsPage /></P>} />
             <Route path="/profile"             element={<P><ProfilePage /></P>} />
             <Route path="/profile/edit"        element={<P><ProfileEditPage /></P>} />
+            <Route path="/profile/addresses"   element={<P><AddressesPage /></P>} />
+            <Route path="/profile/vouchers"    element={<P><VouchersPage /></P>} />
+            <Route path="/profile/loyalty"     element={<P><LoyaltyPage /></P>} />
+            <Route path="/profile/sessions"    element={<P><SessionsPage /></P>} />
+            <Route path="/profile/2fa"         element={<P><TwoFactorPage /></P>} />
+            <Route path="/profile/delete"      element={<P><DeleteAccountPage /></P>} />
+            <Route path="/orders/:orderId/return" element={<P><ReturnRequestPage /></P>} />
+            <Route path="/flash-sale"          element={<P><FlashSalePage /></P>} />
+            <Route path="/coins"               element={<P><CoinsPage /></P>} />
+            <Route path="/coins/games"         element={<P><CoinGamesPage /></P>} />
+            <Route path="/live"                element={<P><LiveStreamsPage /></P>} />
+            <Route path="/orders/:orderId/review" element={<P><ReviewWritePage /></P>} />
             <Route path="/security"            element={<P><SecurityPage /></P>} />
             <Route path="/referral"            element={<P><ReferralPage /></P>} />
             <Route path="/chat"                element={<P><ChatPage /></P>} />
@@ -250,6 +340,12 @@ export default function App() {
             <Route path="/seller/orders"       element={<S><SellerOrdersPage /></S>} />
             <Route path="/seller/wallet"       element={<S><SellerWalletPage /></S>} />
             <Route path="/seller/setup"        element={<S><SellerSetupPage /></S>} />
+            <Route path="/seller/store"        element={<S><SellerMyStorePage /></S>} />
+            <Route path="/seller/onboarding"   element={<S><SellerOnboardingPage /></S>} />
+            <Route path="/seller/application"  element={<S><SellerApplicationStatusPage /></S>} />
+            <Route path="/seller/shipping"     element={<S><SellerShippingTemplatesPage /></S>} />
+            <Route path="/seller/business-advisor" element={<S><SellerBusinessAdvisorPage /></S>} />
+            <Route path="/seller/choice"       element={<S><SellerChoicePage /></S>} />
             <Route path="/seller/analytics"    element={<S><SellerAnalyticsPage /></S>} />
             <Route path="/seller/chat"         element={<S><SellerChatPage /></S>} />
 

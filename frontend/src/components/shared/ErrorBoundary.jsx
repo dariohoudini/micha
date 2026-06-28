@@ -12,6 +12,14 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     console.error('MICHA ErrorBoundary caught:', error, info)
+    // Mobile App Engineering CH19 — ship render crashes to our own
+    // crash-group ingest (works with or without Sentry).
+    import('@/lib/crashReport')
+      .then(({ reportCrash }) => reportCrash(error, {
+        source: 'error_boundary',
+        component_stack: String(info?.componentStack || '').slice(0, 2000),
+      }))
+      .catch(() => {})
   }
 
   handleReset() {

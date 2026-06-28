@@ -1,5 +1,8 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useCartStore } from '@/stores/cartStore'
+import { useAuthStore } from '@/stores/authStore'
+import { requireAuth } from '@/lib/authGate'
+import { useUnreadCount } from '@/hooks/useQueries'
 
 const TABS = [
   {
@@ -26,13 +29,17 @@ const TABS = [
   },
 ]
 
-// Mock unread count — replace with real store
-const CHAT_UNREAD = 2
-
 function BottomNav() {
   const navigate = useNavigate()
-  const { pathname } = useLocation()
+  const location = useLocation()
+  const { pathname } = location
   const totalItems = useCartStore(s => s.items.reduce((a, i) => a + i.quantity, 0))
+  // §34.5 — bell/notification badge is fed from the real unread
+  // count API. The hook fetches on mount + app foreground and
+  // invalidates when notifications are marked read elsewhere.
+  // Falls back to 0 silently on auth/network errors so guest users
+  // never see a flickering badge.
+  const { data: unreadChat = 0 } = useUnreadCount()
 
   const isActive = (path) => {
     if (path === '/chat') return pathname.startsWith('/chat')
@@ -41,8 +48,27 @@ function BottomNav() {
 
   const getBadge = (tab) => {
     if (tab.badge === 'cart') return totalItems > 0 ? totalItems : null
-    if (tab.badge === 'chat') return CHAT_UNREAD > 0 ? CHAT_UNREAD : null
+    if (tab.badge === 'chat') return unreadChat > 0 ? unreadChat : null
     return null
+  }
+
+  // §1.1 + §34.1 — Cart / Account tabs are auth-gated. A guest who
+  // taps them must be routed to LoginScreen with `returnTo` set so
+  // they bounce straight back to the tab after logging in.
+  const handleTabPress = (path) => {
+    // §1.1 — tapping the active tab on Home scrolls to top instead
+    // of pushing a new entry. Approximate by triggering a custom
+    // event the HomePage listens to; if no listener, harmless no-op.
+    if (path === '/home' && pathname === '/home') {
+      try { window.dispatchEvent(new CustomEvent('micha:home-tab-tap')) } catch {}
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+      return
+    }
+    if (path === '/cart' || path === '/profile') {
+      const gated = path === '/cart' ? 'cart_tab' : 'account_tab'
+      if (!requireAuth(navigate, location, gated)) return
+    }
+    navigate(path)
   }
 
   return (
@@ -60,7 +86,7 @@ function BottomNav() {
         return (
           <button
             key={tab.path}
-            onClick={() => navigate(tab.path)}
+            onClick={() => handleTabPress(tab.path)}
             aria-label={tab.label}
             aria-current={active ? 'page' : undefined}
             style={{
@@ -115,12 +141,56 @@ function BottomNav() {
   )
 }
 
+// Floating "Modo Vendedor" pill — only renders for users with the
+// seller flag. Symmetric to SellerLayout's "Comprar" pill, giving
+// every buyer screen a one-tap path back to the seller dashboard
+// without having to remember the URL or hunt through the profile
+// menu. Anchored to the bottom-right just above the BottomNav so it
+// doesn't fight with any page that already paints its own top bar
+// (HomePage, ExplorePage, ProfilePage). The bottom offset stacks the
+// nav height + safe-area inset.
+function SellerModeFab({ hideNav }) {
+  const navigate = useNavigate()
+  const isSeller = useAuthStore(s => s.isSeller)
+  if (!isSeller) return null
+  // BottomNav height ≈ 60px (padding + icon row). When the nav is
+  // hidden, sit closer to the screen edge.
+  const bottomOffset = hideNav
+    ? 'calc(env(safe-area-inset-bottom) + 16px)'
+    : 'calc(env(safe-area-inset-bottom) + 76px)'
+  return (
+    <button
+      onClick={() => navigate('/seller')}
+      aria-label="Mudar para modo vendedor"
+      style={{
+        position: 'fixed',
+        bottom: bottomOffset,
+        right: 14,
+        zIndex: 60,
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '9px 14px',
+        borderRadius: 24,
+        background: 'rgba(201,168,76,0.95)',
+        border: '1px solid rgba(201,168,76,0.6)',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.4), 0 0 0 4px rgba(201,168,76,0.08)',
+        cursor: 'pointer',
+      }}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      </svg>
+      <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: '#0A0A0A', letterSpacing: '0.02em' }}>Vender</span>
+    </button>
+  )
+}
+
 export default function BuyerLayout({ children, hideNav = false }) {
   return (
     <div style={{
       height: '100%', display: 'flex', flexDirection: 'column',
       background: '#0A0A0A', overflow: 'hidden',
     }}>
+      <SellerModeFab hideNav={hideNav} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {children}
       </div>

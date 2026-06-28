@@ -282,6 +282,15 @@ export default function SellerProductEditPage() {
         </div>
       )}
 
+      {/* §17.3 — editing a live product warning banner */}
+      {product?.moderation_status === 'published' && (
+        <div style={{ margin: '8px 16px 0', padding: '12px 14px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 12, flexShrink: 0 }}>
+          <p style={{ ...S, fontSize: 12, color: '#f59e0b', lineHeight: 1.55 }}>
+            ⚠ Está a editar um produto activo. Alterações ao preço e stock entram em vigor imediatamente. Alterações às imagens, título ou categoria voltam a colocar o produto <strong>Em revisão</strong>.
+          </p>
+        </div>
+      )}
+
       {/* Step indicator */}
       <div style={{ padding: '8px 20px 16px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center' }}>

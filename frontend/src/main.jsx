@@ -57,6 +57,45 @@ async function init() {
   const { useAuthStore } = await import('@/stores/authStore')
   useAuthStore.getState().init()
 
+  // ── Mobile App Engineering stack (CH4/14/19/20/21/22/24) ──────────────
+  // Each init is fire-and-forget and fail-open — a broken analytics or
+  // experiments backend must never block app start.
+  try {
+    const { installCrashHandlers } = await import('@/lib/crashReport')
+    installCrashHandlers()                       // CH19 crash ingest
+  } catch {}
+  import('@/lib/eventBatch')
+    .then(({ initEventBatching }) => initEventBatching())  // CH20
+    .catch(() => {})
+  import('@/lib/syncQueue')
+    .then(({ initSyncQueue }) => initSyncQueue())          // CH4
+    .catch(() => {})
+  import('@/lib/appState')
+    .then(({ initAppState }) => initAppState())            // CH14
+    .catch(() => {})
+  import('@/lib/perfMetrics')
+    .then(({ initPerfMetrics }) => initPerfMetrics())      // CH24 RUM
+    .catch(() => {})
+  import('@/lib/abClient')
+    .then(({ initAB }) =>
+      initAB(useAuthStore.getState().user?.id))            // CH21
+    .catch(() => {})
+  // CH22 deferred deep link — first-launch claim, then route.
+  try {
+    const FIRST_LAUNCH_KEY = 'micha_first_launch_done'
+    if (!localStorage.getItem(FIRST_LAUNCH_KEY)) {
+      localStorage.setItem(FIRST_LAUNCH_KEY, '1')
+      const [{ default: client }] = await Promise.all([import('@/api/client')])
+      client.post('/api/v1/mobile/deeplinks/claim/', {})
+        .then(({ data }) => {
+          if (data.found && data.target_path?.startsWith('/')) {
+            window.history.replaceState(null, '', data.target_path)
+          }
+        })
+        .catch(() => {})
+    }
+  } catch {}
+
   // ── Mount React ────────────────────────────────────────────────────────
   createRoot(document.getElementById('root')).render(
     <StrictMode>

@@ -12,6 +12,7 @@ import {
 import { AIChatButton, TrustScoreBadge } from '@/components/ai/AIComponents'
 import HelperBot from '@/components/shared/HelperBot'
 import trackInteraction, { INTERACTION_TYPES } from '@/api/tracking'
+import { track as userTrack } from '@/lib/userTrack'
 import PersonalisedPriceBadge from '@/components/buyer/PersonalisedPriceBadge'
 import { ReportButton, BlockUserButton } from '@/components/shared/UserActions'
 import ReviewsSection from '@/components/buyer/ReviewsSection'
@@ -209,6 +210,8 @@ export default function ProductDetailPage() {
       const p = res.data
       setProduct(p)
       trackProductView(p)
+      // User Process Flow §7.13 — PDP view persisted to UserEvent.
+      userTrack('product.view', { product_id: p.id, price: p.price, category: p.category_id || p.category })
 
       // Load AI features in parallel
       loadSimilarProducts(p)
@@ -714,16 +717,35 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      {/* Sticky add to cart */}
+      {/* Sticky add to cart — User Process Flow §7.7. When out of
+         stock, the buy/add buttons are replaced by [NOTIFY ME] which
+         POSTs to stock-notify and logs to UserEvent. */}
       <div style={{ padding: '12px 16px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', background: '#0A0A0A', borderTop: '1px solid #1E1E1E', flexShrink: 0, display: 'flex', gap: 10 }}>
-        <button onClick={handleAddToCart}
-          style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: '1.5px solid #C9A84C', background: addedToCart ? '#C9A84C' : 'rgba(201,168,76,0.1)', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: addedToCart ? '#0A0A0A' : '#C9A84C', cursor: 'pointer', transition: 'all 0.2s' }}>
-          {addedToCart ? '✓ Adicionado!' : 'Adicionar ao carrinho'}
-        </button>
-        <button onClick={handleBuyNow}
-          style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
-          Comprar agora
-        </button>
+        {(product?.stock === 0 || product?.quantity === 0) ? (
+          <button onClick={async () => {
+            try {
+              await client.post('/api/v1/promotions/stock-notify/', { product: product.id })
+              userTrack('stock.notify_requested', { product_id: product.id })
+              alert('Iremos notificá-lo quando voltar a haver stock.')
+            } catch (e) {
+              alert(e.response?.data?.detail || 'Erro a registar.')
+            }
+          }}
+            style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
+            🔔 Avisar quando disponível
+          </button>
+        ) : (
+          <>
+            <button onClick={() => { handleAddToCart(); userTrack('cart.item_added', { product_id: product.id }) }}
+              style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: '1.5px solid #C9A84C', background: addedToCart ? '#C9A84C' : 'rgba(201,168,76,0.1)', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: addedToCart ? '#0A0A0A' : '#C9A84C', cursor: 'pointer', transition: 'all 0.2s' }}>
+              {addedToCart ? '✓ Adicionado!' : 'Adicionar ao carrinho'}
+            </button>
+            <button onClick={() => { handleBuyNow(); userTrack('cart.buy_now', { product_id: product.id }) }}
+              style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
+              Comprar agora
+            </button>
+          </>
+        )}
       </div>
 
       {/* AI Chat floating button */}

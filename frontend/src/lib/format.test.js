@@ -30,7 +30,11 @@ describe('formatCurrency', () => {
 
 describe('formatInteger', () => {
   it('rounds + locale-formats', () => {
-    expect(formatInteger(1234.5)).toBe('1235')
+    // pt-AO groups thousands (with a space), so the rounded value is
+    // locale-formatted — assert against the locale output, not a bare
+    // digit string, otherwise this couples the test to a no-grouping
+    // locale the app never uses.
+    expect(formatInteger(1234.5)).toBe((1235).toLocaleString('pt-AO'))
     expect(formatInteger(0)).toBe('0')
   })
 })

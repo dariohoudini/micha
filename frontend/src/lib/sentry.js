@@ -101,8 +101,14 @@ export function initSentry() {
     // No DSN configured → silent no-op. Common in dev.
     return
   }
-  // Lazy import keeps the SDK out of the bundle when unused.
-  import('@sentry/browser').then((Sentry) => {
+  // Lazy import via variable so Vite can't statically analyse the
+  // module specifier — @sentry/browser is intentionally optional
+  // (operators install only when wiring VITE_SENTRY_DSN). Static
+  // ``import('@sentry/browser')`` made Vite 8 refuse to boot with
+  // "Failed to resolve import". Variable indirection bypasses
+  // import-analysis cleanly.
+  const sdkName = '@sentry' + '/browser'
+  import(sdkName).then((Sentry) => {
     try {
       Sentry.init({
         dsn: DSN,

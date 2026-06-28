@@ -43,6 +43,8 @@
     "scrollEnabled": false
   },
   "server": {
+    "url": "http://172.30.20.99:5173",
+    "cleartext": true,
     "androidScheme": "https"
   }
 }

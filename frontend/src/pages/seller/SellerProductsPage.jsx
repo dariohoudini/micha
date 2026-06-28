@@ -97,9 +97,33 @@ export default function SellerProductsPage() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ ...S, fontSize: 13, fontWeight: 600, color: '#FFFFFF', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{product.name}</p>
                     <p style={{ ...S, fontSize: 13, fontWeight: 700, color: '#C9A84C', marginBottom: 4 }}>{formatPrice(product.price)}</p>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                      <span style={{ ...S, fontSize: 11, color: '#9A9A9A' }}>Stock: {product.stock ?? '—'}</span>
-                      <span style={{ ...S, fontSize: 11, color: product.is_active ? '#059669' : '#9A9A9A' }}>{product.is_active ? '● Activo' : '○ Inactivo'}</span>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ ...S, fontSize: 11, color: '#9A9A9A' }}>Stock: {product.quantity ?? product.stock ?? '—'}</span>
+                      {/* AliExpress §17.2 moderation status badge */}
+                      {(() => {
+                        const ms = product.moderation_status
+                        const cfg = ms === 'published' || (!ms && product.is_active)
+                          ? { l: 'Publicado', c: '#10b981', bg: 'rgba(16,185,129,0.12)' }
+                          : ms === 'under_review'
+                            ? { l: 'Em revisão', c: '#f59e0b', bg: 'rgba(245,158,11,0.12)' }
+                          : ms === 'violation'
+                            ? { l: 'Violação',   c: '#ef4444', bg: 'rgba(239,68,68,0.12)' }
+                          : ms === 'sold_out' || (product.quantity === 0)
+                            ? { l: 'Esgotado',   c: '#9A9A9A', bg: 'rgba(154,154,154,0.12)' }
+                          : ms === 'deactivated' || !product.is_active
+                            ? { l: 'Desactivado',c: '#9A9A9A', bg: 'rgba(154,154,154,0.12)' }
+                          : { l: 'Activo',      c: '#10b981', bg: 'rgba(16,185,129,0.12)' }
+                        return (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '2px 8px', borderRadius: 10, background: cfg.bg, color: cfg.c,
+                            ...S, fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                          }}>
+                            <span style={{ width: 4, height: 4, borderRadius: '50%', background: cfg.c }} />
+                            {cfg.l}
+                          </span>
+                        )
+                      })()}
                     </div>
                   </div>
                 </div>

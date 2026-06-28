@@ -71,7 +71,11 @@ function initPosthog() {
   if (_initStarted) return
   _initStarted = true
   if (!POSTHOG_KEY) return
-  import('posthog-js').then((mod) => {
+  // Variable indirection to defeat Vite's static import-analysis.
+  // posthog-js is intentionally optional; installing it would add
+  // ~50KB to anyone's bundle who's never going to use PostHog.
+  const pkg = 'posthog' + '-js'
+  import(pkg).then((mod) => {
     try {
       const posthog = mod.default || mod
       posthog.init(POSTHOG_KEY, {
@@ -108,6 +112,14 @@ export function track(event, props = {}) {
   if (_posthog?.capture) {
     try { _posthog.capture(event, safe) } catch {}
   }
+
+  // Mobile batch pipeline (Mobile App Engineering CH20) — buffered,
+  // flushed every 30s / on background, deduped server-side by event_id.
+  try {
+    import('@/lib/eventBatch')
+      .then(({ enqueueEvent }) => enqueueEvent(event, safe))
+      .catch(() => {})
+  } catch {}
 
   // Backend fallback — fire-and-forget. Keeps analytics flowing even
   // when PostHog is unconfigured.

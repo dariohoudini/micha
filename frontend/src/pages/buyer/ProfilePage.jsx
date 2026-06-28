@@ -12,6 +12,10 @@ const MENU_SECTIONS = [
       { icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', label: 'Editar perfil', path: '/profile/edit' },
       { icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2', label: 'Os meus pedidos', path: '/orders' },
       { icon: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z', label: 'Lista de desejos', path: '/wishlist' },
+      // User Process Flow §11.2 sub-sections
+      { icon: 'M12 2C8 2 4.5 5 4.5 9c0 5.25 7.5 13 7.5 13s7.5-7.75 7.5-13c0-4-3.5-7-7.5-7zM12 11.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z', label: 'Moradas', path: '/profile/addresses' },
+      { icon: 'M21 12V7H5a2 2 0 0 1 0-4h14v4M3 5v14a2 2 0 0 0 2 2h16v-5', label: 'Cupões e vouchers', path: '/profile/vouchers' },
+      { icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z', label: 'Pontos de fidelidade', path: '/profile/loyalty' },
       { icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75', label: 'Referências & Amigos', path: '/referral' },
     ],
   },
@@ -28,6 +32,10 @@ const MENU_SECTIONS = [
       { icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', label: 'Chat & Suporte', path: '/chat' },
       { icon: 'M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0', label: 'Notificações', path: '/notifications' },
       { icon: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z', label: 'Privacidade & Segurança', path: '/security' },
+      // User Process Flow §18 + §11.6
+      { icon: 'M21 12a9 9 0 1 1-6.219-8.56M14 12l2 2 4-4', label: '2FA — Autenticação dupla', path: '/profile/2fa' },
+      { icon: 'M5 12h14M12 5v14M3 3l18 18', label: 'Sessões activas', path: '/profile/sessions' },
+      { icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6', label: 'Eliminar conta', path: '/profile/delete' },
     ],
   },
 ]

@@ -106,10 +106,15 @@ describe('useApiMutation', () => {
     const { result } = renderHook(() => useApiMutation(
       'post', '/things/', { onError },
     ))
-    await expect(
-      act(() => result.current.mutate({})),
-    ).rejects.toBeTruthy()
+    // Await the whole async mutate INSIDE act (swallowing the re-throw)
+    // so the setStatus('error') state commit flushes before we assert.
+    // Asserting on act()'s rejected promise directly races the flush.
+    let threw = false
+    await act(async () => {
+      try { await result.current.mutate({}) } catch { threw = true }
+    })
 
+    expect(threw).toBe(true)
     expect(toast.error).toHaveBeenCalledWith('Bad data')
     expect(onError).toHaveBeenCalled()
     expect(result.current.isError).toBe(true)

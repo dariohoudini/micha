@@ -1,10 +1,26 @@
 import { useNavigate } from 'react-router-dom'
+import { track } from '@/lib/userTrack'
 
 const BackIcon = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M19 12H5M12 5l-7 7 7 7" />
   </svg>
 )
+
+// §1.2 — Back button behaviour. If the user landed via deep link
+// and the history stack is empty, plain `navigate(-1)` would either
+// no-op or pop them out of the app. AliExpress spec is: "if stack
+// empty: navigate('HomeScreen')" — same fallback here.
+const safeGoBack = (navigate) => {
+  try { track('button.tap', { id: 'header_back' }) } catch {}
+  if (typeof window !== 'undefined'
+      && window.history
+      && window.history.length > 1) {
+    navigate(-1)
+  } else {
+    navigate('/home', { replace: true })
+  }
+}
 
 export default function PageHeader({
   title,
@@ -16,7 +32,8 @@ export default function PageHeader({
   transparent = false,
 }) {
   const navigate = useNavigate()
-  const handleBack = onBack || (backTo ? () => navigate(backTo) : () => navigate(-1))
+  const handleBack = onBack
+    || (backTo ? () => navigate(backTo) : () => safeGoBack(navigate))
   const showBack = onBack !== null
 
   return (

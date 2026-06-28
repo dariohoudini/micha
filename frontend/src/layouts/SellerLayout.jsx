@@ -8,7 +8,12 @@ const SELLER_NAV = [
   { path: '/seller/chat',      label: 'Chat',      icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', badge: 3 },
   { path: '/seller/analytics', label: 'Análises',  icon: 'M18 20V10M12 20V4M6 20v-6' },
   { path: '/seller/wallet',    label: 'Carteira',  icon: 'M21 12V7H5a2 2 0 0 1 0-4h14v4M3 5v14a2 2 0 0 0 2 2h16v-5' },
-  { path: '/seller/setup',     label: 'Loja',      icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z' },
+  // "Loja" tab → /seller/store, the AliExpress §8.1-style store
+  // overview. Settings/editor live one tap deeper at /seller/setup
+  // (reached via the [Editar Loja] CTA on that page). The previous
+  // wiring jumped straight to the editor, which is one of the
+  // reasons sellers reported "I saved but can't see my store".
+  { path: '/seller/store',     label: 'Loja',      icon: 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10' },
 ]
 
 export default function SellerLayout({ children, title, showBack = false }) {

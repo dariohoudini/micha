@@ -440,8 +440,23 @@ export default function OrderDetailPage() {
               </button>
             )}
             {(order.status === 'delivered' || order.status === 'completed') && returnLoaded && !returnReq && (
-              <button onClick={() => setShowReturnModal(true)} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid #2A2A2A', background: '#141414', ...S, fontSize: 14, fontWeight: 600, color: '#FFF', cursor: 'pointer' }}>
+              <button onClick={() => navigate(`/orders/${order.id}/return`)} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid #2A2A2A', background: '#141414', ...S, fontSize: 14, fontWeight: 600, color: '#FFF', cursor: 'pointer' }}>
                 Devolver
+              </button>
+            )}
+            {/* AliExpress 2025 CH 13.2 — Extend Protection (+15 days),
+               one-time only, available in last 5 days of window. */}
+            {(order.status === 'shipped' || order.status === 'delivered') && !order.protection_extended && (
+              <button onClick={async () => {
+                try {
+                  await client.post(`/api/v1/orders/${order.id}/extend-protection/`)
+                  alert('Protecção estendida por 15 dias.')
+                  if (typeof load === 'function') load()
+                } catch (e) {
+                  alert(e.response?.data?.detail || 'Já foi estendida ou não está dentro da janela permitida.')
+                }
+              }} style={{ flex: 1, padding: '13px 0', borderRadius: 14, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.08)', ...S, fontSize: 13, fontWeight: 600, color: '#a5b4fc', cursor: 'pointer' }}>
+                ⏱ Estender protecção
               </button>
             )}
             {order.status === 'pending' && (

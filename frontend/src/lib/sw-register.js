@@ -10,9 +10,29 @@ export function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return
 
   const enabled = import.meta.env?.VITE_ENABLE_SW
-  if (enabled === 'false' || enabled === false) return
-  if (import.meta.env?.DEV && enabled !== 'true' && enabled !== true) {
-    // Default OFF in dev to avoid stale-asset confusion during HMR.
+  const explicitlyEnabled = enabled === 'true' || enabled === true
+  const explicitlyDisabled = enabled === 'false' || enabled === false
+
+  // In dev mode (or whenever the operator explicitly turns the SW off
+  // via VITE_ENABLE_SW=false) we must NOT just skip registration —
+  // any SW installed during an earlier production session would
+  // continue to intercept fetches and feed stale JS bundles to the
+  // WebView. This is the source-of-truth way to recover the
+  // "I edited LoginPage.jsx but the simulator still runs the old
+  // code" footgun: actively unregister + flush caches.
+  const shouldDisable = explicitlyDisabled ||
+    (import.meta.env?.DEV && !explicitlyEnabled)
+  if (shouldDisable) {
+    Promise.resolve()
+      .then(() => navigator.serviceWorker.getRegistrations())
+      .then(regs => Promise.all(regs.map(r => r.unregister())))
+      .then(() => {
+        if ('caches' in window) {
+          return caches.keys().then(keys =>
+            Promise.all(keys.map(k => caches.delete(k))))
+        }
+      })
+      .catch(() => {})
     return
   }
 

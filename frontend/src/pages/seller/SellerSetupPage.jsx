@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import client from '@/api/client'
 
@@ -48,7 +49,27 @@ function ImageUploadField({ label, currentUrl, fieldName, onFile }) {
 }
 
 export default function SellerSetupPage() {
-  const [profile, setProfile] = useState(null)
+  const navigate = useNavigate()
+  // ── Two-model setup ─────────────────────────────────────────────
+  // This page edits two distinct backend records simultaneously:
+  //   1. Store           — name, description, city, banner_image,
+  //                        primary_color, is_active, is_open.
+  //                        Required for a seller to publish products
+  //                        (apps/products/views.py ProductCreateView
+  //                        looks up Store(owner=user)).
+  //   2. SellerProfile   — store_logo, return_policy, shipping_policy,
+  //                        working_hours, holiday flags, etc.
+  //                        Cosmetic / policy metadata for the
+  //                        public storefront.
+  //
+  // The UI presents them as one form for the seller's convenience;
+  // the save handler dispatches to two endpoints in sequence. The
+  // PRIOR implementation here only wrote SellerProfile via PUT and
+  // never created/updated a Store at all — so "Save" looked like a
+  // success but no Store row ever existed. That left sellers unable
+  // to publish products and (worse) the toast lied about success.
+  const [profile, setProfile] = useState({})        // SellerProfile + UI extras
+  const [store, setStore] = useState(null)          // Store (null = none yet)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [activeTab, setActiveTab] = useState('store')
@@ -58,31 +79,179 @@ export default function SellerSetupPage() {
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 2500) }
 
   useEffect(() => {
-    client.get('/api/v1/seller/profile/')
-      .then(res => setProfile(res.data))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    // Load both records in parallel so the form opens populated.
+    // .all-style Promise.all would reject if either fails; we let
+    // them settle independently so a 404 on /seller/profile/ (rare,
+    // but happens for users who landed here via a deep link before
+    // the profile is auto-provisioned) doesn't blank the store
+    // section too.
+    Promise.allSettled([
+      client.get('/api/v1/stores/my/'),
+      client.get('/api/v1/seller/profile/'),
+    ]).then(([storesRes, profileRes]) => {
+      if (storesRes.status === 'fulfilled') {
+        const list = storesRes.value.data?.results || storesRes.value.data || []
+        // One store per seller for now (AliExpress-style single
+        // storefront). If a seller ever ends up with multiple rows
+        // — e.g. legacy seed data — we pick the most recent.
+        const first = Array.isArray(list) ? list[0] : list
+        if (first && first.id) {
+          setStore(first)
+          // Seed the form's "store" tab from the Store record.
+          setProfile(prev => ({
+            ...prev,
+            store_name: first.name || '',
+            description: first.description || '',
+            province: first.city || 'Luanda',
+            banner_image: first.banner_image || null,
+          }))
+        }
+      }
+      if (profileRes.status === 'fulfilled') {
+        const p = profileRes.value.data || {}
+        // Merge AFTER store seed so SellerProfile-only fields fill
+        // in without overwriting Store-sourced fields with empty
+        // values from the SellerProfile shape.
+        setProfile(prev => ({
+          ...prev,
+          ...p,
+          // Preserve store-sourced values that exist on both sides.
+          store_name: prev.store_name || p.store_name || '',
+          description: prev.description || p.description || '',
+          province: prev.province || p.province || 'Luanda',
+        }))
+      }
+    }).finally(() => setLoading(false))
   }, [])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      const formData = new FormData()
-      Object.entries(profile || {}).forEach(([k, v]) => {
-        if (v !== null && v !== undefined && typeof v !== 'object') formData.append(k, v)
-      })
-      Object.entries(pendingFiles).forEach(([k, file]) => {
-        formData.append(k, file)
-      })
-      await client.put('/api/v1/seller/profile/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+      // ── 1) Store: create on first save, PATCH on subsequent ────
+      // Send FormData so banner_image (a File) goes through cleanly.
+      const storeFd = new FormData()
+      // Trim defaults so empty inputs don't overwrite real data
+      // with whitespace.
+      const storeName = (profile.store_name || '').trim()
+      if (!storeName) {
+        showToast('Dê um nome à sua loja para guardar.', 'error')
+        setSaving(false)
+        return
+      }
+      if (nameStatus === 'taken') {
+        showToast('Esse nome já está em uso. Escolha outro.', 'error')
+        setSaving(false)
+        return
+      }
+      storeFd.append('name', storeName)
+      if (profile.description) storeFd.append('description', profile.description.trim())
+      if (profile.province) storeFd.append('city', profile.province)
+      if (pendingFiles.banner_image) storeFd.append('banner_image', pendingFiles.banner_image)
+      // Keep is_active/is_open defaults from the model unless the
+      // seller toggled them somewhere (not exposed in this form
+      // today; ToggleStoreOpenView handles open/closed runtime).
+
+      let savedStore
+      if (store?.id) {
+        const res = await client.patch(
+          `/api/v1/stores/my/${store.id}/`,
+          storeFd,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        )
+        savedStore = res.data
+      } else {
+        const res = await client.post(
+          '/api/v1/stores/my/',
+          storeFd,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        )
+        savedStore = res.data
+        setStore(savedStore)
+      }
+
+      // ── 2) SellerProfile: logo + policies + holiday flags ──────
+      // The SellerProfile endpoint is RetrieveUpdate so PUT is fine
+      // even on first call (the view get_or_create's the row).
+      const profileFd = new FormData()
+      // Only send fields that exist on SellerProfileSerializer —
+      // anything else is silently dropped by DRF, but we filter
+      // explicitly so it's obvious which fields are persistable.
+      const PROFILE_KEYS = [
+        'return_policy', 'shipping_policy',
+        'is_on_holiday', 'holiday_message', 'holiday_until',
+        'revenue_goal', 'subscription_plan',
+      ]
+      for (const k of PROFILE_KEYS) {
+        const v = profile[k]
+        if (v !== null && v !== undefined && v !== '') profileFd.append(k, v)
+      }
+      if (pendingFiles.logo) profileFd.append('store_logo', pendingFiles.logo)
+      // banner_image goes to Store (above) — SellerProfile.store_banner
+      // is the legacy field; keep Store as the canonical place.
+
+      await client.put(
+        '/api/v1/seller/profile/',
+        profileFd,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      )
+
       setPendingFiles({})
-      showToast('Perfil actualizado!')
-    } catch { showToast('Erro ao guardar.', 'error') }
+      showToast('Loja guardada!')
+      // Navigate to the dedicated "Minha Loja" screen — AliExpress
+      // §7.2 / §8.1 mandate that the very next view after a save
+      // SHOWS the store (banner, name, status, CTAs). The generic
+      // /seller dashboard buries this, so we go to /seller/store.
+      // `justSaved: true` triggers the green confirmation banner.
+      setTimeout(() => navigate('/seller/store', { state: { justSaved: true } }), 600)
+    } catch (err) {
+      const data = err.response?.data
+      let msg = 'Erro ao guardar.'
+      if (data && typeof data === 'object') {
+        if (typeof data.detail === 'string') msg = data.detail
+        else {
+          const skip = new Set(['request_id', 'trace_id', 'code', 'status'])
+          for (const [k, v] of Object.entries(data)) {
+            if (skip.has(k)) continue
+            const val = Array.isArray(v) ? v[0] : v
+            if (typeof val === 'string' && val.trim()) {
+              msg = `${k}: ${val}`
+              break
+            }
+          }
+        }
+      }
+      showToast(msg, 'error')
+    }
     finally { setSaving(false) }
   }
 
   const update = (field, value) => setProfile(prev => ({ ...prev, [field]: value }))
   const addFile = (field, file) => setPendingFiles(prev => ({ ...prev, [field]: file }))
+
+  // ── §5.3 store-name availability check ────────────────────────
+  // Spec: 800ms after the seller stops typing, query the backend
+  // for name conflicts. Backend currently exposes /api/v1/stores/?search=
+  // (public store list with search) — close enough; we treat any
+  // exact-name match from a different store_id as taken.
+  const [nameStatus, setNameStatus] = useState('idle') // idle|checking|available|taken
+  useEffect(() => {
+    const name = (profile.store_name || '').trim()
+    if (name.length < 3) { setNameStatus('idle'); return }
+    if (store && store.name === name) { setNameStatus('available'); return }
+    setNameStatus('checking')
+    const t = setTimeout(() => {
+      client.get(`/api/v1/stores/?search=${encodeURIComponent(name)}`)
+        .then(res => {
+          const list = res.data?.results || res.data || []
+          const taken = (Array.isArray(list) ? list : [])
+            .some(s => (s.name || '').toLowerCase() === name.toLowerCase()
+                       && (!store || s.id !== store.id))
+          setNameStatus(taken ? 'taken' : 'available')
+        })
+        .catch(() => setNameStatus('idle'))
+    }, 800)
+    return () => clearTimeout(t)
+  }, [profile.store_name, store])
   const S = { fontFamily: "'DM Sans', sans-serif" }
   const inputStyle = { width: '100%', background: '#141414', border: '1px solid #2A2A2A', borderRadius: 12, padding: '12px 14px', ...S, fontSize: 13, color: '#FFFFFF', outline: 'none', boxSizing: 'border-box' }
   const labelStyle = { ...S, fontSize: 11, color: '#9A9A9A', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, display: 'block' }
@@ -108,18 +277,53 @@ export default function SellerSetupPage() {
         ) : profile && (
           <div style={{ padding: '16px 16px 100px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             {activeTab === 'store' && <>
-              {[
-                { f: 'store_name', l: 'Nome da loja', p: 'Ex: Capulanas da Maria' },
-                { f: 'tagline', l: 'Slogan', p: 'Ex: A melhor moda angolana' },
-              ].map(field => (
-                <div key={field.f}>
-                  <label style={labelStyle}>{field.l}</label>
-                  <input value={profile[field.f] || ''} onChange={e => update(field.f, e.target.value)} placeholder={field.p} style={inputStyle} />
-                </div>
-              ))}
+              <div>
+                <label style={labelStyle}>Nome da loja</label>
+                <input
+                  value={profile.store_name || ''}
+                  onChange={e => update('store_name', e.target.value)}
+                  placeholder="Ex: Capulanas da Maria"
+                  style={{
+                    ...inputStyle,
+                    borderColor: nameStatus === 'taken' ? '#ef4444'
+                      : nameStatus === 'available' ? '#10b981'
+                      : '#2A2A2A',
+                  }}
+                />
+                {/* §5.3 — live availability hint */}
+                <p style={{ ...S, fontSize: 11, marginTop: 6,
+                  color: nameStatus === 'taken' ? '#ef4444'
+                    : nameStatus === 'available' ? '#10b981'
+                    : nameStatus === 'checking' ? '#9A9A9A'
+                    : '#555',
+                }}>
+                  {nameStatus === 'checking' && '⏳ A verificar disponibilidade…'}
+                  {nameStatus === 'available' && '✓ Nome disponível'}
+                  {nameStatus === 'taken' && '✗ Nome já em uso. Experimente outro.'}
+                  {nameStatus === 'idle' && (profile.store_name || '').length > 0 && (profile.store_name || '').length < 3 && 'Mínimo 3 caracteres'}
+                </p>
+              </div>
+              <div>
+                <label style={labelStyle}>Slogan</label>
+                <input value={profile.tagline || ''} onChange={e => update('tagline', e.target.value)} placeholder="Ex: A melhor moda angolana" style={inputStyle} />
+              </div>
               <div>
                 <label style={labelStyle}>Descrição</label>
-                <textarea value={profile.description || ''} onChange={e => update('description', e.target.value)} placeholder="Descreva a sua loja..." rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+                <textarea
+                  value={profile.description || ''}
+                  onChange={e => update('description', e.target.value)}
+                  placeholder="Descreva a sua loja..."
+                  rows={3}
+                  maxLength={2000}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+                {/* §5.2 — char counter, min 50 / max 2000 */}
+                <p style={{ ...S, fontSize: 11, marginTop: 6,
+                  color: (profile.description || '').length < 50 ? '#f59e0b' : '#9A9A9A',
+                }}>
+                  {(profile.description || '').length} / 2000
+                  {(profile.description || '').length < 50 && ' · mínimo 50 caracteres recomendado'}
+                </p>
               </div>
               <div>
                 <label style={labelStyle}>Província</label>

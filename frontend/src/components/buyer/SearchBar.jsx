@@ -272,7 +272,7 @@ export default function SearchBar({ onSearch, placeholder = 'Pesquisar produtosâ
     navigate('/explore', { state: { query: term } })
     onSearch?.(term)
     inputRef.current?.blur()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [navigate, onSearch])
 
   const removeRecent = (term) => {

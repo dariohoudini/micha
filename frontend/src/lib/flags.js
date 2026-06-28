@@ -34,7 +34,7 @@ const STALE_MS = 5 * 60 * 1000
 
 let _cache = {}
 let _cacheStamp = 0
-let _exposed = new Set()
+const _exposed = new Set()
 
 
 export async function loadFlags(keys) {

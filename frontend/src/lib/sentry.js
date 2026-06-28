@@ -134,7 +134,6 @@ export function initSentry() {
 export function reportError(err, context) {
   if (!_sentryClient) {
     // Fallback: console.error so dev still sees it.
-    // eslint-disable-next-line no-console
     console.error('[MICHA] reportError:', err, context)
     return
   }

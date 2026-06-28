@@ -108,3 +108,74 @@ def reap_abandoned_checkouts(grace_minutes: int = 30):
         except Exception:
             log.exception('reap saga %s for order %s failed', s.id, order_id)
     return spawned
+
+
+def _needs_attention_critical_age() -> int:
+    from django.conf import settings
+    return int(getattr(settings, 'SAGA_NEEDS_ATTENTION_CRITICAL_AGE', 3600))
+
+
+@shared_task(name='sagas.refresh_metrics')
+@singleton_task('beat:sagas.refresh_metrics')
+def refresh_saga_metrics():
+    """Refresh the saga state gauges + alert on the recovery engine's own
+    failure mode.
+
+    The runner emits FLOW counters (saga_terminal_total) as sagas finish.
+    This task refreshes the STATE gauges from the DB — counters can't answer
+    "how many sagas are stuck RIGHT NOW?" without rate math. It mirrors
+    outbox.refresh_dlq_metrics for the DLQ.
+
+    needs_attention is the alert-worthy state: a compensation itself failed,
+    so a charge may be un-refunded or stock un-released (Rollback & Recovery
+    CH19/CH22). Any non-zero count, or an old one, is logged CRITICAL so the
+    pipeline pages on-call.
+
+      • needs_attention == 0                                INFO (silent)
+      • needs_attention > 0                                 CRITICAL
+      • OR oldest needs_attention age > critical_age (1h)   CRITICAL
+    """
+    from django.db.models import Min
+
+    open_states = (
+        SagaStatus.PENDING, SagaStatus.RUNNING,
+        SagaStatus.WAITING, SagaStatus.COMPENSATING,
+    )
+    needs_attention = Saga.objects.filter(
+        status=SagaStatus.NEEDS_ATTENTION,
+    ).count()
+    open_count = Saga.objects.filter(status__in=open_states).count()
+
+    oldest_age = 0
+    if needs_attention:
+        oldest = (
+            Saga.objects
+            .filter(status=SagaStatus.NEEDS_ATTENTION)
+            .aggregate(m=Min('updated_at'))['m']
+        )
+        if oldest:
+            oldest_age = int((timezone.now() - oldest).total_seconds())
+
+    try:
+        from apps.telemetry.metrics import (
+            saga_needs_attention, saga_oldest_needs_attention_age_seconds,
+            saga_open,
+        )
+        saga_needs_attention.set(needs_attention)
+        saga_oldest_needs_attention_age_seconds.set(oldest_age)
+        saga_open.set(open_count)
+    except Exception:
+        log.debug('saga gauge refresh failed', exc_info=True)
+
+    payload = {
+        'needs_attention': needs_attention,
+        'open': open_count,
+        'oldest_needs_attention_age_seconds': oldest_age,
+    }
+    critical_age = _needs_attention_critical_age()
+    if needs_attention > 0 or oldest_age > critical_age:
+        log.critical('sagas.needs_attention.CRITICAL', extra=payload)
+    else:
+        log.info('sagas.health.ok', extra=payload)
+
+    return payload

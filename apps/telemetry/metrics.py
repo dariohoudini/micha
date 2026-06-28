@@ -19,6 +19,16 @@ orders_created = Counter(
     'Orders created at checkout (any payment status).',
     ['payment_method'],
 )
+# Gross Merchandise Value — the "money flowing" business KPI (Monitoring
+# doc CH6). orders_created counts ORDERS; gmv_kz counts their VALUE. The
+# pair catches silent failures the order count alone misses: if orders
+# keep flowing but gmv_kz falls off a cliff, a pricing/total bug is
+# placing zero/wrong-value orders while every tech metric stays green.
+gmv_kz = Counter(
+    'micha_gmv_kz_total',
+    'Gross Merchandise Value (sum of order totals in Kz) at checkout.',
+    ['payment_method'],
+)
 orders_status_transitions = Counter(
     'micha_orders_status_transitions_total',
     'Order.status transitions.',
@@ -179,6 +189,61 @@ outbox_stale_retrying = Gauge(
     'in >24h. Indicates a handler stuck in a silent-failure loop or '
     'a downstream that keeps hard-failing past max-backoff.',
 )
+
+# ── Sagas (distributed-rollback engine — Rollback & Recovery CH19-22) ─
+# The saga is how a multi-step money flow (reserve stock → charge →
+# create order) is UNWOUND on partial failure: each step has a
+# compensating action run in reverse. These metrics make the recovery
+# engine's own health observable — without them, a saga that FAILED TO
+# UNWIND is silent (the worst kind of money-at-risk failure).
+saga_terminal_total = Counter(
+    'micha_saga_terminal_total',
+    'Sagas reaching a terminal state, by name and outcome. '
+    'outcome=completed (all forward steps succeeded) | compensated '
+    '(failed but unwound cleanly) | abandoned (timed out with nothing '
+    'to undo) | needs_attention (a COMPENSATION ITSELF FAILED — a '
+    'charge may be un-refunded or stock un-released; the alert-worthy '
+    'outcome).',
+    ['name', 'outcome'],
+)
+saga_needs_attention = Gauge(
+    'micha_saga_needs_attention',
+    'Current count of sagas stuck in needs_attention — a compensation '
+    'failed, so money/stock may be inconsistent. Must be 0; any '
+    'non-zero value should page on-call (Rollback & Recovery CH19/CH22 '
+    '— escalate money-at-risk; mirrors outbox_event_dead for the DLQ).',
+)
+saga_oldest_needs_attention_age_seconds = Gauge(
+    'micha_saga_oldest_needs_attention_age_seconds',
+    'Age of the oldest saga sitting in needs_attention. The longer a '
+    'failed compensation goes unresolved, the longer money/stock stays '
+    'inconsistent. Alert if this exceeds ~1h.',
+)
+saga_open = Gauge(
+    'micha_saga_open',
+    'Current count of non-terminal sagas (pending/running/waiting/'
+    'compensating). A steadily rising backlog = the runner/sweeper is '
+    'not keeping up (stuck distributed operations).',
+)
+
+
+# ── Audit-trail tamper-evidence (Audit/Compliance/SLA CH8) ──────────
+audit_chain_intact = Gauge(
+    'micha_audit_chain_intact',
+    '1 if the hash-chained audit trail verifies end-to-end, 0 if a break '
+    '(content tampering, deletion, or insertion) was detected. A 0 is a '
+    'SECURITY INCIDENT — the audit evidence has been altered — and must '
+    'page on-call (Audit/Compliance CH8; Monitoring CH23).',
+    ['log'],   # which audit trail, e.g. 'admin_action'
+)
+audit_chain_length = Gauge(
+    'micha_audit_chain_length',
+    'Number of records in the verified audit chain. A DROP between runs '
+    'means tail records were deleted (the chain still verifies, but rows '
+    'vanished) — also alert-worthy.',
+    ['log'],
+)
+
 
 # ── Search ──────────────────────────────────────────────────────────
 search_queries = Counter(

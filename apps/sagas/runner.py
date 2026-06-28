@@ -19,6 +19,44 @@ from .registry import get as get_def, SagaWait, SagaAbort
 logger = logging.getLogger('sagas')
 
 
+_TERMINAL = frozenset((
+    SagaStatus.COMPLETED, SagaStatus.FAILED,
+    SagaStatus.ABANDONED, SagaStatus.NEEDS_ATTENTION,
+))
+_OUTCOME = {
+    SagaStatus.COMPLETED: 'completed',
+    SagaStatus.FAILED: 'compensated',
+    SagaStatus.ABANDONED: 'abandoned',
+    SagaStatus.NEEDS_ATTENTION: 'needs_attention',
+}
+
+
+def _emit_terminal(s: 'Saga', prev_status) -> None:
+    """Increment the saga outcome counter the moment a saga crosses INTO a
+    terminal state in this invocation (so re-running a terminal saga never
+    double-counts). A needs_attention outcome — a compensation that itself
+    failed — is logged at ERROR so the alert pipeline pages on-call: it
+    means a charge may be un-refunded or stock un-released (Rollback &
+    Recovery CH19/CH22). Fully guarded — telemetry being absent or a
+    metrics error must never break saga execution."""
+    if s.status not in _TERMINAL or prev_status in _TERMINAL:
+        return
+    try:
+        from apps.telemetry.metrics import saga_terminal_total
+        saga_terminal_total.labels(
+            name=s.name, outcome=_OUTCOME[s.status],
+        ).inc()
+    except Exception:
+        logger.debug('saga terminal metric emit failed', exc_info=True)
+    if s.status == SagaStatus.NEEDS_ATTENTION:
+        logger.error(
+            'saga.needs_attention',
+            extra={'saga_id': s.id, 'saga_name': s.name,
+                   'ref_type': s.ref_type, 'ref_id': s.ref_id,
+                   'saga_error': s.error},
+        )
+
+
 def start(name: str, *, ref_type: str = '', ref_id: str = '',
           payload: dict | None = None) -> Saga:
     """Create a new saga instance in PENDING state. Caller should follow up
@@ -50,12 +88,14 @@ def run(saga_id) -> Saga | None:
             return s  # nothing to do for terminal states
 
         saga_def = get_def(s.name)
+        prev_status = s.status
 
         if s.status == SagaStatus.COMPENSATING:
             _compensate(s, saga_def)
         else:
             _advance_forward(s, saga_def)
 
+        _emit_terminal(s, prev_status)
         s.save()
         return s
 

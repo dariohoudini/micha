@@ -1,11 +1,25 @@
-from django.db import models
+from django.db import models, transaction
 from django.conf import settings
+from django.utils import timezone
 
 User = settings.AUTH_USER_MODEL
 
 
 class AdminActionLog(models.Model):
-    """Immutable audit trail of every admin action."""
+    """Immutable, hash-chained audit trail of every admin action.
+
+    Append-only is enforced at the model layer (``save`` rejects updates,
+    ``delete`` is blocked), and every row is hash-chained to its predecessor
+    so any later alteration, deletion, or insertion is *detectable* — the
+    difference between a log and evidence (Audit/Compliance/SLA doc CH8).
+    The chain is re-verified by ``audit.verify_admin_chain`` (apps/
+    admin_actions/tasks.py), which pages on-call if a break is found.
+    """
+    OUTCOMES = (
+        ('success', 'Success'),
+        ('failure', 'Failure'),
+        ('denied', 'Denied'),
+    )
     ACTION_TYPES = (
         ('suspend_user', 'Suspend User'),
         ('ban_user', 'Ban User'),
@@ -43,7 +57,21 @@ class AdminActionLog(models.Model):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=200, blank=True)
     metadata = models.JSONField(default=dict)
-    created_at = models.DateTimeField(auto_now_add=True)
+    # Explicit outcome (CH5 — a denied/failed action is security-relevant and
+    # must be audited too, not just successes).
+    outcome = models.CharField(max_length=16, choices=OUTCOMES, default='success')
+    # default= (not auto_now_add) so the timestamp is set before the row is
+    # hashed and is part of the integrity envelope — and recomputable on verify.
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    # ── Tamper-evidence (CH8) ────────────────────────────────────────
+    # Monotonic per-table sequence — ordering + gap detection (a missing seq
+    # = a deleted/suppressed record). Nullable only so the field can be added
+    # to an existing table; the data migration backfills it and save() always
+    # assigns it thereafter.
+    seq = models.PositiveBigIntegerField(null=True, blank=True, unique=True)
+    prev_hash = models.CharField(max_length=80, blank=True, default='')
+    entry_hash = models.CharField(max_length=80, blank=True, default='', db_index=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -51,7 +79,58 @@ class AdminActionLog(models.Model):
             models.Index(fields=['admin', '-created_at']),
             models.Index(fields=['action', '-created_at']),
             models.Index(fields=['target_type', 'target_id']),
+            models.Index(fields=['seq']),
         ]
+
+    def chain_payload(self):
+        """The canonical content that is hashed into the chain. Must be
+        deterministic and stable: the verification job recomputes the hash
+        from exactly these stored fields."""
+        return {
+            'seq': self.seq,
+            'admin_id': self.admin_id,
+            'action': self.action,
+            'target_type': self.target_type,
+            'target_id': self.target_id,
+            'target_repr': self.target_repr,
+            'note': self.note,
+            'ip_address': self.ip_address,
+            'user_agent': self.user_agent,
+            'metadata': self.metadata,
+            'outcome': self.outcome,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def save(self, *args, **kwargs):
+        # Append-only: an existing row can never be re-saved (CH8 / CH2 p2).
+        if self.pk:
+            raise ValueError(
+                'AdminActionLog is append-only and tamper-evident — existing '
+                'records cannot be modified (Audit/Compliance/SLA CH8).'
+            )
+        from apps.core.audit_chain import compute_entry_hash
+        if self.created_at is None:
+            self.created_at = timezone.now()
+        # Serialize chain extension: lock the current tail so two concurrent
+        # inserts can't fork the chain off the same prev_hash. On SQLite
+        # (dev/tests) select_for_update is a no-op but execution is serial.
+        with transaction.atomic():
+            last = (
+                AdminActionLog.objects
+                .select_for_update()
+                .order_by('-seq')
+                .first()
+            )
+            self.seq = (last.seq + 1) if (last and last.seq) else 1
+            self.prev_hash = last.entry_hash if last else ''
+            self.entry_hash = compute_entry_hash(self.chain_payload(), self.prev_hash)
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError(
+            'AdminActionLog is append-only — records cannot be deleted '
+            '(Audit/Compliance/SLA CH8 tamper-evidence).'
+        )
 
     @classmethod
     def log(cls, request, action, target, note='', metadata=None):

@@ -212,6 +212,9 @@ jobs:
             apps/ledger apps/idempotency apps/inventory \
             apps/fx apps/payments apps/outbox \
             apps/users apps/orders apps/disputes \
+            apps/core apps/payments_angola apps/sagas \
+            apps/admin_actions apps/seller_operations \
+            apps/telemetry apps/monitoring \
             --tb=long \
             --junit-xml=/tmp/pytest_report.xml \
             --cov=apps \
@@ -225,6 +228,15 @@ jobs:
         # We list the test directories explicitly rather than `pytest`
         # auto-discover so we KNOW which apps are covered. New apps
         # with tests must be added here — that's intentional friction.
+        #
+        # The second block (core/payments_angola/sagas/admin_actions/
+        # seller_operations/telemetry/monitoring) is the SECURITY &
+        # INTEGRITY layer: RLS isolation, payment webhook-replay, step-up
+        # auth, rate-limit fail-open/closed, RBAC matrix, audit-chain
+        # tamper-evidence, saga recovery, GMV/health metrics. These live
+        # in `tests_*.py` files — only collected because pytest.ini's
+        # python_files includes the `tests_*.py` glob. If you ever see
+        # the security count drop, check that glob first.
 
       - name: Write failing tests to job summary
         # GitHub renders $GITHUB_STEP_SUMMARY as markdown on the job
@@ -263,13 +275,13 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-  # ── Frontend: lint + build ────────────────────────────────────────
-  # Catches JSX syntax errors, missing imports, type mismatches that
-  # would only surface in the browser. Vite build is fast (~1min).
-  # When tests are added (Vitest + React Testing Library, Roadmap 5),
-  # they slot in here.
+  # ── Frontend: test + build ────────────────────────────────────────
+  # Vitest (jsdom + React Testing Library) runs the unit/contract suite
+  # first so a logic regression fails fast before the slower vite build.
+  # The build then catches JSX syntax errors, missing imports, and type
+  # mismatches that would only surface in the browser (~1min).
   test-frontend:
-    name: Frontend Build
+    name: Frontend Tests + Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -285,6 +297,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run tests (vitest)
+        # Vitest exits non-zero on any failing test, failing the job.
+        # ``npm test`` is ``vitest run`` (single pass, no watch).
+        run: npm test
 
       - name: Build (vite)
         run: npm run build

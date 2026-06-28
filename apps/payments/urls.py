@@ -4,7 +4,7 @@ from .views import (
     BankAccountListCreateView,
     BankAccountDetailView, RequestPayoutView,
     AdminPayoutListView, AdminPayoutActionView,
-    WebhookView,
+    WebhookView, InitiatePaymentView,
 )
 from .chargeback_views import (
     ChargebackInboundView, ChargebackListView, ChargebackDetailView,
@@ -27,6 +27,8 @@ urlpatterns = [
     path("payout/admin/", AdminPayoutListView.as_view(), name="admin-payouts"),
     path("payout/admin/<uuid:pk>/", AdminPayoutActionView.as_view(), name="admin-payout-action"),
     path("webhook/", WebhookView.as_view(), name="payment-webhook"),
+    # AliExpress Complete 2025 CH 12 — single dispatch for all methods.
+    path("initiate/", InitiatePaymentView.as_view(), name="payment-initiate"),
     path("payouts/schedule/", PayoutScheduleView.as_view(), name="payout-schedule"),
 
     # R2: chargeback workflow (PSP inbound + admin handling).

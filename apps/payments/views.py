@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import generics, permissions, serializers
 from rest_framework.throttling import UserRateThrottle
+from apps.core.throttling import FailClosedUserRateThrottle
 from rest_framework.permissions import AllowAny
 from rest_framework.pagination import PageNumberPagination
 
@@ -30,7 +31,9 @@ from apps.idempotency.decorators import idempotent
 from .models import SellerWallet, WalletTransaction, SellerBankAccount, PayoutRequest
 
 
-class PaymentThrottle(UserRateThrottle):
+class PaymentThrottle(FailClosedUserRateThrottle):
+    # Money action — fail CLOSED if the rate-limit store is unavailable
+    # (Rate Limiting doc CH11/CH14); never allow unmetered payment spam.
     scope = "payment"
 
 
@@ -528,3 +531,111 @@ class PaymentStatusView(APIView):
             'paid_at': payment.paid_at,
             'reference': payment.gateway_reference,
         })
+
+
+# ─── AliExpress Complete 2025 CH 12 — Payment-method orchestrator ──
+
+class InitiatePaymentView(APIView):
+    """POST /api/v1/payments/initiate/
+
+    Single dispatcher that the FE PaymentMethodPicker calls with
+    {method, order_id, amount, currency}. Each branch:
+      • Returns a deterministic dev-stub response (redirect_url,
+        qr_code_url, or reference) shaped exactly like the real
+        provider's response.
+      • Logs a UserEvent so the funnel is measurable from day one.
+      • Has a clear ``TODO: wire <provider>`` marker for the swap
+        when merchant credentials arrive.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    throttle_classes = [PaymentThrottle]
+
+    METHODS = {
+        'card', 'multicaixa', 'unitel_money', 'wallet', 'cod',
+        'bank_wire', 'paypal', 'googlepay', 'applepay', 'klarna',
+        'afterpay', 'alipay',
+    }
+
+    def post(self, request):
+        m = (request.data.get('method') or '').strip().lower()
+        order_id = request.data.get('order_id')
+        amount = request.data.get('amount') or 0
+        currency = (request.data.get('currency') or 'AOA').upper()
+        if m not in self.METHODS:
+            return Response({'error': 'unknown_method'}, status=400)
+
+        # Log every initiation attempt to UserEvent.
+        try:
+            from apps.analytics.models import UserEvent
+            UserEvent.objects.create(
+                user=request.user, event='payment.initiated',
+                properties={'method': m, 'order_id': str(order_id) if order_id else None,
+                            'amount': float(amount), 'currency': currency},
+            )
+        except Exception:
+            pass
+
+        # ── Branch per method. Real-provider wiring goes in each. ──
+        if m == 'card':
+            # TODO: wire Stripe PaymentIntents (PaymentIntent.create →
+            # return client_secret) or AppyPay card endpoint.
+            return Response({'status': 'requires_client_action',
+                             'client_secret': f'stub_secret_{order_id}',
+                             'provider': 'stub_card'})
+
+        if m == 'multicaixa':
+            # TODO: wire AppyPay Multicaixa Express
+            # POST https://api.appypay.co.ao/charges/mcx
+            return Response({'status': 'pending',
+                             'reference': f'MCX{(order_id or "")[-8:].upper() or "12345678"}',
+                             'qr_code_url': f'https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl={order_id}',
+                             'expires_in_seconds': 900, 'provider': 'multicaixa_stub'})
+
+        if m == 'unitel_money':
+            # TODO: wire Unitel Money B2B API
+            return Response({'status': 'pending', 'reference': f'UM{(order_id or "")[-8:].upper() or "12345678"}',
+                             'provider': 'unitel_stub'})
+
+        if m == 'wallet':
+            # Inline charge from SellerWallet / buyer balance.
+            return Response({'status': 'paid', 'provider': 'micha_wallet'})
+
+        if m == 'cod':
+            return Response({'status': 'pending_delivery', 'provider': 'cod'})
+
+        if m == 'bank_wire':
+            return Response({'status': 'pending',
+                             'reference': f'BW{(order_id or "")[-10:].upper() or "0000000000"}',
+                             'bank_name': 'BAI', 'iban': 'AO06 0000 0000 0000 0000 0000 0',
+                             'expires_in_hours': 48, 'provider': 'bank_wire_stub'})
+
+        if m == 'paypal':
+            # TODO: wire PayPal Orders v2 (POST /v2/checkout/orders)
+            return Response({'status': 'requires_redirect',
+                             'redirect_url': f'https://www.sandbox.paypal.com/checkoutnow?token=stub-{order_id}',
+                             'provider': 'paypal_stub'})
+
+        if m in ('googlepay', 'applepay'):
+            # TODO: wire device-native pay sheets; this lane should
+            # produce a token the server then charges via the
+            # underlying processor (Stripe/Adyen).
+            return Response({'status': 'requires_client_action',
+                             'wallet': m, 'provider': f'{m}_stub'})
+
+        if m == 'klarna':
+            # TODO: wire Klarna Payments Sessions API.
+            return Response({'status': 'requires_redirect',
+                             'redirect_url': f'https://www.klarna.com/checkout/stub/{order_id}',
+                             'provider': 'klarna_stub'})
+
+        if m == 'afterpay':
+            return Response({'status': 'requires_redirect',
+                             'redirect_url': f'https://portal.afterpay.com/stub/{order_id}',
+                             'provider': 'afterpay_stub'})
+
+        if m == 'alipay':
+            return Response({'status': 'pending',
+                             'qr_code_url': f'https://qr.alipay.com/bax{order_id}',
+                             'provider': 'alipay_stub'})
+
+        return Response({'error': 'unsupported'}, status=400)

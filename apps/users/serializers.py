@@ -144,7 +144,10 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         # FIX: Explicit fields — user cannot set internal fields via profile update
-        fields = ['full_name', 'city', 'province', 'bio', 'avatar', 'date_of_birth', 'gender']
+        fields = ['full_name', 'city', 'province', 'bio', 'avatar',
+                  'date_of_birth', 'gender',
+                  # AliExpress §3 — onboarding extras.
+                  'address', 'country', 'business_data']
 
     def validate_avatar(self, value):
         if value:

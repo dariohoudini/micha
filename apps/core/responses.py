@@ -173,7 +173,41 @@ def normalize_error_body(data, status_code: int, request=None) -> dict:
     the error-envelope middleware (for ad-hoc Response({...}) returns).
     Keeping the logic here means both paths produce byte-identical
     output for the same input.
+
+    The body is a SUPERSET that satisfies both the legacy frontend and the
+    API & Backend doc CH4 catalogue:
+      legacy : {error, detail, request_id, field_errors?}
+      CH4    : + {code, http_status, documentation_url, details?}
+    ``error`` stays the snake_case alias (frontend reads it); ``code`` is
+    the stable UPPERCASE catalogue code (spec clients switch on it).
     """
+    body = _legacy_error_body(data, status_code, request)
+    return _decorate_canonical(body, status_code)
+
+
+def _decorate_canonical(body: dict, status_code: int) -> dict:
+    """Add the CH4 canonical superset fields onto a legacy error body."""
+    from apps.core.error_catalogue import canonical_code, documentation_url
+    code = canonical_code(body.get('error'), status_code)
+    body['code'] = code
+    body['http_status'] = status_code
+    body['documentation_url'] = documentation_url(code)
+    # CH4 'details' list form derived from legacy field_errors.
+    field_errors = body.get('field_errors')
+    if field_errors and 'details' not in body:
+        details = []
+        for field, msgs in field_errors.items():
+            msg_list = msgs if isinstance(msgs, list) else [msgs]
+            for m in msg_list:
+                details.append({'field': field, 'code': 'invalid',
+                                'message': str(m)})
+        if details:
+            body['details'] = details
+    return body
+
+
+def _legacy_error_body(data, status_code: int, request=None) -> dict:
+    """Original normalizer — produces the legacy {error, detail, ...} body."""
     request_id = getattr(request, 'request_id', '-') if request else '-'
 
     # 5xx — never leak internal details. Always replace with generic.

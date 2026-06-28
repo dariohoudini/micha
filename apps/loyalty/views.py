@@ -124,3 +124,125 @@ class RecomputeMyTierView(APIView):
             'qualifying_spend': str(ut.qualifying_spend),
             'achieved_at': ut.achieved_at,
         })
+
+
+# ─── AliExpress 2025 CH 5 — Coins / Daily Check-In ─────────────────
+
+from datetime import timedelta as _td
+from django.utils import timezone as _tz
+from .models import DailyCheckIn, CoinTaskCompletion
+
+
+class DailyCheckInView(APIView):
+    """GET — today's status. POST — claim today's reward."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _streak(self, user):
+        """Compute current streak by walking back from yesterday."""
+        today = _tz.localdate()
+        d = today - _td(days=1)
+        streak = 0
+        # Cheap: scan back up to 60 days. Beyond that we treat as 0.
+        for _ in range(60):
+            if DailyCheckIn.objects.filter(user=user, check_date=d).exists():
+                streak += 1
+                d -= _td(days=1)
+            else:
+                break
+        return streak
+
+    def get(self, request):
+        u = request.user
+        today = _tz.localdate()
+        already = DailyCheckIn.objects.filter(user=u, check_date=today).first()
+        streak = self._streak(u) + (1 if already else 0)
+        next_reward = DailyCheckIn.reward_for_streak(streak if already else streak + 1)
+        return Response({
+            'already_checked_in': bool(already),
+            'streak_day': streak,
+            'today_coins': already.coins_awarded if already else 0,
+            'next_reward': next_reward,
+            'balance': u.loyalty_points,
+            'last_7': [
+                {
+                    'date': (today - _td(days=i)).isoformat(),
+                    'checked': DailyCheckIn.objects.filter(user=u, check_date=today - _td(days=i)).exists(),
+                }
+                for i in range(6, -1, -1)
+            ],
+        })
+
+    def post(self, request):
+        u = request.user
+        today = _tz.localdate()
+        if DailyCheckIn.objects.filter(user=u, check_date=today).exists():
+            return Response({'error': 'already_checked_in', 'detail': 'Already checked in today.'}, status=400)
+        streak = self._streak(u) + 1
+        coins = DailyCheckIn.reward_for_streak(streak)
+        DailyCheckIn.objects.create(user=u, check_date=today, coins_awarded=coins, streak_day=streak)
+        u.add_loyalty_points(coins)
+        # User Process Flow §20.8 telemetry.
+        try:
+            from apps.analytics.models import UserEvent
+            UserEvent.objects.create(user=u, event='coins.check_in',
+                properties={'streak': streak, 'coins': coins})
+        except Exception:
+            pass
+        return Response({'coins_awarded': coins, 'streak_day': streak, 'balance': u.loyalty_points}, status=201)
+
+
+class CoinTaskCompleteView(APIView):
+    """POST /loyalty/coins/tasks/ — declare a task complete.
+
+    The FE calls this when a user performs a coin-earning action.
+    Per-task daily caps are enforced here to prevent abuse.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    # Spec §5.3 daily caps and reward amounts.
+    REWARDS = {
+        'browse_3m':     (3, 1),    # max 1 / day
+        'add_wishlist':  (2, 5),
+        'share_product': (3, 3),
+        'follow_store':  (1, 5),
+        'lucky_forest':  (10, 1),
+        'coins_park':    (15, 3),
+        'merge_boss':    (5, 5),
+    }
+
+    def post(self, request):
+        u = request.user
+        task = (request.data.get('task') or '').strip()
+        if task not in self.REWARDS:
+            return Response({'error': 'invalid_task'}, status=400)
+        coins, daily_cap = self.REWARDS[task]
+        since = _tz.now() - _td(hours=24)
+        done_today = CoinTaskCompletion.objects.filter(user=u, task=task, completed_at__gte=since).count()
+        if done_today >= daily_cap:
+            return Response({'error': 'daily_cap', 'detail': 'Limite diário atingido.'}, status=400)
+        CoinTaskCompletion.objects.create(user=u, task=task, coins_awarded=coins)
+        u.add_loyalty_points(coins)
+        try:
+            from apps.analytics.models import UserEvent
+            UserEvent.objects.create(user=u, event='coins.task_done',
+                properties={'task': task, 'coins': coins})
+        except Exception:
+            pass
+        return Response({'coins_awarded': coins, 'balance': u.loyalty_points, 'remaining_today': daily_cap - done_today - 1})
+
+
+class TodayCoinTasksView(APIView):
+    """GET /loyalty/coins/tasks/ — today's available tasks + my progress."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        u = request.user
+        since = _tz.now() - _td(hours=24)
+        out = []
+        for task, (coins, cap) in CoinTaskCompleteView.REWARDS.items():
+            done = CoinTaskCompletion.objects.filter(user=u, task=task, completed_at__gte=since).count()
+            out.append({
+                'task': task, 'coins_per': coins,
+                'daily_cap': cap, 'done_today': done,
+                'remaining': max(0, cap - done),
+            })
+        return Response({'tasks': out, 'balance': u.loyalty_points})

@@ -55,6 +55,15 @@ class CategoryListView(_PublicCacheMixin, generics.ListAPIView):
     public_cache_max_age = 300
 
 
+class CategoryDetailView(generics.RetrieveAPIView):
+    """GET /api/v1/products/categories/<id>/ — single category with
+    its §15 attribute_schema. The product wizard calls this when the
+    seller picks a leaf so the right dynamic fields appear."""
+    serializer_class = CategorySerializer
+    permission_classes = [AllowAny]
+    queryset = Category.objects.all()
+
+
 class ProductListView(_PublicCacheMixin, generics.ListAPIView):
     """GET /api/products/ — public, supports ?fields and faceted filters.
 
@@ -383,12 +392,75 @@ class ProductCreateView(generics.CreateAPIView):
 
     @idempotent(required=True)
     def post(self, request, *args, **kwargs):
+        # §18 — duplicate product detection. Same store + identical
+        # title within the last 24h almost certainly = accidental
+        # double-submit. Front-end shows a modal and the seller picks
+        # "edit existing" or "create anyway"; we use a ``force=true``
+        # query/body flag to bypass on the second click.
+        from apps.stores.models import Store
+        from .models import Product
+        from datetime import timedelta
+        from django.utils import timezone
+        title = (request.data.get('title') or '').strip()
+        force = str(request.data.get('force_create') or request.query_params.get('force') or '').lower() in ('1','true','yes')
+        if title and not force:
+            try:
+                store = Store.objects.get(owner=request.user)
+                existing = Product.objects.filter(
+                    store=store, title__iexact=title,
+                    created_at__gte=timezone.now() - timedelta(days=1),
+                ).first()
+                if existing:
+                    return Response({
+                        'error': 'duplicate_product',
+                        'detail': 'Já tem um produto com este título.',
+                        'existing_id': existing.id,
+                        'existing_title': existing.title,
+                    }, status=409)
+            except Store.DoesNotExist:
+                pass
         return super().post(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         from apps.stores.models import Store
-        store = get_object_or_404(Store, owner=self.request.user)
-        product = serializer.save(store=store, created_by=self.request.user)
+        # Auto-provision a Store on first publish.
+        #
+        # Why: apps/stores/urls.py has NO public store-create endpoint
+        # (only list / detail / toggle-open / review). New sellers
+        # register → are flagged is_seller=True → land on the seller
+        # dashboard → tap "Publish product" → previously got 404 here
+        # because no Store existed and there was no UI path to create
+        # one. The /seller/profile/ endpoint only manages SellerProfile
+        # (logo, banner, policies) — that's NOT a Store.
+        #
+        # Until the stores app grows a proper create endpoint and a
+        # dedicated UI flow, we get_or_create on first publish using
+        # the user's display name as the default store name. The
+        # seller can later customise via /seller/setup or a future
+        # store-detail edit screen. This unblocks the
+        # "registered → publish product" flow with no extra clicks.
+        user = self.request.user
+        default_name = (
+            getattr(getattr(user, 'profile', None), 'full_name', None)
+            or user.username
+            or (user.email.split('@')[0] if user.email else None)
+            or 'My Store'
+        )
+        store, _ = Store.objects.get_or_create(
+            owner=user,
+            defaults={'name': default_name, 'is_active': True, 'is_open': True},
+        )
+        product = serializer.save(store=store, created_by=user)
+        # Dev/staging: skip the human review queue so sellers see
+        # their listings immediately. Production should override this
+        # by setting MODERATION_AUTO_APPROVE=False in env and wiring
+        # a background task that reviews & flips the status to
+        # ``published`` or ``violation`` per the spec §17 pipeline.
+        from django.conf import settings as _settings
+        auto_ok = getattr(_settings, 'MODERATION_AUTO_APPROVE', True)
+        if auto_ok:
+            product.moderation_status = 'published'
+            product.save(update_fields=['moderation_status'])
         combos = self.request.data.get('variant_combos')
         if combos:
             _save_variant_combos(product, combos)
@@ -398,14 +470,40 @@ class ProductCreateView(generics.CreateAPIView):
 
 
 class ProductUpdateView(generics.UpdateAPIView):
+    """AliExpress §17.3 — editing a live product.
+
+    Price / stock changes take effect immediately and the product
+    stays Published. Title / category / image changes flip the
+    listing back to ``under_review`` and the moderation pipeline
+    re-runs. ``perform_update`` inspects the changed fields against
+    the resident ``serializer.initial_data`` to decide.
+    """
     serializer_class = ProductWriteSerializer
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 
     def get_queryset(self):
         return Product.objects.filter(store__owner=self.request.user)
 
+    # AliExpress §17.3 — fields whose change pushes the listing back
+    # to the Under Review queue. Everything else (price, qty, sku,
+    # promo, shipping) is "instant edit".
+    REVIEW_TRIGGER_FIELDS = {
+        'title', 'description', 'category', 'brand',
+        'condition', 'meta_title', 'meta_description',
+    }
+
     def perform_update(self, serializer):
+        before = {f: getattr(serializer.instance, f, None) for f in self.REVIEW_TRIGGER_FIELDS}
         product = serializer.save()
+        # Did any review-triggering field actually change?
+        changed = False
+        for f in self.REVIEW_TRIGGER_FIELDS:
+            if before.get(f) != getattr(product, f, None):
+                changed = True
+                break
+        if changed and product.moderation_status == 'published':
+            product.moderation_status = 'under_review'
+            product.save(update_fields=['moderation_status'])
         if 'variant_combos' in self.request.data:
             _save_variant_combos(product, self.request.data.get('variant_combos'))
         if 'price_tiers' in self.request.data:

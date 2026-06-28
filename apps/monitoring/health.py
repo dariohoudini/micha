@@ -40,6 +40,35 @@ def healthz(request):
 
 
 @require_GET
+def build_info(request):
+    """Version visibility (CI/CD & VC doc CH13/CH20).
+
+    Answers "what code is running in prod right now?" — essential for
+    incident response. The CI pipeline stamps the image with the commit
+    SHA, semantic version, and build timestamp (image labels / build args,
+    CH12-13) and the deploy injects them as env vars; this endpoint surfaces
+    them. Falls back to safe placeholders in dev where they aren't set.
+
+    No dependencies, no auth — it's operational metadata (no secrets).
+    """
+    import os
+
+    from django.conf import settings
+
+    settings_module = os.environ.get('DJANGO_SETTINGS_MODULE', 'config.settings')
+    environment = ('development' if getattr(settings, 'DEBUG', False)
+                   else os.environ.get('MICHA_ENV', 'production'))
+    return JsonResponse({
+        'service': 'micha-backend',
+        'version': os.environ.get('APP_VERSION', 'dev'),
+        'commit': os.environ.get('GIT_SHA', os.environ.get('GIT_COMMIT', 'unknown')),
+        'build_time': os.environ.get('BUILD_TIME', 'unknown'),
+        'settings_module': settings_module,
+        'environment': environment,
+    }, status=200)
+
+
+@require_GET
 def readyz(request):
     """Readiness — DB hard (must work to serve), cache/redis/celery soft.
 

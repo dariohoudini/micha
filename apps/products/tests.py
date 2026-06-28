@@ -47,13 +47,15 @@ class TestProductListing:
 class TestSellerProductManagement:
 
     def test_seller_can_create_product(self, seller_client, store, category):
+        # Create is @idempotent(required=True) — the client must send the
+        # key (the app's axios client auto-attaches it on this path).
         res = seller_client.post('/api/v1/products/create/', {
             'title': 'iPhone 15 Pro',
             'description': 'Smartphone Apple com chip A17 Pro',
             'price': '250000.00',
             'category': category.id,
             'quantity': 5,
-        })
+        }, HTTP_IDEMPOTENCY_KEY='test-create-product-001')
         assert res.status_code == 201
 
     def test_buyer_cannot_create_product(self, buyer_client, category):

@@ -22,6 +22,12 @@ class Category(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='custom_categories')
     ordering = models.PositiveIntegerField(default=0)
 
+    # AliExpress §15 — per-category attribute schema.
+    # Shape: [{key, label, type: 'text|select|multiselect|number',
+    #          required: bool, options: [str], unit: str|null}]
+    # Frontend renders fields dynamically from this list.
+    attribute_schema = models.JSONField(default=list, blank=True)
+
     class Meta:
         unique_together = ('owner', 'name')
         ordering = ['ordering', 'name']
@@ -187,6 +193,48 @@ class Product(models.Model):
     is_featured = models.BooleanField(default=False)
     is_boosted = models.BooleanField(default=False)
     publish_at = models.DateTimeField(null=True, blank=True)
+
+    # AliExpress-style moderation lifecycle (process flow §17):
+    # under_review → published → (deactivated | violation | sold_out)
+    # ``violation`` may be appealed; ``appeal_*`` track that sub-state.
+    # ``is_active`` is still the authoritative "show to buyers" gate;
+    # this field is the seller-facing label & admin workflow signal.
+    MODERATION_CHOICES = (
+        ('under_review',   'Under Review'),
+        ('published',      'Published'),
+        ('deactivated',    'Deactivated'),
+        ('sold_out',       'Sold Out'),
+        ('violation',      'Violation'),
+        ('appeal_pending', 'Appeal Under Review'),
+        ('appeal_approved','Appeal Approved'),
+        ('appeal_rejected','Appeal Rejected'),
+    )
+    moderation_status = models.CharField(
+        max_length=20, choices=MODERATION_CHOICES,
+        default='under_review', db_index=True,
+    )
+    moderation_note = models.TextField(blank=True, default='')
+
+    # AliExpress §14 — optional FK to a reusable shipping template.
+    shipping_template = models.ForeignKey(
+        'shipping.ShippingTemplate', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='products',
+    )
+
+    # §12.3 Promotional pricing — flash price window.
+    promo_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    promo_start = models.DateTimeField(null=True, blank=True)
+    promo_end = models.DateTimeField(null=True, blank=True)
+    promo_max_units = models.PositiveIntegerField(null=True, blank=True)
+
+    # §15 — category-driven attributes stored opaquely; the leaf
+    # category's ``attribute_schema`` defines the expected keys.
+    attributes = models.JSONField(default=dict, blank=True)
+
+    # AliExpress Complete 2025 CH 23.2 — seller-level promotional flag.
+    # When true, the product card and PDP show a "Envio Grátis" badge
+    # and the cart applies 0 shipping for this item.
+    free_shipping = models.BooleanField(default=False, db_index=True)
 
     warranty_info = models.TextField(blank=True, null=True)
     return_policy = models.TextField(blank=True, null=True)

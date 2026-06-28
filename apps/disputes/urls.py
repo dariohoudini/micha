@@ -11,6 +11,10 @@ from .views import (
 )
 urlpatterns = [
     path("open/", OpenDisputeView.as_view()),
+    # User Process Flow §19 — Returns flow alias. Routes to the same
+    # OpenDisputeView so a single atomic pipeline (evidence snapshot,
+    # EarningsHold freeze, outbox publish) handles both intents.
+    path("returns/", OpenDisputeView.as_view(), name="returns-open"),
     path("my/", MyDisputesView.as_view()),
     path("<uuid:pk>/", DisputeDetailView.as_view()),
     path("<uuid:pk>/message/", DisputeMessageView.as_view()),

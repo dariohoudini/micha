@@ -46,6 +46,14 @@ class SellerVerification(models.Model):
     id_document = models.ImageField(upload_to='verification/documents/')
     selfie = models.ImageField(upload_to='verification/selfies/')
 
+    # AliExpress §4.2 — business-account additional documents.
+    # All optional; sellers register as individuals by default.
+    business_licence = models.FileField(upload_to='verification/business_licence/', blank=True, null=True)
+    bank_proof = models.FileField(upload_to='verification/bank_proof/', blank=True, null=True)
+    power_of_attorney = models.FileField(upload_to='verification/poa/', blank=True, null=True)
+    id_document_back = models.ImageField(upload_to='verification/documents/', blank=True, null=True)
+    is_business_account = models.BooleanField(default=False)
+
     status = models.CharField(max_length=15, choices=STATUS, default='pending')
     rejection_reason = models.TextField(blank=True)
     reviewed_by = models.ForeignKey(

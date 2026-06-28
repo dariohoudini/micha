@@ -235,3 +235,147 @@ def enforce_return_deadlines(batch_size: int = 200):
             pass
 
     return {'auto_approved': auto_approved, 'cancelled': cancelled}
+
+
+@shared_task(name='orders.auto_confirm_delivered')
+def auto_confirm_delivered():
+    """User Process Flow §10.6 — buyer auto-confirms after 7 days.
+
+    Runs daily. For every order in ``delivered`` status whose
+    delivered_at is older than 7 days, mark as ``completed`` so the
+    seller payout proceeds. Logs each transition to UserEvent.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import Order
+    from apps.analytics.models import UserEvent
+
+    cutoff = timezone.now() - timedelta(days=7)
+    qs = Order.objects.filter(status='delivered', delivered_at__lte=cutoff)
+    n = 0
+    for order in qs.iterator():
+        try:
+            order.status = 'completed'
+            order.save(update_fields=['status'])
+            UserEvent.objects.create(
+                user=order.buyer, event='order.auto_confirmed',
+                properties={'order_id': str(order.id), 'reason': 'timeout_7d'},
+            )
+            n += 1
+        except Exception:
+            pass
+    return {'auto_confirmed': n}
+
+
+# ─── AliExpress Technical Engineering Workflow CH 9.3 + CH 10.1 ────
+
+@shared_task(name='orders.expire_unpaid_orders')
+def expire_unpaid_orders():
+    """Cron: cancel pending-payment orders that exceed the per-method
+    TTL. Spec §9.3:
+       card / paypal / klarna     → 1 hour
+       atm_reference / bank_wire   → 48 hours
+       mobile money (multicaixa / unitel) → 15 minutes
+    Inventory is restored via the cancellation handler.
+    """
+    from datetime import timedelta as _td
+    from django.utils import timezone as _tz
+    from django.db.models import Q
+    from .models import Order
+    from .state_machine import transition
+    now = _tz.now()
+    fast   = ('multicaixa', 'unitel_money', 'mobile_money')
+    medium = ('card', 'googlepay', 'applepay', 'paypal', 'klarna', 'afterpay', 'alipay')
+    slow   = ('bank_wire', 'atm_reference', 'cod')
+    # Order.payment is a OneToOne reverse relation to Payment
+    # (apps/orders/models.py). The method field lives there; orders
+    # without a Payment row default to the slowest TTL so we don't
+    # kill a legit order mid-creation.
+    qs = Order.objects.filter(status='pending', payment_status='pending').filter(
+        Q(payment__method__in=fast,   created_at__lt=now - _td(minutes=15)) |
+        Q(payment__method__in=medium, created_at__lt=now - _td(hours=1)) |
+        Q(payment__method__in=slow,   created_at__lt=now - _td(hours=48)) |
+        Q(payment__isnull=True,       created_at__lt=now - _td(hours=48))
+    )[:500]
+    expired = 0
+    for o in qs:
+        try:
+            transition(o, 'payment_failed', actor=None, note='Payment TTL expired',
+                       source='expire_unpaid_orders_cron')
+            try:
+                from apps.analytics.models import UserEvent
+                UserEvent.objects.create(user=o.buyer, event='order.payment_expired',
+                    properties={'order_id': str(o.id), 'method': o.payment_method})
+            except Exception:
+                pass
+            expired += 1
+        except Exception:
+            pass
+    return {'expired': expired}
+
+
+@shared_task(name='orders.check_seller_shipping_deadlines')
+def check_seller_shipping_deadlines():
+    """Cron: warn sellers whose confirmed orders exceed processing-time
+    SLA, and auto-cancel after a 24h grace if still unshipped. Spec
+    §10.1. Compensation: restore inventory + initiate refund + bump
+    seller's auto-cancel rate metric (gates future Choice eligibility).
+    """
+    from datetime import timedelta as _td
+    from django.utils import timezone as _tz
+    from .models import Order
+    from .state_machine import transition
+    now = _tz.now()
+    warned = 0
+    cancelled = 0
+
+    # Stage 1: warn newly overdue.
+    overdue = Order.objects.filter(status='confirmed', shipping_overdue_notified=False)[:500]
+    for o in overdue:
+        # Each order has processing_time_days stored on Product; fall back to 3.
+        processing_days = 3
+        try:
+            first_item = o.items.first()
+            processing_days = int(getattr(first_item.product, 'processing_time_days', None) or 3)
+        except Exception:
+            pass
+        deadline = (o.confirmed_at or o.created_at) + _td(days=processing_days)
+        if now < deadline:
+            continue
+        # Mark warned + push to seller. We rely on the existing
+        # notification dispatcher (apps.notifications) — best-effort.
+        try:
+            o.shipping_overdue_notified = True
+            o.overdue_notified_at = now
+            o.save(update_fields=['shipping_overdue_notified', 'overdue_notified_at'])
+            warned += 1
+            try:
+                from apps.analytics.models import UserEvent
+                UserEvent.objects.create(user=o.seller, event='seller.ship_deadline_missed',
+                    properties={'order_id': str(o.id), 'days_overdue': (now - deadline).days})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # Stage 2: 24h after notification with no shipment → auto-cancel.
+    escalate = Order.objects.filter(
+        status='confirmed', shipping_overdue_notified=True,
+        overdue_notified_at__lt=now - _td(hours=24),
+    )[:500]
+    for o in escalate:
+        try:
+            transition(o, 'cancelled', actor=None,
+                       note='Auto-cancelled: seller failed to ship within SLA',
+                       source='seller_sla_escalation_cron')
+            # Inventory restore is handled by the cancellation handler.
+            try:
+                from apps.analytics.models import UserEvent
+                UserEvent.objects.create(user=o.buyer, event='order.auto_cancelled_seller_failed',
+                    properties={'order_id': str(o.id), 'seller_id': o.seller_id})
+            except Exception:
+                pass
+            cancelled += 1
+        except Exception:
+            pass
+    return {'warned': warned, 'auto_cancelled': cancelled}

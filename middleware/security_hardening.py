@@ -123,10 +123,17 @@ class SecurityHardeningMiddleware:
         # response is ever misinterpreted as HTML by an old client.
         ctype = response.get('Content-Type', '')
         if 'application/json' in ctype or request.path.startswith('/api/'):
+            # AliExpress Security Engineering Workflow §5.6 —
+            # ``report-uri`` directs browsers to POST violation
+            # reports to our own endpoint, which writes them to
+            # SecurityAuditLog. Useful even on a strict-deny CSP:
+            # any blocked attempt to render this JSON as HTML
+            # produces an actionable signal in the audit log.
             response.setdefault(
                 'Content-Security-Policy',
                 "default-src 'none'; frame-ancestors 'none'; "
-                "base-uri 'none'; form-action 'none'"
+                "base-uri 'none'; form-action 'none'; "
+                "report-uri /api/v1/security/csp-report/"
             )
 
         # Remove server info headers

@@ -76,6 +76,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     date_joined = models.DateTimeField(auto_now_add=True)
     is_seller = models.BooleanField(default=False)
     is_verified_seller = models.BooleanField(default=False)
+    # AliExpress Technical Engineering Workflow CH 1.6 — bumping
+    # this field invalidates EVERY existing JWT for this user. Used
+    # by: password change, admin suspension, security incident reset.
+    # JWT claim ``jwt_version`` is checked on every protected
+    # endpoint via the auth middleware; mismatch ⇒ 401.
+    jwt_version = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=10, choices=STATUS, default='active')
     roles = models.ManyToManyField(Role, blank=True, related_name='users')
 
@@ -241,7 +247,20 @@ class User(AbstractBaseUser, PermissionsMixin):
     def _generate_otp(self):
         return ''.join(random.choices(string.digits, k=6))
 
-    def generate_email_otp(self):
+    def generate_email_otp(self, *, _force=False):
+        # AliExpress Technical Engineering Workflow §2.2 — OTP 60s
+        # idempotency: if an OTP was issued within the last 60s, we
+        # do NOT mint a new one. Reduces SMS/email cost on rage-clicks
+        # and prevents users from being locked out by token churn.
+        # Pass _force=True only from the registration confirmation
+        # flow that already knows it needs a fresh OTP.
+        if not _force and self.email_otp_expires and (
+            self.email_otp_expires - timedelta(minutes=10) + timedelta(seconds=60)
+            > timezone.now()
+        ):
+            # Return None so the caller knows to NOT re-send the
+            # email; the existing OTP is still valid in the inbox.
+            return None
         otp = self._generate_otp()
         self.email_otp_hash = self._hash_otp(otp)
         self.email_otp_expires = timezone.now() + timedelta(minutes=10)
@@ -357,6 +376,14 @@ class UserProfile(models.Model):
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
     date_of_birth = EncryptedCharField(max_length=100, blank=True, null=True)
     gender = models.CharField(max_length=10, blank=True, null=True)
+
+    # AliExpress §3 — Business / Seller registration extras. Optional
+    # for buyer-only accounts; sellers fill them in during onboarding.
+    address = models.TextField(blank=True, default='')
+    country = models.CharField(max_length=80, blank=True, default='Angola')
+    # business_* are only meaningful when account_type='business'
+    business_data = models.JSONField(default=dict, blank=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self): return f"Profile({self.user.email})"

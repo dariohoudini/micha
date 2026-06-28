@@ -9,6 +9,7 @@ from rest_framework import generics, permissions, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
+from rest_framework.parsers import MultiPartParser
 
 from apps.users.permissions import IsNotSuspended, IsBuyerOfOrder, IsSellerOrSuperuser
 from apps.idempotency.decorators import idempotent
@@ -151,11 +152,17 @@ class CheckoutView(APIView):
             log_security_event("checkout_error", request=request, details={"error": str(e)[:200]})
             return Response({'error': 'server_error', "detail": "Checkout failed."}, status=500)
 
-        # Telemetry: orders_created counter, labelled by payment method
+        # Telemetry: orders_created (count) + gmv_kz (value) — the pair
+        # that catches a silent "Buy button broken / orders at zero value"
+        # failure tech metrics miss (Monitoring doc CH6).
         try:
-            from apps.telemetry.metrics import orders_created
+            from apps.telemetry.metrics import orders_created, gmv_kz
             for o in orders:
-                orders_created.labels(payment_method=getattr(o, 'payment_method', '') or 'unknown').inc()
+                pm = getattr(o, 'payment_method', '') or 'unknown'
+                orders_created.labels(payment_method=pm).inc()
+                total = getattr(o, 'total', None)
+                if total is not None:
+                    gmv_kz.labels(payment_method=pm).inc(float(total))
         except Exception:
             pass
 
@@ -320,6 +327,41 @@ class ConfirmDeliveryView(APIView):
             except Exception:
                 pass
         return Response({"detail": "Delivery confirmed."})
+
+
+class ExtendProtectionView(APIView):
+    """POST /api/v1/orders/<pk>/extend-protection/
+
+    AliExpress Complete 2025 CH 13.2 — buyer one-time +15 day
+    extension of the Buyer Protection window. Allowed only in the
+    last 5 days of the existing deadline and only once per order
+    (``Order.protection_extended`` flag enforces single-use).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def post(self, request, pk):
+        from django.utils import timezone as _tz
+        from datetime import timedelta as _td
+        order = get_object_or_404(Order, pk=pk, buyer=request.user)
+        if order.protection_extended:
+            return Response({'error': 'already_extended', 'detail': 'Já estendeu esta protecção.'}, status=400)
+        if order.status not in ('shipped', 'delivered'):
+            return Response({'error': 'invalid_status', 'detail': 'Estado do pedido não permite extensão.'}, status=400)
+        deadline = order.protection_deadline_at or (_tz.now() + _td(days=30))
+        days_left = (deadline - _tz.now()).days
+        if days_left > 5:
+            return Response({'error': 'too_early', 'detail': f'Só pode estender nos últimos 5 dias ({days_left} restantes).'}, status=400)
+        order.protection_deadline_at = deadline + _td(days=15)
+        order.protection_extended = True
+        order.save(update_fields=['protection_deadline_at', 'protection_extended'])
+        # User Process Flow §20.8 audit.
+        try:
+            from apps.analytics.models import UserEvent
+            UserEvent.objects.create(user=request.user, event='order.protection_extended',
+                properties={'order_id': str(order.id), 'new_deadline': order.protection_deadline_at.isoformat()})
+        except Exception:
+            pass
+        return Response({'detail': 'Protecção estendida em 15 dias.', 'new_deadline': order.protection_deadline_at})
 
 
 class SellerOrderListView(generics.ListAPIView):
@@ -799,3 +841,82 @@ class AdminReturnOverrideView(APIView):
             note=note, admin_override=True,
         )
         return Response(_serialize_return(ret, request))
+
+
+# ─── AliExpress Complete 2025 CH 21.2 — Batch Ship ─────────────────
+
+class BatchShipView(APIView):
+    """POST /api/v1/orders/seller/batch-ship/  (multipart)
+
+    Seller uploads a CSV with header: order_id,tracking_number,carrier
+    Each row attempts to flip the order to ``shipped`` with the given
+    tracking. Failures are reported per-row so the seller can fix &
+    re-upload only the rejected rows. Owner-scoped: only the seller's
+    own orders can be updated.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        import csv as _csv
+        f = request.FILES.get('file')
+        if not f:
+            return Response({'error': 'file required (csv)'}, status=400)
+        try:
+            text = f.read().decode('utf-8', errors='ignore').splitlines()
+        except Exception:
+            return Response({'error': 'unreadable file'}, status=400)
+        reader = _csv.DictReader(text)
+        results = {'ok': [], 'failed': []}
+        for i, row in enumerate(reader, start=2):  # 1 = header
+            oid = (row.get('order_id') or '').strip()
+            track = (row.get('tracking_number') or '').strip()
+            carrier = (row.get('carrier') or '').strip() or 'AliExpress Standard'
+            if not oid or not track:
+                results['failed'].append({'line': i, 'reason': 'missing order_id or tracking'})
+                continue
+            try:
+                order = Order.objects.get(pk=oid, seller=request.user)
+            except Order.DoesNotExist:
+                results['failed'].append({'line': i, 'order_id': oid, 'reason': 'not_found_or_not_yours'})
+                continue
+            if order.status != 'confirmed':
+                results['failed'].append({'line': i, 'order_id': oid, 'reason': f'status={order.status}'})
+                continue
+            order.tracking_number = track
+            order.carrier = carrier
+            order.update_status('shipped', changed_by=request.user, note=f'Batch ship · CSV line {i}')
+            order.save(update_fields=['tracking_number', 'carrier'])
+            results['ok'].append({'line': i, 'order_id': oid})
+        # Log to UserEvent.
+        try:
+            from apps.analytics.models import UserEvent
+            UserEvent.objects.create(user=request.user, event='seller.batch_ship',
+                properties={'ok': len(results['ok']), 'failed': len(results['failed'])})
+        except Exception:
+            pass
+        return Response(results)
+
+
+# ─── AliExpress Complete 2025 CH 21.2 — Per-seller checkout note ──
+
+class OrderMessagesView(APIView):
+    """POST /api/v1/orders/<pk>/buyer-message/
+
+    Buyer-attached free-text note to the order seller. Spec CH 11
+    "Leave Message" textarea. Stored on `Order.notes`. Length-capped.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, buyer=request.user)
+        msg = (request.data.get('message') or '').strip()[:500]
+        order.notes = msg
+        order.save(update_fields=['notes'])
+        try:
+            from apps.analytics.models import UserEvent
+            UserEvent.objects.create(user=request.user, event='order.buyer_message',
+                properties={'order_id': str(order.id), 'len': len(msg)})
+        except Exception:
+            pass
+        return Response({'detail': 'Mensagem guardada.'})

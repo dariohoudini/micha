@@ -6,19 +6,69 @@ from django.db.models import Avg
 from django.shortcuts import get_object_or_404
 
 from .models import Store, StoreReview
-from .serializers import StoreSerializer, StoreReviewSerializer, PublicStoreSerializer
+from .serializers import (
+    StoreSerializer, StoreReviewSerializer, PublicStoreSerializer,
+    MyStoreWriteSerializer,
+)
 from apps.products.models import Product
 from apps.products.serializers import PublicProductSerializer
-from apps.users.permissions import IsNotSuspended
+from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser
 
 
-class MyStoreListView(generics.ListAPIView):
-    """GET /api/stores/my/ — Authenticated user's own stores."""
-    serializer_class = StoreSerializer
-    permission_classes = [IsAuthenticated]
+class MyStoreListCreateView(generics.ListCreateAPIView):
+    """GET  /api/v1/stores/my/  — list authenticated seller's stores.
+    POST /api/v1/stores/my/  — create a new store owned by them.
+
+    Why this view exists
+    ────────────────────
+    Until this lived here, the stores app had NO create endpoint at
+    all (only public list/detail + toggle-open). The SellerSetupPage
+    UI was therefore PUTting to /seller/profile/ — which writes a
+    SellerProfile row (logo / banner / policies), NOT a Store —
+    making every "Save" look like it succeeded while no Store row
+    was ever inserted. Result: sellers couldn't publish products
+    because ProductCreateView couldn't find a Store, and the dashboard
+    couldn't show one.
+
+    ``owner`` is forced to ``request.user`` on create so a malicious
+    payload cannot assign the new store to a different user. The
+    write serializer marks ``owner`` read-only as a second guard.
+    """
+    permission_classes = [IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
+
+    def get_serializer_class(self):
+        # Use the richer read serializer for GET (counts + names),
+        # the lean write serializer for POST.
+        if self.request.method == 'POST':
+            return MyStoreWriteSerializer
+        return StoreSerializer
 
     def get_queryset(self):
         return Store.objects.filter(owner=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+
+class MyStoreDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """GET/PATCH/PUT/DELETE /api/v1/stores/my/<pk>/.
+
+    Owner-scoped — the queryset is filtered to stores belonging to
+    ``request.user`` so a seller can't read or mutate another
+    seller's store by guessing its id. Returns 404 (not 403) on
+    cross-tenant access to avoid leaking ``store_id`` existence.
+    """
+    serializer_class = MyStoreWriteSerializer
+    permission_classes = [IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
+
+    def get_queryset(self):
+        return Store.objects.filter(owner=self.request.user)
+
+
+# Backwards-compat alias. Older imports / templates may still
+# reference ``MyStoreListView`` — keep it pointing at the new
+# combined view so we don't break them.
+MyStoreListView = MyStoreListCreateView
 
 
 class PublicStoreListView(generics.ListAPIView):

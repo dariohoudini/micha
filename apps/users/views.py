@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+from apps.core.throttling import FailClosedAnonRateThrottle
 
 from .models import UserProfile, Role, UserSession, UserActivityLog, UserBadge, ReferralReward
 from .serializers import (
@@ -34,11 +35,13 @@ logger = logging.getLogger('micha')
 
 # ── Throttles ─────────────────────────────────────────────────────────────────
 
-class LoginThrottle(AnonRateThrottle):
+class LoginThrottle(FailClosedAnonRateThrottle):
+    # Security-critical: if the counter store (Redis) is down we DENY rather
+    # than allow an unmetered brute-force window (Rate Limiting CH11/CH14).
     scope = 'login'
 
 
-class OTPThrottle(AnonRateThrottle):
+class OTPThrottle(FailClosedAnonRateThrottle):
     """
     FIX: Rate limit per email address, not per IP.
     Behind VPN/proxy all requests look like different IPs.
@@ -388,6 +391,15 @@ class MyTokenObtainPairView(TokenObtainPairView):
                 failed_login_attempts=0, locked_until=None,
                 last_login_ip=ip, last_login_device=ua,
             )
+            # AliExpress Security Engineering Workflow §13.1 — record
+            # the device fingerprint and email the user if this is a
+            # new device we've never seen on this account.
+            try:
+                from apps.security.models import record_device_login
+                record_device_login(authenticated, request)
+            except Exception:
+                # Must never crash the auth flow.
+                pass
             try:
                 UserSession.create_session(
                     authenticated, device=ua, ip_address=ip,
@@ -653,6 +665,13 @@ class ChangePasswordView(APIView):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        # AliExpress Security Engineering Workflow §8.3 — bump
+        # jwt_version so EVERY existing access token for this user
+        # fails the next auth check. Refresh tokens get a sibling
+        # purge (apps/users/sessions.py logout-all flow).
+        from django.db.models import F
+        from apps.users.models import User as _U
+        _U.objects.filter(pk=request.user.pk).update(jwt_version=F('jwt_version') + 1)
         log_security_event('password_changed', request=request, details={'user_id': request.user.id})
         _log(request.user, 'password_changed', request)
         return Response({'detail': 'Password changed. All other sessions have been logged out.'})

@@ -6,6 +6,10 @@ from .cohorts import CohortRetentionView
 
 urlpatterns = [
     path('track/', TrackFunnelEventView.as_view(), name='track'),
+    # User Process Flow §20.8 — every-touch telemetry sink.
+    path('events/', TrackUserEventView.as_view(), name='track-events'),
+    # AliExpress 2025 CH 1.4 + CH 26.3 — public app config (no auth)
+    path('config/', AppConfigView.as_view(), name='app-config'),
     path('funnel/', FunnelAnalyticsView.as_view(), name='funnel'),
     path('seller/performance/', SellerPerformanceView.as_view(),
          name='seller-performance'),

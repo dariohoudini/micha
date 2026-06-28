@@ -147,3 +147,96 @@ class CouponRedemption(models.Model):
 
     def __str__(self):
         return f'{self.coupon.code} → order {self.order_id} ({self.status})'
+
+
+class UserCoupon(models.Model):
+    """User Process Flow §16.2 — buyer's "collected" coupons wallet.
+
+    Separate from Coupon (the source-of-truth definition) and from
+    CouponRedemption (the per-order audit). A UserCoupon row means
+    "this buyer has saved this coupon for later use". Status flips
+    to ``used`` when a CouponRedemption lands.
+    """
+    STATUS = (
+        ('available', 'Available'),
+        ('used', 'Used'),
+        ('expired', 'Expired'),
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='collected_coupons', db_index=True)
+    coupon = models.ForeignKey(Coupon, on_delete=models.CASCADE, related_name='collected_by', db_index=True)
+    status = models.CharField(max_length=12, choices=STATUS, default='available', db_index=True)
+    collected_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    order_id = models.CharField(max_length=80, blank=True)
+
+    class Meta:
+        unique_together = ('user', 'coupon')
+        ordering = ['-collected_at']
+        indexes = [models.Index(fields=['user', 'status'])]
+
+    def __str__(self):
+        return f'{self.user.email} ↺ {self.coupon.code} ({self.status})'
+
+
+class StockNotification(models.Model):
+    """User Process Flow §7.6 "Notify Me" — backorder waitlist.
+
+    When a buyer requests a notification for an out-of-stock product
+    we persist the desire here. A signal on Product.quantity going
+    from 0 → >0 should fan out push notifications and mark these
+    rows ``notified=True``. We expose a /resolve/ endpoint the
+    inventory worker can call when stock returns.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stock_notifications', db_index=True)
+    product = models.ForeignKey('products.Product', on_delete=models.CASCADE, related_name='stock_notifications', db_index=True)
+    sku_id = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    notified_at = models.DateTimeField(null=True, blank=True)
+    is_notified = models.BooleanField(default=False, db_index=True)
+
+    class Meta:
+        unique_together = ('user', 'product', 'sku_id')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.user.email} → wants {self.product_id} (notified={self.is_notified})'
+
+
+class SaleEvent(models.Model):
+    """AliExpress Complete 2025 CH 17.3 — major sale calendar.
+
+    Admin-configured platform-wide events (11.11, 3.28, 8.28, Black
+    Friday, Choice Day). Renders as a hero banner on home + tints
+    product cards with an event badge while the event window is
+    active. ``slug`` is the deep link target (e.g. /event/1111-2026).
+    """
+    KIND = (
+        ('platform', 'Platform-wide'),
+        ('category', 'Category'),
+        ('seller',   'Seller'),
+    )
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(unique=True)
+    kind = models.CharField(max_length=12, choices=KIND, default='platform')
+    headline = models.CharField(max_length=200, blank=True)
+    subheading = models.CharField(max_length=400, blank=True)
+    banner_image = models.ImageField(upload_to='sale_events/', blank=True, null=True)
+    bg_color = models.CharField(max_length=20, default='#C9A84C')
+    starts_at = models.DateTimeField(db_index=True)
+    ends_at = models.DateTimeField(db_index=True)
+    is_active = models.BooleanField(default=True)
+    cta_label = models.CharField(max_length=40, default='Ver ofertas')
+    cta_url = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-starts_at']
+        indexes = [models.Index(fields=['is_active', 'starts_at', 'ends_at'])]
+
+    def is_live(self):
+        from django.utils import timezone
+        now = timezone.now()
+        return self.is_active and self.starts_at <= now <= self.ends_at
+
+    def __str__(self):
+        return f'{self.name} ({self.starts_at:%Y-%m-%d})'

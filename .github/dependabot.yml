@@ -1,0 +1,53 @@
+# Dependency-update automation (CI/CD & VC doc CH14).
+# Each bump opens a PR that goes through the full gate (tests + scans), so
+# upgrades are controlled + tested rather than surprise drift — and new CVEs
+# in pinned deps surface as actionable PRs.
+version: 2
+updates:
+  # Python backend dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"          # Conventional Commits (CH6)
+      include: "scope"
+    groups:
+      # Batch low-risk patch/minor bumps into one PR to reduce churn;
+      # majors come individually so they get deliberate review.
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "backend"]
+
+  # Frontend (React/Vite) dependencies
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "frontend"]
+
+  # GitHub Actions workflow pinning — keep the pipeline's own actions current
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies", "ci"]
+
+  # Base image CVE freshness (Dockerfile)
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    labels: ["dependencies", "docker"]

@@ -45,3 +45,9 @@ logs/*.log
 # Celery
 celerybeat-schedule
 celerybeat.pid
+
+# Agent worktrees / sessions
+.claude/
+
+# Runtime logs
+logs/

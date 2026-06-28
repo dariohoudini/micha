@@ -1,0 +1,38 @@
+# CODEOWNERS — mandatory reviewers per sensitive area (CI/CD & VC doc CH7).
+#
+# GitHub requires a review from the listed owner(s) before a PR touching
+# these paths can merge (paired with branch protection "require review
+# from Code Owners"). The right experts MUST review changes to money,
+# identity, and schema — a money platform cannot let those merge without
+# domain review. Replace the placeholder teams with real GitHub teams.
+
+# Default — any change gets a baseline review.
+*                           @micha-eng/maintainers
+
+# ── Money paths (≥2 approvals via branch protection) ──────────────────
+/apps/payments/             @micha-eng/payments-reviewers
+/apps/payments_angola/      @micha-eng/payments-reviewers
+/apps/payment_gateways/     @micha-eng/payments-reviewers
+/apps/payment_ops/          @micha-eng/payments-reviewers
+/apps/accounting/           @micha-eng/finance-reviewers
+/apps/ledger/               @micha-eng/finance-reviewers
+/apps/wallet/               @micha-eng/payments-reviewers
+
+# ── Identity / access control (security review) ───────────────────────
+/apps/users/                @micha-eng/security-reviewers
+/apps/two_factor/           @micha-eng/security-reviewers
+/apps/seller_operations/    @micha-eng/security-reviewers   # staff RBAC matrix
+/apps/admin_console/        @micha-eng/security-reviewers
+/middleware/security.py     @micha-eng/security-reviewers
+/apps/core/api_errors.py    @micha-eng/security-reviewers
+/apps/core/error_catalogue.py @micha-eng/security-reviewers
+
+# ── Schema changes (DB review — migration safety, expand/contract) ────
+**/migrations/              @micha-eng/db-reviewers
+
+# ── Pipeline / deploy / config (devops review) ────────────────────────
+/.github/                   @micha-eng/devops-reviewers
+/docker/                    @micha-eng/devops-reviewers
+/nginx/                     @micha-eng/devops-reviewers
+/config/settings.py         @micha-eng/devops-reviewers @micha-eng/security-reviewers
+/docker-compose.yml         @micha-eng/devops-reviewers

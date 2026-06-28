@@ -53,7 +53,10 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ["id", "name", "slug", "icon", "image", "parent", "subcategories", "ordering"]
+        # §15 — expose attribute_schema so the product wizard can
+        # render the right dynamic fields per leaf category.
+        fields = ["id", "name", "slug", "icon", "image", "parent",
+                  "subcategories", "ordering", "attribute_schema"]
 
     def get_subcategories(self, obj):
         subs = obj.subcategories.all()
@@ -175,8 +178,29 @@ class ProductDetailSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
         return self._other_offers_qs(obj).aggregate(p=Min('price'))['p']
 
 
+class _JSONStringField(serializers.JSONField):
+    """JSONField that parses a JSON STRING from multipart/form-data.
+
+    DRF's default JSONField behind a ModelSerializer happily accepts a
+    string-shaped value off FormData and writes it to the DB literally
+    as a string — so ``attributes='{"a":1}'`` stays a string rather
+    than becoming the dict ``{"a": 1}``. This field decodes it.
+    """
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            try:
+                import json as _json
+                data = _json.loads(data)
+            except Exception:
+                raise serializers.ValidationError("Invalid JSON.")
+        return super().to_internal_value(data)
+
+
 class ProductWriteSerializer(serializers.ModelSerializer):
     """Serialiser for creating/updating products — explicit writable fields only."""
+    # §15 — accept attributes as JSON string from FormData payloads.
+    attributes = _JSONStringField(required=False)
+
     class Meta:
         model = Product
         # FIX: Explicit writable fields — seller cannot set is_featured or is_boosted
@@ -187,6 +211,10 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "weight_kg", "length_cm", "width_cm", "height_cm",
             "warranty_info", "return_policy", "meta_title", "meta_description",
             "publish_at", "tags",
+            # AliExpress §12.3 promotional pricing + §14 shipping
+            # template FK + §15 category-driven attributes.
+            "shipping_template", "attributes",
+            "promo_price", "promo_start", "promo_end", "promo_max_units",
         ]
 
     def validate_price(self, value):

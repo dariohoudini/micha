@@ -179,10 +179,98 @@ class LoginAttemptHistoryView(APIView):
         return Response({'results': list(rows)})
 
 
+# ─── AliExpress Security Engineering Workflow §5.6 — CSP reports ──
+
+from rest_framework import permissions as _perm
+
+
+class CSPReportView(APIView):
+    """POST /api/v1/security/csp-report/
+
+    Endpoint named in the ``Content-Security-Policy`` ``report-uri``
+    directive. Browsers POST a JSON CSP violation report here when
+    a script/style/etc. is blocked. We persist to SecurityAuditLog
+    so SecOps can spot:
+      • XSS injection attempts (blocked inline script).
+      • Misconfigured third-party assets.
+      • Browser extensions exfiltrating user data.
+
+    Unauthenticated by design — browsers don't send credentials
+    with CSP reports.
+    """
+    permission_classes = [_perm.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        try:
+            from .models import audit
+            body = request.data
+            # CSP Level 2 wraps the violation in ``csp-report`` key;
+            # Level 3 reports send it directly. Handle both.
+            report = body.get('csp-report') if isinstance(body, dict) else None
+            report = report or body
+            audit('csp_violation',
+                  user=request.user if request.user.is_authenticated else None,
+                  request=request,
+                  details={
+                      'blocked_uri':         (report.get('blocked-uri') or '')[:255],
+                      'violated_directive':  (report.get('violated-directive') or '')[:120],
+                      'document_uri':        (report.get('document-uri') or '')[:255],
+                  })
+        except Exception:
+            pass
+        # Browsers ignore the response body; status must be 2xx.
+        return Response({'received': True}, status=204)
+
+
+# ─── §13.1 — TrustedDevice management for buyers ──────────────────
+
+class TrustedDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import TrustedDevice as _TD
+        model = _TD
+        fields = ['id', 'label', 'user_agent', 'ip', 'country',
+                  'first_seen_at', 'last_seen_at']
+        read_only_fields = fields
+
+
+class MyTrustedDevicesView(generics.ListAPIView):
+    """GET /api/v1/security/my-devices/ — list devices that have
+    authenticated to this account."""
+    serializer_class = TrustedDeviceSerializer
+    permission_classes = [_perm.IsAuthenticated]
+
+    def get_queryset(self):
+        from .models import TrustedDevice as _TD
+        return _TD.objects.filter(user=self.request.user, revoked_at__isnull=True)
+
+
+class RevokeTrustedDeviceView(APIView):
+    """POST /api/v1/security/my-devices/<id>/revoke/ — mark a device
+    untrusted. Bumps jwt_version so all current tokens invalidate."""
+    permission_classes = [_perm.IsAuthenticated]
+
+    def post(self, request, pk):
+        from .models import TrustedDevice as _TD, audit
+        from django.db.models import F as _F
+        from apps.users.models import User as _U
+        d = get_object_or_404(_TD, pk=pk, user=request.user, revoked_at__isnull=True)
+        d.revoked_at = timezone.now()
+        d.save(update_fields=['revoked_at'])
+        _U.objects.filter(pk=request.user.pk).update(jwt_version=_F('jwt_version') + 1)
+        audit('session_revoked', user=request.user, request=request,
+              details={'device_id': pk, 'fingerprint': d.fingerprint[:16]})
+        return Response({'detail': 'Dispositivo removido. Vai precisar de iniciar sessão de novo nos outros dispositivos.'})
+
+
 # URLs
 from django.urls import path
 
 urlpatterns = [
+    # AliExpress Security Engineering Workflow CH 5.6 + CH 13.1
+    path('csp-report/', CSPReportView.as_view(), name='csp-report'),
+    path('my-devices/', MyTrustedDevicesView.as_view(), name='my-devices'),
+    path('my-devices/<int:pk>/revoke/', RevokeTrustedDeviceView.as_view(), name='revoke-device'),
     path('fraud-alerts/', FraudAlertListView.as_view(), name='fraud-alerts'),
     path('fraud-alerts/<int:pk>/resolve/', ResolveFraudAlertView.as_view(), name='resolve-fraud'),
     path('ip-bans/', IPBanListCreateView.as_view(), name='ip-bans'),

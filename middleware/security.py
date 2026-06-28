@@ -165,23 +165,46 @@ class ConstantTimeAuthMiddleware:
 
 # ── Step-up authentication decorator ─────────────────────────────────────────
 
+def _resolve_request(args):
+    """Find the (Http/DRF) request among the positional args.
+
+    Works for both call shapes:
+      * plain function view  -> wrapper(request, ...)
+      * DRF APIView method   -> wrapper(self, request, ...)
+    A View instance has neither ``META`` nor ``method``; the request has both.
+    """
+    for arg in args:
+        if hasattr(arg, 'META') and hasattr(arg, 'method'):
+            return arg
+    return None
+
+
 def require_recent_auth(max_age_minutes=10):
     """
-    Decorator: require user to have authenticated within max_age_minutes.
-    Use on: change email, change phone, add bank account, request payout,
-            delete account, change password.
+    Step-up authentication (IAM/RBAC doc CH7, Layer 3c). Require a fresh
+    proof of identity immediately before a sensitive action, so a
+    hijacked-but-idle session or unlocked device cannot silently perform it.
+    Use on: change email/phone, add bank account, request payout, delete
+    account, change password — the doc's step-up action list.
 
-    Frontend sends current password in X-Confirm-Password header.
+    Factor: current password in the X-Confirm-Password header (constant-time
+    check via Django's hasher). Returns 403 STEP_UP_REQUIRED if absent.
+
+    Robust to both function-based views and DRF APIView methods — see
+    _resolve_request (a previous version assumed the request was always the
+    first positional arg, which 500'd on every DRF ``def post(self, request)``
+    it guarded, silently disabling the gate).
     """
     def decorator(view_func):
         @wraps(view_func)
-        def wrapper(request, *args, **kwargs):
-            if not request.user.is_authenticated:
+        def wrapper(*args, **kwargs):
+            request = _resolve_request(args)
+            user = getattr(request, 'user', None)
+            if request is None or user is None or not user.is_authenticated:
                 return JsonResponse(
                     {'error': 'authentication_required', 'detail': 'Login required.'},
                     status=401
                 )
-            # Check password confirmation header
             confirm_password = request.META.get('HTTP_X_CONFIRM_PASSWORD', '')
             if not confirm_password:
                 return JsonResponse(
@@ -192,18 +215,18 @@ def require_recent_auth(max_age_minutes=10):
                     },
                     status=403
                 )
-            if not request.user.check_password(confirm_password):
+            if not user.check_password(confirm_password):
                 log_security_event(
                     'step_up_auth_failed',
                     request=request,
                     severity='WARNING',
-                    details={'action': view_func.__name__},
+                    details={'action': getattr(view_func, '__name__', 'unknown')},
                 )
                 return JsonResponse(
                     {'error': 'invalid_password', 'detail': 'Password confirmation failed.'},
                     status=403
                 )
-            return view_func(request, *args, **kwargs)
+            return view_func(*args, **kwargs)
         return wrapper
     return decorator
 

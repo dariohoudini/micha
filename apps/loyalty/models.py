@@ -159,3 +159,65 @@ class PointsTransaction(models.Model):
             ),
         ]
         ordering = ['-created_at']
+
+
+# ─── AliExpress 2025 — CH 5 Coins / Daily Check-In / Streak ──────
+
+class DailyCheckIn(models.Model):
+    """User Process Flow §5.2 — one row per user per calendar day.
+
+    Streak resets to 0 when a day is missed (no row for prior day).
+    Reward escalates per-streak per spec: 1/2/3/4/6/8/10/12+ coins.
+    Idempotent: unique on (user, check_date) so a double-tap can't
+    grant double coins.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='check_ins', db_index=True)
+    check_date = models.DateField(db_index=True)
+    coins_awarded = models.PositiveIntegerField(default=0)
+    streak_day = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'check_date')
+        ordering = ['-check_date']
+        indexes = [models.Index(fields=['user', '-check_date'])]
+
+    @staticmethod
+    def reward_for_streak(streak_day: int) -> int:
+        """Mirror of the AliExpress published curve."""
+        table = {1: 1, 2: 2, 3: 3, 4: 4, 5: 6, 6: 8, 7: 10}
+        if streak_day in table:
+            return table[streak_day]
+        # Day 8+: keeps escalating by 2 per day, soft-cap at 30.
+        return min(30, 10 + (streak_day - 7) * 2)
+
+
+class CoinTaskCompletion(models.Model):
+    """User Process Flow §5.3 — record of completed coin-earning tasks.
+
+    The doc lists 10 tasks (browse 3 min, post review, add to wishlist,
+    share product, follow store, etc.). Each has a daily cap. We log
+    every completion here so the FE can show today's progress and the
+    backend can enforce caps.
+    """
+    TASK_CHOICES = (
+        ('check_in',       'Daily Check-In'),
+        ('browse_3m',      'Browse 3 minutes'),
+        ('post_review',    'Post a review'),
+        ('add_wishlist',   'Add to wishlist'),
+        ('share_product',  'Share product'),
+        ('follow_store',   'Follow store'),
+        ('make_purchase',  'Make a purchase'),
+        ('lucky_forest',   'Lucky Forest harvest'),
+        ('coins_park',     'Coins Park spin'),
+        ('merge_boss',     'MergeBoss level'),
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='coin_tasks', db_index=True)
+    task = models.CharField(max_length=30, choices=TASK_CHOICES, db_index=True)
+    coins_awarded = models.PositiveIntegerField(default=0)
+    completed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    note = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['user', 'task', '-completed_at'])]
+        ordering = ['-completed_at']

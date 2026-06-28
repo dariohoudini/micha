@@ -79,10 +79,13 @@ class ErrorEnvelopeMiddleware:
 
         data = response.data
 
-        # If body is already canonical AND has request_id, leave it alone.
-        # The exception_handler path produces canonical bodies with
-        # request_id already set, so this is a no-op for that flow.
-        if is_canonical(data) and isinstance(data, dict) and 'request_id' in data:
+        # If body is already canonical AND carries the CH4 superset fields
+        # (request_id + code), leave it alone. The exception_handler path
+        # produces fully-decorated bodies, so this is a no-op for that flow.
+        # A legacy-canonical body missing 'code' still falls through to
+        # normalize_error_body so it gains code/http_status/documentation_url.
+        if (is_canonical(data) and isinstance(data, dict)
+                and 'request_id' in data and 'code' in data):
             return response
 
         response.data = normalize_error_body(

@@ -7,6 +7,8 @@
 .PHONY: help dev-setup test test-fast test-coverage lint format \
         check migrate makemigrations runserver shell celery beat \
         frontend-install frontend-build frontend-dev \
+        phone phone-ios phone-ios-refresh phone-ios-reset \
+        phone-android-setup phone-android \
         clean docker-build docker-up docker-down docker-logs \
         docker-shell docker-test \
         restore-drill
@@ -41,6 +43,7 @@ help:
 	@echo "Phone testing (try the app on your own device):"
 	@echo "  make phone            — open in mobile browser over WiFi"
 	@echo "  make phone-ios        — build + open Xcode (one-shot setup)"
+	@echo "  make phone-ios-refresh — re-sync LAN IP into Capacitor (after WiFi change)"
 	@echo "  make phone-ios-reset  — revert capacitor.config to prod-safe"
 	@echo "  make phone-android-setup  — one-time Android project init"
 	@echo "  make phone-android    — build + open Android native shell"
@@ -140,6 +143,13 @@ phone-ios:
 	# Run `make phone` in another terminal FIRST so the dev server
 	# is up. See ops/PHONE_DEV.md for full instructions.
 	./scripts/dev-phone-ios.sh
+
+phone-ios-refresh:
+	# Switched WiFi / woke from sleep / blank page in the iOS sim?
+	# Re-detects the LAN IP, updates capacitor.config.json, and
+	# runs cap sync. No CocoaPods, no Xcode reopen — fast.
+	# After it runs: Cmd+R in Xcode to relaunch the app.
+	./scripts/dev-phone-ios.sh --refresh
 
 phone-ios-reset:
 	# Revert capacitor.config.json to production-safe (removes the

@@ -21,6 +21,14 @@ class Review(models.Model):
     class Meta:
         unique_together = ("reviewer", "seller")
         ordering = ["-created_at"]
+        # DB & Storage doc CH23 ck_review_rating: the DB is the last line of
+        # defence — a rating outside 1..5 can never be persisted, even if a
+        # caller bypasses the choices validation.
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(rating__gte=1) & models.Q(rating__lte=5),
+                name="ck_review_rating_1_5"),
+        ]
 
     def __str__(self):
         return f"{self.reviewer} → {self.seller} ({self.rating}★)"
@@ -62,6 +70,12 @@ class ProductReview(models.Model):
     class Meta:
         unique_together = ('reviewer', 'product')
         ordering = ['-created_at']
+        # DB & Storage doc CH23 ck_review_rating (1..5).
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(rating__gte=1) & models.Q(rating__lte=5),
+                name="ck_product_review_rating_1_5"),
+        ]
 
     def __str__(self):
         return f"{self.reviewer.email} → {self.product.title} ({self.rating}★)"

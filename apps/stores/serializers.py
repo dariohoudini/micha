@@ -51,6 +51,38 @@ class StoreSerializer(serializers.ModelSerializer):
         return obj.products.filter(is_active=True, is_archived=False).count()
 
 
+class MyStoreWriteSerializer(serializers.ModelSerializer):
+    """Writable serializer for the seller-facing /stores/my/ endpoints.
+
+    Exposes ONLY the fields a seller should be able to set on their
+    own store. ``owner`` is read-only and is forced to request.user
+    by the view's ``perform_create`` — the seller can NEVER assign a
+    store to a different user, even if they POST owner_id in the
+    body. Same for cached_rating / total_reviews_count / created_at
+    which are server-managed.
+    """
+    average_rating = serializers.DecimalField(
+        source='cached_rating', max_digits=3, decimal_places=2, read_only=True
+    )
+    total_reviews = serializers.IntegerField(
+        source='total_reviews_count', read_only=True
+    )
+
+    class Meta:
+        model = Store
+        fields = [
+            'id',
+            'name', 'description', 'city',
+            'banner_image', 'primary_color',
+            'is_active', 'is_open',
+            'average_rating', 'total_reviews',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id', 'average_rating', 'total_reviews', 'created_at',
+        ]
+
+
 class PublicStoreSerializer(serializers.ModelSerializer):
     # FIX: use cached_rating — no DB aggregation needed on every list request
     average_rating = serializers.DecimalField(

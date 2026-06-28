@@ -72,6 +72,12 @@ class CartItem(models.Model):
                 fields=["cart", "product", "variant_combo"],
                 name="cart_unique_product_variant",
             ),
+            # DB & Storage doc CH15: ck_cartitem_qty — a cart line is never
+            # zero/negative quantity (DB backstop behind app validation).
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name="ck_cartitem_qty_positive",
+            ),
         ]
         indexes = [models.Index(fields=["cart", "product"])]
 

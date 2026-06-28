@@ -20,14 +20,24 @@ class SellerVerificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = SellerVerification
         fields = [
-            'id', 'user', 'id_number', 'id_expiry_date',
+            # Model field is ``seller`` (OneToOne FK to User), not
+            # ``user`` — this serializer previously referenced ``user``
+            # which is not on the model, raising ImproperlyConfigured.
+            # The ``apply/`` view was therefore 500-ing every submit.
+            'id', 'seller', 'id_number', 'id_expiry_date',
             'id_document', 'selfie', 'status', 'rejection_reason',
-            'last_selfie_update', 'is_id_expired', 'needs_selfie_update',
+            # 'last_selfie_update' removed — not present on the
+            # SellerVerification model; would raise
+            # ImproperlyConfigured on every instantiation.
+            'is_id_expired', 'needs_selfie_update',
             'id_validation_error', 'created_at', 'updated_at', 'logs',
+            # AliExpress §4.2 — business-account additional documents.
+            'business_licence', 'bank_proof', 'power_of_attorney',
+            'id_document_back', 'is_business_account',
         ]
         read_only_fields = [
-            'user', 'status', 'rejection_reason',
-            'last_selfie_update', 'created_at', 'updated_at',
+            'seller', 'status', 'rejection_reason',
+            'created_at', 'updated_at',
         ]
 
     def get_is_id_expired(self, obj):

@@ -4,7 +4,7 @@ from rest_framework import permissions
 from django.db.models import Sum
 from django.utils import timezone
 from datetime import timedelta
-from .models import FunnelEvent, SellerPerformance, GeoSalesData
+from .models import FunnelEvent, SellerPerformance, GeoSalesData, UserEvent
 from apps.users.permissions import IsAdminOrSuperuser, IsSellerOrSuperuser, IsNotSuspended
 
 class TrackFunnelEventView(APIView):
@@ -20,6 +20,57 @@ class TrackFunnelEventView(APIView):
             product_id=product_id,
         )
         return Response({"detail":"Tracked."})
+
+
+def _client_ip(request):
+    xff = request.META.get('HTTP_X_FORWARDED_FOR') or ''
+    return (xff.split(',')[0].strip() or request.META.get('REMOTE_ADDR') or '').strip() or None
+
+
+class TrackUserEventView(APIView):
+    """POST /api/v1/analytics/events/ — batched user-touch ingest.
+
+    Accepts either a single event or a batched list under ``events``.
+    Each event must have ``event`` (name) and may include
+    ``properties`` (dict), ``session_id``, ``ts`` (client timestamp).
+    Authentication is optional so anonymous session events still
+    persist; the JWT identifies the user when present.
+    """
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = 'event_track'
+
+    def post(self, request):
+        payload = request.data
+        events = payload if isinstance(payload, list) else payload.get('events')
+        if not events:
+            events = [payload]
+        if not isinstance(events, list):
+            return Response({'error': 'events must be a list'}, status=400)
+        ip = _client_ip(request)
+        ua = (request.META.get('HTTP_USER_AGENT') or '')[:255]
+        ref = (request.META.get('HTTP_REFERER') or '')[:255]
+        user = request.user if request.user.is_authenticated else None
+        rows = []
+        # Hard-cap per call to avoid abuse.
+        for raw in events[:200]:
+            if not isinstance(raw, dict):
+                continue
+            name = (raw.get('event') or raw.get('name') or '').strip()[:80]
+            if not name:
+                continue
+            rows.append(UserEvent(
+                user=user,
+                session_id=(raw.get('session_id') or '')[:80],
+                event=name,
+                properties=UserEvent.scrub_props(raw.get('properties') or {}),
+                path=(raw.get('path') or '')[:255],
+                ip=ip,
+                user_agent=ua,
+                referrer=ref,
+            ))
+        if rows:
+            UserEvent.objects.bulk_create(rows, batch_size=200)
+        return Response({'accepted': len(rows)})
 
 class FunnelAnalyticsView(APIView):
     permission_classes = [IsAdminOrSuperuser]
@@ -67,4 +118,38 @@ class AdminRealTimeView(APIView):
             'orders_today':Order.objects.filter(created_at__date=today).count(),
             'revenue_today':str(Order.objects.filter(created_at__date=today,payment_status='paid').aggregate(t=Sum('total'))['t'] or 0),
             'pending_orders':Order.objects.filter(status='pending').count(),
+        })
+
+
+# ─── AliExpress 2025 CH 1.4 + CH 26.3 — App config / maintenance ──
+
+from django.conf import settings as _dj_settings
+
+
+class AppConfigView(APIView):
+    """GET /api/v1/config/app/ — public.
+
+    Returns the minimum-supported app version (drives the §26.3
+    "Please update" blocking modal) and maintenance-mode banner
+    state. Both are read from Django settings so ops can flip them
+    at deploy time without a code release. Defaults are permissive
+    so a missing setting NEVER bricks the app.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({
+            'min_app_version': getattr(_dj_settings, 'MIN_APP_VERSION', '0.0.0'),
+            'latest_app_version': getattr(_dj_settings, 'LATEST_APP_VERSION', '1.0.0'),
+            'maintenance_mode': getattr(_dj_settings, 'MAINTENANCE_MODE', False),
+            'maintenance_message': getattr(_dj_settings, 'MAINTENANCE_MESSAGE', ''),
+            'maintenance_until': getattr(_dj_settings, 'MAINTENANCE_UNTIL', None),
+            'feature_flags': {
+                # Surface a small set of boolean feature flags. The
+                # full flags system lives in apps.flags; this is a
+                # cached read-side projection for client-side gating.
+                'live_streaming': getattr(_dj_settings, 'FEATURE_LIVE_STREAMING', False),
+                'coins_enabled': getattr(_dj_settings, 'FEATURE_COINS', True),
+                'choice_programme': getattr(_dj_settings, 'FEATURE_CHOICE', True),
+            },
         })

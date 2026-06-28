@@ -17,6 +17,62 @@ def _pseudonymise(user_id):
     return hashlib.sha256(secret + str(user_id).encode()).hexdigest()[:16]
 
 
+class UserEvent(models.Model):
+    """User-process-flow §20.8 telemetry — every meaningful client
+    action persists here for analytics + audit.
+
+    Why a separate model from FunnelEvent
+    ─────────────────────────────────────
+    FunnelEvent has a FIXED set of choices and FK columns intended
+    for a small funnel of conversion-critical steps. The User Process
+    Flow doc requires *every touch* — taps, navigations, opens,
+    mutations — to be logged. We want:
+      • arbitrary event names (snake_case verb-noun)
+      • arbitrary properties (JSON blob)
+      • cheap inserts (no FK validation on every event)
+      • PII-safe (caller is responsible for not stuffing email/cards
+        into properties; we hard-redact suspect keys)
+    """
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, db_index=True, related_name='events')
+    session_id = models.CharField(max_length=80, blank=True, db_index=True)
+    event = models.CharField(max_length=80, db_index=True)
+    properties = models.JSONField(default=dict, blank=True)
+    path = models.CharField(max_length=255, blank=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True)
+    referrer = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['event', '-created_at']),
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['session_id', '-created_at']),
+        ]
+
+    @staticmethod
+    def scrub_props(p):
+        """Hard-redact PII-ish keys regardless of where in the dict."""
+        if not isinstance(p, dict):
+            return {}
+        BAD = {'password', 'passwd', 'pwd', 'secret', 'token', 'jwt',
+               'card', 'card_number', 'cvv', 'cvc', 'pin', 'ssn',
+               'nif', 'bi', 'authorization'}
+        out = {}
+        for k, v in p.items():
+            kl = str(k).lower()
+            if any(b in kl for b in BAD):
+                out[k] = '[REDACTED]'
+            elif isinstance(v, dict):
+                out[k] = UserEvent.scrub_props(v)
+            elif isinstance(v, str) and len(v) > 1024:
+                out[k] = v[:1024] + '…'
+            else:
+                out[k] = v
+        return out
+
+
 class FunnelEvent(models.Model):
     EVENT = (("view","View"),("add_cart","Add Cart"),("checkout","Checkout"),("purchase","Purchase"))
 

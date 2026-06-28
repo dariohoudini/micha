@@ -119,6 +119,12 @@ class Order(models.Model):
         max_length=20, choices=PROTECTION_STATES, default="awaiting_seller", db_index=True,
     )
     protection_deadline_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # AliExpress 2025 CH 13.2 — one-time extension flag.
+    protection_extended = models.BooleanField(default=False)
+    # Engineering spec CH 10.1 — seller SLA tracking.
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    shipping_overdue_notified = models.BooleanField(default=False, db_index=True)
+    overdue_notified_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -145,6 +151,17 @@ class Order(models.Model):
             models.Index(fields=["status", "payment_status"]),
             models.Index(fields=["idempotency_key"]),
             models.Index(fields=["is_deleted", "status"]),
+        ]
+        # DB is the LAST line of defence (DB & Storage doc CH3/CH16): money
+        # is never negative, even if an application path has a bug. Stored as
+        # signed magnitudes (discount is subtracted into total upstream).
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(total__gte=0) & models.Q(subtotal__gte=0)
+                    & models.Q(shipping_cost__gte=0) & models.Q(discount__gte=0)
+                    & models.Q(tax_amount__gte=0)),
+                name="ck_order_money_nonneg"),
         ]
 
     def delete(self, *args, **kwargs):
@@ -277,6 +294,15 @@ class OrderItem(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["order", "product"])]
+        # DB & Storage doc CH16: ck_oi_qty — a line item is never zero/negative
+        # quantity, and money magnitudes are non-negative.
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(quantity__gt=0)
+                           & models.Q(unit_price__gte=0)
+                           & models.Q(total_price__gte=0)),
+                name="ck_orderitem_qty_price"),
+        ]
 
     def save(self, *args, **kwargs):
         self.total_price = self.unit_price * self.quantity

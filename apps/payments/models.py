@@ -77,6 +77,14 @@ class SellerWallet(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=['seller'])]
+        # DB & Storage doc CH19 ck_wallet_balance: a wallet balance can never
+        # go negative — debit() guards it in app code, the DB backstops it.
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(balance__gte=0)
+                & models.Q(pending_balance__gte=0),
+                name="ck_wallet_balance_nonneg"),
+        ]
 
     def credit(self, amount, description, reference=None):
         """
@@ -167,6 +175,13 @@ class WalletTransaction(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [models.Index(fields=['wallet', '-created_at'])]
+        # DB & Storage doc CH19 ck_wl_amount: ledger entries carry a positive
+        # magnitude; direction is the `type` field, never a signed amount.
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="ck_wallet_txn_amount_positive"),
+        ]
 
     def delete(self, *args, **kwargs):
         raise ValueError(

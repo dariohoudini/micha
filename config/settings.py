@@ -102,6 +102,27 @@ INSTALLED_APPS = [
     'apps.accounts',
     'apps.reports',
     'apps.seller',
+    'apps.seller_onboarding',
+    'apps.buyer_engagement',
+    'apps.payment_gateways',
+    'apps.fraud_engine',
+    'apps.marketing_engine',
+    'apps.pricing_inventory',
+    'apps.logistics_ops',
+    'apps.payment_ops',
+    'apps.cs_ops',
+    'apps.trust_safety',
+    'apps.search_discovery',
+    'apps.data_analytics',
+    'apps.mobile_app',
+    'apps.seller_tools',
+    'apps.admin_console',
+    'apps.payments_angola',
+    'apps.accounting',
+    'apps.stock_engine',
+    'apps.last_mile',
+    'apps.buyer_experience',
+    'apps.seller_operations',
     'apps.listings',
     'apps.reviews',
     'apps.payments',
@@ -126,10 +147,22 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Secure-by-default cache headers (Caching & CDN doc CH14; Security doc
+    # cache-bypass risk): an authenticated/credentialed response with no
+    # explicit cache policy is marked private,no-store so no shared cache
+    # (CDN/proxy) can ever store one user's data. High in the list → its
+    # response phase runs last and is authoritative (but never clobbers a
+    # view's deliberate Cache-Control).
+    'middleware.cache_control.PrivateByDefaultCacheMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # RLS tenant context — AFTER authentication so request.user is the
+    # verified principal (Security & RLS doc CH8). A no-op unless
+    # RLS_ENABLED=True and the backend is PostgreSQL, so it's inert in dev
+    # and until the staged production RLS rollout (CH11) turns it on.
+    'middleware.tenant_context.TenantContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'middleware.logging_middleware.RequestIDMiddleware',
@@ -295,9 +328,13 @@ REST_FRAMEWORK = {
     # FIX: Enforce standard pagination on ALL list endpoints
     'DEFAULT_PAGINATION_CLASS': 'middleware.pagination.StandardPagination',
     'PAGE_SIZE': 20,
+    # General traffic FAILS OPEN if the rate-limit store (Redis) blinks —
+    # availability over strictness for ordinary reads/writes (Rate Limiting
+    # doc CH2 principle 3 / CH11). Security-critical scopes (login, OTP,
+    # payment) use the FailClosed* bases on their views instead.
     'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
+        'apps.core.throttling.FailOpenAnonRateThrottle',
+        'apps.core.throttling.FailOpenUserRateThrottle',
     ],
     # DRF DEFAULT_THROTTLE_RATES.
     #
@@ -417,6 +454,32 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+# ── Worker resource safety (Cloud & Compute doc Part 1 CH11) ──────────
+# Without these, a task that hangs on a network call with no timeout
+# occupies a prefork child FOREVER, and long-lived workers leak memory
+# over days of uptime until they OOM the node. These bound both.
+#
+# TIME LIMITS — a wedged task cannot occupy a worker slot indefinitely.
+#   soft: raises SoftTimeLimitExceeded so the task can clean up + record
+#         failure; hard: force-kills the child, which is then replaced.
+#   The doc's reference is soft 300 / hard 360, with per-task overrides
+#   for legitimately long jobs (bulk import/export, AI generation,
+#   reconciliation). Those overrides don't exist yet, so the global hard
+#   limit is set generously (10 min) to bound truly-wedged tasks without
+#   killing legit multi-minute batch work; tighten per-queue/per-task as
+#   overrides land. Override on a long task with
+#   @shared_task(time_limit=..., soft_time_limit=...).
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get('CELERY_TASK_SOFT_TIME_LIMIT', 540))
+CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', 600))
+# MEMORY SAFETY — recycle a prefork child after N tasks (bounds slow
+# leaks from long-running workers + heavy C-extension libraries) and if
+# its RSS exceeds the ceiling (hard guard against a task ballooning RAM).
+# Recycling happens BETWEEN tasks, so it never interrupts running work.
+CELERY_WORKER_MAX_TASKS_PER_CHILD = int(
+    os.environ.get('CELERY_WORKER_MAX_TASKS_PER_CHILD', 200))
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = int(
+    os.environ.get('CELERY_WORKER_MAX_MEMORY_PER_CHILD', 300000))  # KB ≈ 300MB
 # FIX: Dead letter queue — failed tasks go here instead of silently disappearing
 # R3 fix: there was a stray ``'TEST': {'NAME': 'test_micha'}`` block
 # embedded INSIDE the 'default' queue dict — copy-paste of a DATABASES
@@ -462,6 +525,610 @@ CELERY_TASK_ROUTES = {
     'ai_engine.embed_all_products_nightly': {'queue': 'ai_heavy'},
 }
 CELERY_BEAT_SCHEDULE = {
+
+    # ── Seller Acquisition & Onboarding (CH15.1 / CH16 / CH17 / CH18) ─
+    # Monthly tier recalc, daily health snapshot, daily holiday
+    # auto-deactivate, daily fee-renewal reminder sweep, weekly
+    # abandoned-application sweep, daily agreement expiry job.
+    'seller-onboarding-recalculate-tier-monthly': {
+        'task': 'seller_onboarding.recalculate_tier_all',
+        'schedule': crontab(hour=2, minute=0, day_of_month=1),
+        'options': {'queue': 'nightly'},
+    },
+    'seller-onboarding-snapshot-health-daily': {
+        'task': 'seller_onboarding.snapshot_health_all',
+        'schedule': crontab(hour=4, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'seller-onboarding-auto-deactivate-holiday': {
+        'task': 'seller_onboarding.auto_deactivate_holiday',
+        'schedule': crontab(hour=0, minute=10),
+        'options': {'queue': 'nightly'},
+    },
+    'seller-onboarding-fee-renewal-reminders': {
+        'task': 'seller_onboarding.fee_renewal_reminders',
+        'schedule': crontab(hour=9, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'seller-onboarding-abandoned-applications': {
+        'task': 'seller_onboarding.abandoned_application_sweep',
+        'schedule': crontab(hour=2, minute=30, day_of_week='monday'),
+        'options': {'queue': 'nightly'},
+    },
+    'seller-onboarding-expire-agreements': {
+        'task': 'seller_onboarding.expire_agreements',
+        'schedule': crontab(hour=2, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+    # CH6 — onboarding email drip walk for every active seller.
+    'seller-onboarding-drip-walk': {
+        'task': 'seller_onboarding.drive_drip_all',
+        'schedule': crontab(hour=8, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    # CH13 — daily store-type recompute (tier upgrades, cert wins).
+    'seller-onboarding-store-types': {
+        'task': 'seller_onboarding.recompute_store_types',
+        'schedule': crontab(hour=5, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    # CH17 — yearly GMV rebate compute, runs daily but only acts on
+    # sellers whose anniversary falls inside the sweep window.
+    'seller-onboarding-gmv-rebates': {
+        'task': 'seller_onboarding.compute_gmv_rebates_yearly',
+        'schedule': crontab(hour=6, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    # CH21 — finalise deregistrations whose 30-day cooling-off elapsed.
+    'seller-onboarding-finalise-deregistrations': {
+        'task': 'seller_onboarding.finalise_deregistrations',
+        'schedule': crontab(hour=1, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    # CH24 — daily KPI funnel snapshot.
+    'seller-onboarding-funnel-snapshot': {
+        'task': 'seller_onboarding.snapshot_funnel',
+        'schedule': crontab(hour=1, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Buyer Engagement (CH11-24) ────────────────────────────
+    'buyer-engagement-recovery-dispatch': {
+        'task': 'buyer_engagement.dispatch_recovery_sequences',
+        'schedule': crontab(minute=15),  # hourly @ :15
+    },
+    'buyer-engagement-browse-remarketing': {
+        'task': 'buyer_engagement.dispatch_browse_remarketing',
+        'schedule': crontab(minute=30),  # hourly @ :30
+    },
+    'buyer-engagement-dormancy-recompute': {
+        'task': 'buyer_engagement.recompute_dormancy_all',
+        'schedule': crontab(hour=3, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'buyer-engagement-winback-dispatch': {
+        'task': 'buyer_engagement.dispatch_winback_campaigns',
+        'schedule': crontab(hour=10, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'buyer-engagement-ltv-recompute': {
+        'task': 'buyer_engagement.recompute_ltv_all',
+        'schedule': crontab(hour=4, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'buyer-engagement-kpi-snapshot': {
+        'task': 'buyer_engagement.snapshot_buyer_kpis',
+        'schedule': crontab(hour=1, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'buyer-engagement-birthday-rewards': {
+        'task': 'buyer_engagement.grant_birthday_rewards',
+        'schedule': crontab(hour=7, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'buyer-engagement-membership-billing': {
+        'task': 'buyer_engagement.process_membership_billing',
+        'schedule': crontab(hour=2, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'buyer-engagement-affinity-recompute': {
+        'task': 'buyer_engagement.recompute_affinity_all',
+        'schedule': crontab(hour=4, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Marketing engine (CH4-24) ─────────────────────────────
+    'marketing-flash-reservations-sweep': {
+        'task': 'marketing_engine.sweep_expired_flash_reservations',
+        'schedule': crontab(minute='*/5'),
+    },
+    'marketing-ad-pacing': {
+        'task': 'marketing_engine.pace_ad_campaigns',
+        'schedule': crontab(minute='*/10'),
+    },
+    'marketing-ad-reset-daily-spend': {
+        'task': 'marketing_engine.reset_daily_ad_spend',
+        'schedule': crontab(hour=0, minute=2),
+        'options': {'queue': 'nightly'},
+    },
+    'marketing-pixel-forward': {
+        'task': 'marketing_engine.forward_pixel_events',
+        'schedule': crontab(minute='*/2'),
+    },
+    'marketing-detect-abuse': {
+        'task': 'marketing_engine.detect_promo_abuse',
+        'schedule': crontab(minute=20),  # hourly @ :20
+    },
+    'marketing-snapshot-kpis': {
+        'task': 'marketing_engine.snapshot_marketing_kpis',
+        'schedule': crontab(hour=1, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+    'marketing-promo-lift': {
+        'task': 'marketing_engine.compute_active_promotion_lift',
+        'schedule': crontab(hour=5, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Pricing & Inventory (CH2/17/19/22/24) ─────────────────
+    'pi-dynamic-pricing-eval': {
+        'task': 'pricing_inventory.evaluate_dynamic_pricing_all',
+        'schedule': crontab(minute='*/30'),
+    },
+    'pi-stock-alerts': {
+        'task': 'pricing_inventory.evaluate_stock_alerts',
+        'schedule': crontab(minute=45),  # hourly
+    },
+    'pi-expire-preorder-holds': {
+        'task': 'pricing_inventory.expire_preorder_holds',
+        'schedule': crontab(hour=3, minute=10),
+        'options': {'queue': 'nightly'},
+    },
+    'pi-expire-backorder-sla': {
+        'task': 'pricing_inventory.expire_backorder_sla',
+        'schedule': crontab(hour=3, minute=20),
+        'options': {'queue': 'nightly'},
+    },
+    'pi-snapshot-kpis': {
+        'task': 'pricing_inventory.snapshot_pi_kpis',
+        'schedule': crontab(hour=2, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'pi-virtual-bundles-recompute': {
+        'task': 'pricing_inventory.recompute_virtual_bundles',
+        'schedule': crontab(hour=4, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Logistics & Fulfilment (CH18/21/24) ────────────────────
+    'lo-carrier-sla': {
+        'task': 'logistics_ops.compute_carrier_sla',
+        'schedule': crontab(hour=2, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'lo-snapshot-kpis': {
+        'task': 'logistics_ops.snapshot_logistics_kpis',
+        'schedule': crontab(hour=2, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'lo-expire-pickup-holds': {
+        'task': 'logistics_ops.expire_pickup_holds',
+        'schedule': crontab(hour=0, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'lo-expire-duty-estimates': {
+        'task': 'logistics_ops.expire_duty_estimates',
+        'schedule': crontab(hour=3, minute=0, day_of_week='sunday'),
+        'options': {'queue': 'nightly'},
+    },
+    'lo-poll-carrier-tracking': {
+        'task': 'logistics_ops.poll_carrier_tracking',
+        'schedule': crontab(minute='*/30'),
+    },
+
+    # ── Payment Operations (CH13/15/19/21/24) ─────────────────
+    'po-financial-report': {
+        'task': 'payment_ops.snapshot_financial_report',
+        'schedule': crontab(hour=2, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+    'po-kpi-snapshot': {
+        'task': 'payment_ops.snapshot_payment_ops_kpis',
+        'schedule': crontab(hour=3, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'po-b2b-overdue': {
+        'task': 'payment_ops.mark_overdue_b2b',
+        'schedule': crontab(hour=4, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'po-store-credit-expiry': {
+        'task': 'payment_ops.expire_store_credits',
+        'schedule': crontab(hour=4, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'po-bnpl-late': {
+        'task': 'payment_ops.process_bnpl_late',
+        'schedule': crontab(hour=5, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'po-recovery-attempts': {
+        'task': 'payment_ops.run_recovery_attempts',
+        'schedule': crontab(minute='*/15'),
+    },
+
+    # ── CS Operations (CH5/22/23/24) ──────────────────────────
+    'cs-sla-sweeper': {
+        'task': 'cs_ops.sla_sweeper',
+        'schedule': crontab(minute='*/10'),
+    },
+    'cs-ticket-trends': {
+        'task': 'cs_ops.snapshot_ticket_trends',
+        'schedule': crontab(minute=5),  # hourly @ :05
+    },
+    'cs-agent-performance': {
+        'task': 'cs_ops.snapshot_agent_performance',
+        'schedule': crontab(hour=2, minute=20),
+        'options': {'queue': 'nightly'},
+    },
+    'cs-kpi-snapshot': {
+        'task': 'cs_ops.snapshot_cs_ops_kpis',
+        'schedule': crontab(hour=3, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'cs-expire-csat-surveys': {
+        'task': 'cs_ops.expire_csat_surveys',
+        'schedule': crontab(hour=4, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Trust & Safety (CH4/21/23/24) ─────────────────────────
+    'ts-kpi-snapshot': {
+        'task': 'trust_safety.snapshot_ts_kpis',
+        'schedule': crontab(hour=3, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'ts-recompute-buyer-trust': {
+        'task': 'trust_safety.recompute_buyer_trust_all',
+        'schedule': crontab(hour=5, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'ts-flag-overdue-le': {
+        'task': 'trust_safety.flag_overdue_le_requests',
+        'schedule': crontab(minute=25),  # hourly
+    },
+    'ts-csam-report-sweep': {
+        'task': 'trust_safety.csam_report_sweep',
+        'schedule': crontab(minute='*/15'),
+    },
+    'ts-expire-age-challenges': {
+        'task': 'trust_safety.expire_age_challenges',
+        'schedule': crontab(hour=4, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Search & Discovery (CH2/3/4/7/8/16/22/24) ─────────────
+    'sd-refresh-trending': {
+        'task': 'search_discovery.refresh_trending',
+        'schedule': crontab(minute='*/15'),
+    },
+    'sd-weekly-digest': {
+        'task': 'search_discovery.weekly_digest_all',
+        'schedule': crontab(hour=7, minute=30, day_of_week='monday'),
+        'options': {'queue': 'nightly'},
+    },
+    'sd-rebuild-related': {
+        'task': 'search_discovery.rebuild_related_searches',
+        'schedule': crontab(hour=5, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+    'sd-rebuild-autocomplete': {
+        'task': 'search_discovery.rebuild_autocomplete',
+        'schedule': crontab(hour=6, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'sd-badge-integrity': {
+        'task': 'search_discovery.badge_integrity',
+        'schedule': crontab(hour=6, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'sd-decay-new-arrivals': {
+        'task': 'search_discovery.decay_new_arrivals',
+        'schedule': crontab(hour=0, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'sd-kpi-snapshot': {
+        'task': 'search_discovery.snapshot_search_kpis',
+        'schedule': crontab(hour=3, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+    'sd-seller-ranking': {
+        'task': 'search_discovery.seller_ranking_all',
+        'schedule': crontab(hour=5, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Data & Analytics (CH2/4/6/7/8/13/17/23/24) ────────────
+    'da-realtime-snapshot': {
+        'task': 'data_analytics.snapshot_realtime',
+        'schedule': crontab(minute='*'),
+    },
+    'da-query-rollup': {
+        'task': 'data_analytics.rollup_query_analytics',
+        'schedule': crontab(hour=1, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+    'da-fraud-loss': {
+        'task': 'data_analytics.snapshot_fraud_loss',
+        'schedule': crontab(hour=2, minute=50),
+        'options': {'queue': 'nightly'},
+    },
+    'da-delivery-report': {
+        'task': 'data_analytics.snapshot_delivery',
+        'schedule': crontab(hour=2, minute=55),
+        'options': {'queue': 'nightly'},
+    },
+    'da-dq-checks': {
+        'task': 'data_analytics.run_dq_checks',
+        'schedule': crontab(minute=35),  # hourly
+    },
+    'da-c360-refresh': {
+        'task': 'data_analytics.refresh_c360_all',
+        'schedule': crontab(hour=6, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+    'da-churn-predict': {
+        'task': 'data_analytics.predict_churn_all',
+        'schedule': crontab(hour=7, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'da-monthly-cohorts': {
+        'task': 'data_analytics.compute_monthly_cohorts',
+        'schedule': crontab(hour=7, minute=15, day_of_month=1),
+        'options': {'queue': 'nightly'},
+    },
+    'da-platform-kpis': {
+        'task': 'data_analytics.snapshot_platform_kpis',
+        'schedule': crontab(hour=4, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Mobile App Engineering (AliExpress_Mobile_App_Engineering doc) ──
+    'mob-silent-push-dispatch': {            # CH13 data-only pushes
+        'task': 'mobile_app.dispatch_silent_pushes',
+        'schedule': crontab(minute='*'),
+    },
+    'mob-crash-spike-check': {               # CH19 alert rule (5× baseline)
+        'task': 'mobile_app.check_crash_spike',
+        'schedule': crontab(minute=25),
+    },
+    'mob-kpi-snapshot': {                    # CH24 dashboard
+        'task': 'mobile_app.snapshot_mobile_kpis',
+        'schedule': crontab(hour=4, minute=10),
+        'options': {'queue': 'nightly'},
+    },
+    'mob-purge-expired': {                   # challenges + deferred links
+        'task': 'mobile_app.purge_expired',
+        'schedule': crontab(hour=5, minute=20),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Seller Tools (AliExpress_Seller_Tools_Additional doc) ──
+    'st-holiday-auto-resume': {              # CH9 resume at 08:00 UTC
+        'task': 'seller_tools.auto_resume_holiday_mode',
+        'schedule': crontab(hour=8, minute=0),
+    },
+    'st-commission-statements': {            # CH12 monthly, 3rd of month
+        'task': 'seller_tools.generate_commission_statements',
+        'schedule': crontab(hour=6, minute=0, day_of_month=3),
+        'options': {'queue': 'nightly'},
+    },
+    'st-recompute-lqs': {                    # CH13 nightly LQS refresh
+        'task': 'seller_tools.recompute_listing_quality',
+        'schedule': crontab(hour=3, minute=40),
+        'options': {'queue': 'nightly'},
+    },
+    'st-kpi-snapshot': {                     # CH24 weekly Monday 04:20
+        'task': 'seller_tools.snapshot_kpis',
+        'schedule': crontab(hour=4, minute=20, day_of_week=1),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Admin Console (AliExpress_Admin_Additional doc) ──
+    'ac-expire-approvals': {                 # CH1 4h dual-approval expiry
+        'task': 'admin_console.expire_stale_approvals',
+        'schedule': crontab(minute='*/15'),
+    },
+    'ac-apply-fee-changes': {                # CH10 activate due fee changes
+        'task': 'admin_console.apply_due_fee_changes',
+        'schedule': crontab(hour=0, minute=5),
+        'options': {'queue': 'nightly'},
+    },
+    'ac-publish-banners': {                  # CH21 go-live scheduled banners
+        'task': 'admin_console.publish_due_banners',
+        'schedule': crontab(minute='*/5'),
+    },
+    'ac-kpi-snapshot': {                     # CH24 daily executive KPIs
+        'task': 'admin_console.snapshot_admin_kpis',
+        'schedule': crontab(hour=4, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Angola Payments (MICHA_Payments_Angola_Deep doc CH20 jobs) ──
+    'pao-reference-expiry': {                # JOB 1 — every 15 min
+        'task': 'payments_angola.reference_expiry_sweep',
+        'schedule': crontab(minute='*/15'),
+    },
+    'pao-wallet-hold-expiry': {              # JOB 7 — every 10 min
+        'task': 'payments_angola.wallet_hold_expiry',
+        'schedule': crontab(minute='*/10'),
+    },
+    'pao-dunning': {                         # JOB 8 — every 15 min
+        'task': 'payments_angola.dunning_runner',
+        'schedule': crontab(minute='*/15'),
+    },
+    'pao-settlement-recon': {                # JOB 4 — daily after settlement
+        'task': 'payments_angola.settlement_reconciliation',
+        'schedule': crontab(hour=5, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'pao-cod-recon': {                       # JOB 5 — daily three-way COD
+        'task': 'payments_angola.cod_reconciliation',
+        'schedule': crontab(hour=5, minute=40),
+        'options': {'queue': 'nightly'},
+    },
+    'pao-wallet-integrity': {                # JOB 6 — daily ledger==cached
+        'task': 'payments_angola.wallet_integrity_check',
+        'schedule': crontab(hour=5, minute=50),
+        'options': {'queue': 'nightly'},
+    },
+    'pao-kpi-snapshot': {                    # CH24 daily payments KPIs
+        'task': 'payments_angola.snapshot_kpis',
+        'schedule': crontab(hour=6, minute=10),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Finance & Accounting (MICHA_Finance_Accounting doc) ──
+    'acct-daily-reconciliation': {           # CH3/4/5 sub-ledger vs GL
+        'task': 'accounting.daily_reconciliation',
+        'schedule': crontab(hour=6, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+    'acct-deferred-revenue': {               # CH14 monthly recognition (1st)
+        'task': 'accounting.recognise_deferred_revenue',
+        'schedule': crontab(hour=2, minute=30, day_of_month=1),
+        'options': {'queue': 'nightly'},
+    },
+    'acct-amortise': {                       # CH19 monthly amortisation (1st)
+        'task': 'accounting.amortise_capitalised',
+        'schedule': crontab(hour=2, minute=40, day_of_month=1),
+        'options': {'queue': 'nightly'},
+    },
+    'acct-statement-snapshot': {             # CH24 daily statements refresh
+        'task': 'accounting.snapshot_financials',
+        'schedule': crontab(hour=6, minute=45),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Stock Engine (MICHA_Inventory_Concurrency doc CH23 jobs) ──
+    'stock-release-expired': {               # JOB 1 — every 2 min
+        'task': 'stock_engine.release_expired_reservations',
+        'schedule': crontab(minute='*/2'),
+    },
+    'stock-oversell-monitor': {              # CH21 guardrail — every 5 min
+        'task': 'stock_engine.oversell_monitor',
+        'schedule': crontab(minute='*/5'),
+    },
+    'stock-flash-reconcile': {               # JOB 7 — every 5 min
+        'task': 'stock_engine.reconcile_flash_pools',
+        'schedule': crontab(minute='*/5'),
+    },
+    'stock-event-integrity': {               # JOB 8 — nightly 02:00
+        'task': 'stock_engine.event_sum_integrity',
+        'schedule': crontab(hour=2, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'stock-kpi-snapshot': {                  # CH24 — daily 07:00
+        'task': 'stock_engine.snapshot_kpis',
+        'schedule': crontab(hour=7, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Last-Mile (MICHA_Logistics_Angola doc CH23 jobs) ──
+    'lm-assign-shipments': {                 # JOB 1 — every 30 min
+        'task': 'last_mile.assign_pending_shipments',
+        'schedule': crontab(minute='*/30'),
+    },
+    'lm-optimise-routes': {                  # JOB 2 — daily 07:00
+        'task': 'last_mile.optimise_routes',
+        'schedule': crontab(hour=7, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'lm-auto-return': {                      # JOB 5 — daily 20:00
+        'task': 'last_mile.auto_return_failed',
+        'schedule': crontab(hour=20, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'lm-courier-scores': {                   # JOB 8 — daily
+        'task': 'last_mile.recompute_courier_scores',
+        'schedule': crontab(hour=3, minute=10),
+        'options': {'queue': 'nightly'},
+    },
+    'lm-kpi-snapshot': {                     # CH24 — daily 07:15
+        'task': 'last_mile.snapshot_kpis',
+        'schedule': crontab(hour=7, minute=15),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Buyer Experience (MICHA_Buyer_Experience_Deeper doc) ──
+    'bx-process-subscriptions': {            # CH3 — daily 06:00
+        'task': 'buyer_experience.process_due_subscriptions',
+        'schedule': crontab(hour=6, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'bx-price-drops': {                      # CH14 — every 4 hours
+        'task': 'buyer_experience.check_price_drops',
+        'schedule': crontab(minute=0, hour='*/4'),
+    },
+    'bx-expire-questions': {                 # CH7 — daily
+        'task': 'buyer_experience.expire_questions',
+        'schedule': crontab(hour=3, minute=20),
+        'options': {'queue': 'nightly'},
+    },
+    'bx-kpi-snapshot': {                     # CH24 — daily 07:30
+        'task': 'buyer_experience.snapshot_kpis',
+        'schedule': crontab(hour=7, minute=30),
+        'options': {'queue': 'nightly'},
+    },
+
+    # ── Seller Operations (Deeper) ───────────────────────────
+    'so-activate-scheduled-listings': {      # CH3 — every 5 minutes
+        'task': 'seller_operations.activate_due_scheduled_listings',
+        'schedule': crontab(minute='*/5'),
+    },
+    'so-evaluate-repricing-hourly': {        # CH5 — hourly rules
+        'task': 'seller_operations.evaluate_repricing_rules',
+        'schedule': crontab(minute=10),
+        'kwargs': {'frequency': 'hourly'},
+    },
+    'so-evaluate-repricing-daily': {         # CH5 — daily rules 05:00
+        'task': 'seller_operations.evaluate_repricing_rules',
+        'schedule': crontab(hour=5, minute=0),
+        'kwargs': {'frequency': 'daily'},
+        'options': {'queue': 'nightly'},
+    },
+    'so-escalate-refund-approvals': {        # CH9 — hourly 48h/72h escalation
+        'task': 'seller_operations.escalate_pending_refunds',
+        'schedule': crontab(minute=25),
+    },
+    'so-reorder-digest': {                   # CH13 — daily 08:00
+        'task': 'seller_operations.send_reorder_digests',
+        'schedule': crontab(hour=8, minute=0),
+        'options': {'queue': 'nightly'},
+    },
+    'so-sla-sweep': {                        # CH14 — every 30 minutes
+        'task': 'seller_operations.sweep_sla_deadlines',
+        'schedule': crontab(minute='*/30'),
+    },
+    'so-escalate-stale-holds': {             # CH15 — daily 04:10
+        'task': 'seller_operations.escalate_stale_holds',
+        'schedule': crontab(hour=4, minute=10),
+        'options': {'queue': 'nightly'},
+    },
+    'so-rescan-compliance': {                # CH16 — every 2 hours
+        'task': 'seller_operations.rescan_compliance',
+        'schedule': crontab(minute=40, hour='*/2'),
+    },
+    'so-market-benchmarks': {                # CH19 — weekly Mon 06:00
+        'task': 'seller_operations.compute_market_benchmarks',
+        'schedule': crontab(hour=6, minute=0, day_of_week=1),
+        'options': {'queue': 'nightly'},
+    },
+    'so-kpi-snapshot': {                     # CH24 — daily 07:40
+        'task': 'seller_operations.snapshot_kpis',
+        'schedule': crontab(hour=7, minute=40),
+        'options': {'queue': 'nightly'},
+    },
 
     # ── R6: Data retention enforcement ───────────────────────
     # Nightly purge of rows past their retention window. The policy
@@ -549,6 +1216,14 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 600,  # every 10 min — grace=30min by default
         'options': {'queue': 'default'},
     },
+    'refresh-saga-metrics': {
+        # Refresh saga state gauges + page on needs_attention (a failed
+        # compensation = money/stock inconsistent). Mirrors the outbox DLQ
+        # health task; 5 min so on-call is alerted within business-hours SLA.
+        'task': 'sagas.refresh_metrics',
+        'schedule': 300,
+        'options': {'queue': 'default'},
+    },
 
     # ── Bulk operations ──────────────────────────────────────
     'drive-pending-bulk-jobs': {
@@ -621,6 +1296,17 @@ CELERY_BEAT_SCHEDULE = {
         'options': {'queue': 'low'},
     },
 
+    # ── Audit-trail integrity (Audit/Compliance/SLA CH8/CH10) ──
+    # Re-verify the hash-chained admin audit trail. A broken chain means
+    # the evidence was tampered with — the task logs CRITICAL to page
+    # on-call. Hourly: detection speed matters for a security incident,
+    # and the chain walk is cheap at admin-action volume.
+    'audit-verify-admin-chain': {
+        'task': 'audit.verify_admin_chain',
+        'schedule': 3600,
+        'options': {'queue': 'low'},
+    },
+
     # ── Ledger reconciliation ─────────────────────────────────
     # Global invariant check: Σ debits == Σ credits. Cheap, runs every
     # 5 min so any drift is alertable within a minute.
@@ -690,6 +1376,17 @@ CELERY_BEAT_SCHEDULE = {
     'enforce-return-deadlines': {
         'task': 'orders.enforce_return_deadlines',
         'schedule': 1800,  # every 30 min — SLA windows are in hours/days
+        'options': {'queue': 'default'},
+    },
+    # AliExpress Technical Engineering Workflow CH 9.3 + CH 10.1
+    'expire-unpaid-orders': {
+        'task': 'orders.expire_unpaid_orders',
+        'schedule': 300,  # 5 min — mobile-money TTL is 15 min, need fine grain
+        'options': {'queue': 'high'},
+    },
+    'check-seller-shipping-deadlines': {
+        'task': 'orders.check_seller_shipping_deadlines',
+        'schedule': 4 * 3600,  # every 4 hours per spec §10.1
         'options': {'queue': 'default'},
     },
 
@@ -956,6 +1653,16 @@ if not DEBUG:
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
+# ── Row-Level Security (Security & RLS doc Part 1) ────────────────────
+# Database-layer tenant-isolation backstop. When True (and on PostgreSQL),
+# TenantContextMiddleware sets the per-request tenant context that RLS
+# policies read, and protected tables enforce isolation at the DB engine.
+# OFF by default: enabling RLS is a high-risk, staged operation (CH11) —
+# helper functions ship in apps/core (migration 0001), tables are enabled
+# per reviewed migration, and the switch is flipped only after staging
+# validation. Inert on SQLite (dev) regardless.
+RLS_ENABLED = os.environ.get('RLS_ENABLED', '0') == '1'
+
 # Image resize variants (created on upload)
 IMAGE_SIZES = {
     'thumbnail': (200, 200),
@@ -1132,7 +1839,18 @@ SES_WEBHOOK_INSECURE = os.environ.get('SES_WEBHOOK_INSECURE', '0') == '1'
 # ── Edge rate limiter (middleware/rate_limiter.py) ───────────
 # Master switch. Disable in dev / tests where the burst band would
 # fire on rapid request loops.
-RATE_LIMITER_ENABLED = os.environ.get('RATE_LIMITER_ENABLED', '1') == '1'
+#
+# Default policy:
+#   • production (DEBUG=False): ON. Real security boundary.
+#   • dev (DEBUG=True): OFF. Hot-reload + simulator + a few quick
+#     manual taps reliably trip the burst window from 127.0.0.1 and
+#     auto-ban the developer's own machine for 10 minutes. That made
+#     local iteration miserable (every couple of minutes the app
+#     would 429 → ErrorBoundary → manual Redis flush to recover).
+#     The env var still wins both ways, so you can force it ON in
+#     dev to test the limiter itself.
+_RATE_LIMITER_DEFAULT = '0' if DEBUG else '1'
+RATE_LIMITER_ENABLED = os.environ.get('RATE_LIMITER_ENABLED', _RATE_LIMITER_DEFAULT) == '1'
 
 # Paths exempt from rate limiting. Health probes from the load balancer
 # shouldn't count against any band.
@@ -1311,6 +2029,13 @@ APPYPAY_SECRET = os.environ.get('APPYPAY_SECRET', '')
 APPYPAY_MERCHANT_ID = os.environ.get('APPYPAY_MERCHANT_ID', '')
 APPYPAY_BASE_URL = os.environ.get('APPYPAY_BASE_URL', 'https://api.appypay.co.ao/v1')
 APPYPAY_WEBHOOK_URL = os.environ.get('APPYPAY_WEBHOOK_URL', '')
+# HMAC secret used to verify inbound APPYPAY payment webhooks (API doc
+# CH33 — the AUTHORITATIVE money signal). MUST be set in production: the
+# webhook handler falls back to a hardcoded 'dev-secret' when this is
+# empty, which would let anyone forge a PAID webhook and confirm an
+# unpaid order. The production boot guard (bottom of this file) refuses
+# to start if this is unset/dev outside DEBUG.
+APPYPAY_WEBHOOK_SECRET = os.environ.get('APPYPAY_WEBHOOK_SECRET', '')
 
 CSRF_COOKIE_HTTPONLY = True
 
@@ -1406,6 +2131,33 @@ if not DEBUG and not _running_under_test_or_mgmt():
             'verify_oauth2_token with empty audience accepts tokens from '
             'ANY Google project — disabling auth entirely. Set GOOGLE_CLIENT_ID '
             'or unset GOOGLE_LOGIN_ENABLED.'
+        )
+
+    # Hosting & Deployment doc CH19/CH21/CH30 — fail fast on missing
+    # production-critical config rather than discover it at runtime.
+
+    # (1) The data tier must be PostgreSQL. Without DB_NAME the config
+    # silently falls back to a local SQLite file — a production deploy on
+    # SQLite means data loss on container restart and no concurrency.
+    if DATABASES['default'].get('ENGINE', '').endswith('sqlite3'):
+        _problems.append(
+            'DATABASE: running on SQLite in production (DB_NAME unset). '
+            'Set DB_NAME/DB_USER/DB_PASSWORD/DB_HOST so the app uses '
+            'PostgreSQL — SQLite loses data on container restart and '
+            'cannot handle concurrent writes.'
+        )
+
+    # (2) APPYPAY webhook HMAC secret — the inbound payment webhook is the
+    # AUTHORITATIVE money signal (API doc CH33). When this is empty the
+    # handler falls back to the hardcoded 'dev-secret', so anyone who
+    # knows that string could forge a PAID webhook and confirm unpaid
+    # orders. Refuse to boot without a real secret.
+    if not APPYPAY_WEBHOOK_SECRET or APPYPAY_WEBHOOK_SECRET == 'dev-secret':
+        _problems.append(
+            'APPYPAY_WEBHOOK_SECRET: not set (or left as dev-secret). The '
+            'payment webhook would verify HMAC signatures against the '
+            'hardcoded dev fallback — spoofable PAID webhooks could '
+            'confirm unpaid orders. Set APPYPAY_WEBHOOK_SECRET.'
         )
 
     if _problems:

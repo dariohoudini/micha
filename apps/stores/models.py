@@ -71,3 +71,25 @@ class StoreReview(models.Model):
 
     def __str__(self):
         return f"{self.reviewer.email} → {self.store.name} ({self.rating}★)"
+
+
+class StoreCollection(models.Model):
+    """AliExpress Complete 2025 CH 19.2 — store-side product grouping.
+
+    Seller-curated named groups of their own products. Shown on the
+    store landing page as horizontal scroll rows. Different from a
+    Category (a global taxonomy) — these are merchandising units.
+    """
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='collections', db_index=True)
+    name = models.CharField(max_length=80)
+    description = models.CharField(max_length=200, blank=True)
+    ordering = models.PositiveIntegerField(default=0, db_index=True)
+    products = models.ManyToManyField('products.Product', blank=True, related_name='in_collections')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['ordering', '-created_at']
+        unique_together = ('store', 'name')
+
+    def __str__(self):
+        return f'{self.store.name} · {self.name}'

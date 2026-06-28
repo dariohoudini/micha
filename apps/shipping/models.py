@@ -4,6 +4,66 @@ from django.conf import settings
 User = settings.AUTH_USER_MODEL
 
 
+class ShippingTemplate(models.Model):
+    """AliExpress §14.1 — seller-managed reusable shipping rule set.
+
+    One seller can own many templates; each product can pick a
+    template at create time. Methods (carrier × destination × cost
+    rules) hang off ``ShippingMethod`` via FK.
+    """
+    seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='shipping_templates', db_index=True)
+    name = models.CharField(max_length=80)  # seller-facing label
+    ship_from_country = models.CharField(max_length=80, default='Angola')
+    processing_days = models.PositiveIntegerField(default=2)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_default', '-created_at']
+        indexes = [models.Index(fields=['seller', 'is_default'])]
+        unique_together = ('seller', 'name')
+
+    def save(self, *args, **kwargs):
+        if self.is_default:
+            ShippingTemplate.objects.filter(seller=self.seller, is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} ({self.seller_id})"
+
+
+class ShippingMethod(models.Model):
+    """A single carrier × destination × cost row inside a template."""
+    SERVICE_CHOICES = (
+        ('standard',  'Standard'),
+        ('express',   'Express'),
+        ('economy',   'Economy'),
+        ('dhl',       'DHL'),
+        ('fedex',     'FedEx'),
+        ('ups',       'UPS'),
+        ('local_post','Local Post'),
+        ('custom',    'Custom'),
+    )
+    template = models.ForeignKey(ShippingTemplate, on_delete=models.CASCADE, related_name='methods')
+    service = models.CharField(max_length=20, choices=SERVICE_CHOICES, default='standard')
+    custom_service_name = models.CharField(max_length=80, blank=True)
+    # JSON list of country/province slugs, or ['WORLDWIDE']
+    destinations = models.JSONField(default=list)
+    min_days = models.PositiveIntegerField(default=1)
+    max_days = models.PositiveIntegerField(default=7)
+    free_shipping = models.BooleanField(default=False)
+    cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    additional_item_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    ordering = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['ordering', 'id']
+
+    def __str__(self):
+        return f"{self.template.name} → {self.get_service_display()}"
+
+
 class ShippingAddress(models.Model):
     """Buyer's saved delivery addresses."""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='shipping_addresses')

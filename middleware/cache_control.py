@@ -107,3 +107,59 @@ class ProductETagMixin:
             response['Cache-Control'] = 'private, max-age=0, must-revalidate'
 
         return response
+
+
+class PrivateByDefaultCacheMiddleware:
+    """Secure-by-default cache headers (Caching & CDN doc CH14; Security doc
+    cache-bypass-of-RLS risk).
+
+    RLS / app-layer ownership protect the DATABASE, never a shared cache.
+    A per-user response that goes out WITHOUT a Cache-Control header relies
+    on "the CDN probably won't cache it" — exactly the accidental-leak this
+    doc warns against (one user's cart/wallet/orders served to another from
+    a shared edge). This backstop guarantees the safe default: any
+    AUTHENTICATED response that didn't deliberately set a cache policy is
+    marked ``private, no-store`` so no shared cache (CDN/proxy) can ever
+    store it. A view that genuinely wants per-user browser or CDN caching
+    opts IN explicitly (e.g. @cache_public, or its own Cache-Control header)
+    and is left untouched.
+
+    Anonymous responses are NOT forced (no per-user data to leak; public
+    cacheability is decided by the view / CDN rules). Defence in depth — it
+    complements, never replaces, the @no_cache decorator on sensitive views.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+
+        # The view already declared a cache policy → respect it (it may be
+        # a deliberate public/cacheable or no-store decision).
+        if response.has_header('Cache-Control'):
+            return response
+
+        # "Private" = any credentialed request. Token-authenticated API
+        # requests carry an Authorization header but may show AnonymousUser
+        # at the Django layer (DRF authenticates later), so check BOTH the
+        # resolved principal AND the presence of a credential header.
+        user = getattr(request, 'user', None)
+        is_private = (
+            (user is not None and getattr(user, 'is_authenticated', False))
+            or bool(request.META.get('HTTP_AUTHORIZATION'))
+        )
+        if is_private:
+            # Per-user response with no explicit policy → never let a shared
+            # cache keep it. no-store also covers the browser for safety;
+            # views wanting per-user browser caching set their own header.
+            response['Cache-Control'] = 'private, no-store'
+            # Belt-and-braces: a shared cache that ignores Cache-Control but
+            # honours Vary must still not collapse two principals' responses.
+            existing_vary = response.get('Vary', '')
+            if 'Cookie' not in existing_vary and 'Authorization' not in existing_vary:
+                response['Vary'] = (
+                    f'{existing_vary}, Cookie, Authorization' if existing_vary
+                    else 'Cookie, Authorization')
+
+        return response

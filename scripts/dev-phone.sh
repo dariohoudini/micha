@@ -70,6 +70,42 @@ Press Ctrl+C to stop both.
 
 EOF
 
+# ── Refresh capacitor.config.json with the current LAN IP ─────────
+# When the dev box switches WiFi (or wakes from sleep on a new
+# network), the previously-baked server.url in capacitor.config.json
+# goes stale and the iOS sim / phone loads a blank page until you
+# re-run the full setup script. This block makes ``make phone`` the
+# single source of truth: any time you (re)start the dev server, the
+# capacitor URL is brought in sync with the current LAN IP — no extra
+# command, no extra terminal, no fishing for IPs in System Settings.
+#
+# Safe even if you don't use iOS: the file is touched only when the
+# IP actually differs. The .prod.bak backup created by
+# scripts/dev-phone-ios.sh continues to be the rollback path before
+# shipping a production build.
+CAP_CFG="$ROOT/frontend/capacitor.config.json"
+if [ -f "$CAP_CFG" ]; then
+  CURRENT_URL=$(python3 -c "import json,sys; print(json.load(open('$CAP_CFG')).get('server',{}).get('url',''))" 2>/dev/null || echo "")
+  TARGET_URL="http://${LAN_IP}:5173"
+  if [ -n "$CURRENT_URL" ] && [ "$CURRENT_URL" != "$TARGET_URL" ]; then
+    python3 - "$CAP_CFG" "$LAN_IP" <<'PY' || true
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+cfg = json.loads(path.read_text())
+server = cfg.get("server", {})
+server["url"] = f"http://{sys.argv[2]}:5173"
+server["cleartext"] = True
+server.setdefault("androidScheme", "https")
+cfg["server"] = server
+path.write_text(json.dumps(cfg, indent=2) + "\n")
+PY
+    echo "${YELLOW}↻ capacitor.config.json server.url updated: ${TARGET_URL}${RESET}"
+    echo "${YELLOW}  iOS users: run ${BOLD}./scripts/dev-phone-ios.sh --refresh${RESET}${YELLOW} then Cmd+R in Xcode.${RESET}"
+    echo ""
+  fi
+fi
+
+
 # ── Start backend ────────────────────────────────────────────────
 # Force SQLite for dev. The project .env file declares Postgres
 # credentials for prod-like runs; config/settings.py:_read_env() uses

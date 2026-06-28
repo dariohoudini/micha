@@ -36,7 +36,8 @@ class ApplySellerVerificationView(generics.CreateAPIView):
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        verification = serializer.save(user=user)
+        # Model field is ``seller`` — not ``user``.
+        verification = serializer.save(seller=user)
 
         VerificationLog.objects.create(
             verification=verification,

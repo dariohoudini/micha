@@ -30,6 +30,44 @@ CAP_CFG="$ROOT/frontend/capacitor.config.json"
 CAP_CFG_BAK="$ROOT/frontend/capacitor.config.json.prod.bak"
 
 
+# ── Helpers ────────────────────────────────────────────────────
+# Detect the current LAN IPv4 (WiFi preferred). Echo to stdout, or
+# echo nothing on failure — caller checks for emptiness.
+detect_lan_ip() {
+  local ip=""
+  if command -v ipconfig >/dev/null 2>&1; then
+    ip=$(ipconfig getifaddr en0 2>/dev/null || true)
+    [ -n "$ip" ] && { echo "$ip"; return; }
+    ip=$(ipconfig getifaddr en1 2>/dev/null || true)
+    [ -n "$ip" ] && { echo "$ip"; return; }
+  fi
+  ifconfig 2>/dev/null \
+    | awk '/inet / && !/127.0.0.1/ && !/172.17/ {print $2; exit}'
+}
+
+# Write server.url into capacitor.config.json. Idempotent — does
+# nothing if the URL already matches the requested IP. Returns 0 on
+# unchanged, 1 on rewritten (so callers can decide whether to sync).
+patch_capacitor_url() {
+  local ip="$1"
+  python3 - "$CAP_CFG" "$ip" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+target = f"http://{sys.argv[2]}:5173"
+cfg = json.loads(path.read_text())
+server = cfg.get("server", {})
+if server.get("url") == target:
+    sys.exit(0)
+server["url"] = target
+server["cleartext"] = True
+server.setdefault("androidScheme", "https")
+cfg["server"] = server
+path.write_text(json.dumps(cfg, indent=2) + "\n")
+sys.exit(1)
+PY
+}
+
+
 # ── Subcommand: --reset reverts capacitor.config.json to prod ──
 if [ "$1" = "--reset" ]; then
   if [ -f "$CAP_CFG_BAK" ]; then
@@ -38,6 +76,34 @@ if [ "$1" = "--reset" ]; then
   else
     echo "Nothing to reset — already in production-safe mode."
   fi
+  exit 0
+fi
+
+
+# ── Subcommand: --refresh updates the LAN IP + syncs, no Xcode ──
+# Use after switching WiFi / waking from sleep when the simulator or
+# device suddenly loads a blank page because capacitor.config.json
+# still points at the old IP. Cheap: no CocoaPods, no Xcode reopen,
+# no npm rebuild — just IP detect → JSON patch → cap sync ios.
+if [ "$1" = "--refresh" ]; then
+  LAN_IP=$(detect_lan_ip)
+  if [ -z "$LAN_IP" ]; then
+    echo "${RED}✗ Could not detect LAN IP. Are you on WiFi?${RESET}"
+    exit 1
+  fi
+  # Backup before first mutation, same as the full setup path.
+  if [ ! -f "$CAP_CFG_BAK" ]; then
+    cp "$CAP_CFG" "$CAP_CFG_BAK"
+  fi
+  if patch_capacitor_url "$LAN_IP"; then
+    echo "${GREEN}✓ Capacitor already pointed at http://${LAN_IP}:5173 — nothing to do.${RESET}"
+    exit 0
+  fi
+  echo "${GREEN}✓ Capacitor server.url → http://${LAN_IP}:5173${RESET}"
+  cd "$ROOT/frontend"
+  npx cap sync ios | tail -5
+  echo ""
+  echo "${BOLD}Now in Xcode: Cmd+R to relaunch the app.${RESET}"
   exit 0
 fi
 
@@ -82,11 +148,7 @@ echo "${GREEN}   ✓ CocoaPods: $(pod --version 2>/dev/null | head -1)${RESET}"
 # ── Step 3: Detect LAN IP ──────────────────────────────────────
 echo "${BOLD}${BLUE}[3/5]${RESET} Detecting LAN IP for live-reload…"
 
-LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
-if [ -z "$LAN_IP" ]; then
-  LAN_IP=$(ifconfig 2>/dev/null | awk '/inet / && !/127.0.0.1/ && !/172.17/ {print $2; exit}')
-fi
-
+LAN_IP=$(detect_lan_ip)
 if [ -z "$LAN_IP" ]; then
   echo "${RED}✗ Could not detect LAN IP. Are you on WiFi?${RESET}"
   exit 1
@@ -104,18 +166,7 @@ if [ ! -f "$CAP_CFG_BAK" ]; then
   echo "${GREEN}   ✓ Backed up production config to capacitor.config.json.prod.bak${RESET}"
 fi
 
-# Use Python for clean JSON edit (jq isn't always installed).
-python3 - <<PY
-import json, pathlib
-p = pathlib.Path("$CAP_CFG")
-cfg = json.loads(p.read_text())
-cfg["server"] = {
-    "url":       "http://${LAN_IP}:5173",
-    "cleartext": True,
-    "androidScheme": cfg.get("server", {}).get("androidScheme", "https"),
-}
-p.write_text(json.dumps(cfg, indent=2) + "\n")
-PY
+patch_capacitor_url "$LAN_IP" || true  # rewrites if needed; exit code is info-only here
 
 echo "${GREEN}   ✓ Capacitor will load from http://${LAN_IP}:5173${RESET}"
 

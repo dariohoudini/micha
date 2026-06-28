@@ -4,7 +4,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from apps.seo.views import HealthCheckView, robots_txt, sitemap_xml
 from apps.seo.well_known import apple_app_site_association, assetlinks_json
-from apps.monitoring.health import healthz, readyz
+from apps.monitoring.health import healthz, readyz, build_info
 
 ADMIN_URL = getattr(settings, "ADMIN_URL", "admin/")
 
@@ -12,9 +12,20 @@ urlpatterns = [
     path(ADMIN_URL, admin.site.urls),
     # Split liveness vs readiness — see apps/monitoring/health.py.
     # /health/ kept as legacy alias for existing callers.
+    #   /health/live  + /health/ready  — canonical paths the Hosting &
+    #   Deployment spec (CH8 Dockerfile HEALTHCHECK, CH11 nginx /health/*,
+    #   Part 2 readiness probe) expects. Aliased to the same liveness /
+    #   readiness handlers so the container + load-balancer probes work
+    #   exactly as specified. /healthz + /readyz kept for existing callers.
     path("healthz", healthz, name="healthz"),
     path("readyz", readyz, name="readyz"),
+    path("health/live", healthz, name="health-live"),
+    path("health/ready", readyz, name="health-ready"),
     path("health/", HealthCheckView.as_view(), name="health"),
+    # CI/CD & VC doc CH13/CH20 — "what version is live?" must always be
+    # answerable. Stamped by the build pipeline (commit SHA / version /
+    # build time), surfaced here for incident response + deploy traceability.
+    path("version", build_info, name="build-info"),
     path("metrics", include("apps.telemetry.urls")),
     path("robots.txt", robots_txt, name="robots-txt"),
     path("sitemap.xml", sitemap_xml, name="sitemap"),
@@ -70,6 +81,27 @@ urlpatterns = [
     path("api/v1/reviews/",         include("apps.reviews.urls")),
     path("api/v1/reports/",         include("apps.reports.urls")),
     path("api/v1/seller/",          include("apps.seller.urls")),
+    path("api/v1/seller-onboarding/", include("apps.seller_onboarding.urls")),
+    path("api/v1/buyer-engagement/",  include("apps.buyer_engagement.urls")),
+    path("api/v1/payment-gateways/",  include("apps.payment_gateways.urls")),
+    path("api/v1/fraud-engine/",      include("apps.fraud_engine.urls")),
+    path("api/v1/marketing-engine/",  include("apps.marketing_engine.urls")),
+    path("api/v1/pricing-inventory/", include("apps.pricing_inventory.urls")),
+    path("api/v1/logistics-ops/",     include("apps.logistics_ops.urls")),
+    path("api/v1/payment-ops/",       include("apps.payment_ops.urls")),
+    path("api/v1/cs-ops/",            include("apps.cs_ops.urls")),
+    path("api/v1/trust-safety/",      include("apps.trust_safety.urls")),
+    path("api/v1/search-discovery/",  include("apps.search_discovery.urls")),
+    path("api/v1/data-analytics/",    include("apps.data_analytics.urls")),
+    path("api/v1/mobile/",            include("apps.mobile_app.urls")),
+    path("api/v1/seller-tools/",      include("apps.seller_tools.urls")),
+    path("api/v1/admin-console/",     include("apps.admin_console.urls")),
+    path("api/v1/payments-ao/",       include("apps.payments_angola.urls")),
+    path("api/v1/accounting/",        include("apps.accounting.urls")),
+    path("api/v1/stock/",             include("apps.stock_engine.urls")),
+    path("api/v1/last-mile/",         include("apps.last_mile.urls")),
+    path("api/v1/buyer-experience/",  include("apps.buyer_experience.urls")),
+    path("api/v1/seller-operations/", include("apps.seller_operations.urls")),
     path("api/v1/inventory/",       include("apps.inventory.urls")),
     path("api/v1/analytics/",       include("apps.analytics.urls")),
     path("api/v1/admin-actions/",   include("apps.admin_actions.urls")),

@@ -35,7 +35,6 @@ const isNative = () => {
   try {
     // Avoid eager-importing @capacitor/core in non-native context —
     // some test/SSR paths don't have it.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Capacitor } = require('@capacitor/core')
     return Capacitor.isNativePlatform()
   } catch {

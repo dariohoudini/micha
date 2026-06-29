@@ -214,6 +214,18 @@ CORS_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('CORS_ALLOWED_ORIGINS'
 if not DEBUG:
     CORS_ALLOWED_ORIGINS = [o for o in os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',') if o]
 
+# The Capacitor native WebView presents non-http origins that
+# django-cors-headers refuses to accept in CORS_ALLOWED_ORIGINS (it validates
+# the scheme), so the iOS/Android app must be allowed via regex instead. These
+# origins are CONSTANT across dev AND prod — the shipped mobile app always
+# presents them regardless of which API host it calls — so they apply in both:
+#   iOS native WebView     -> capacitor://localhost
+#   Android native WebView -> http://localhost or https://localhost
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r'^capacitor://localhost$',
+    r'^https?://localhost$',
+]
+
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',') if o]
 
 ROOT_URLCONF = 'config.urls'

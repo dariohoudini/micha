@@ -213,7 +213,7 @@ jobs:
             apps/fx apps/payments apps/outbox \
             apps/users apps/orders apps/disputes \
             apps/core apps/payments_angola apps/sagas \
-            apps/admin_actions apps/seller_operations \
+            apps/admin_actions apps/admin_console apps/seller_operations \
             apps/telemetry apps/monitoring \
             --tb=long \
             --junit-xml=/tmp/pytest_report.xml \
@@ -230,10 +230,11 @@ jobs:
         # with tests must be added here — that's intentional friction.
         #
         # The second block (core/payments_angola/sagas/admin_actions/
-        # seller_operations/telemetry/monitoring) is the SECURITY &
-        # INTEGRITY layer: RLS isolation, payment webhook-replay, step-up
-        # auth, rate-limit fail-open/closed, RBAC matrix, audit-chain
-        # tamper-evidence, saga recovery, GMV/health metrics. These live
+        # admin_console/seller_operations/telemetry/monitoring) is the
+        # SECURITY & INTEGRITY layer: RLS isolation, payment webhook-replay,
+        # step-up auth, rate-limit fail-open/closed, the seller AND admin
+        # RBAC permission matrices, audit-chain tamper-evidence, saga
+        # recovery, GMV/health metrics. These live
         # in `tests_*.py` files — only collected because pytest.ini's
         # python_files includes the `tests_*.py` glob. If you ever see
         # the security count drop, check that glob first.

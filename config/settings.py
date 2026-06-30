@@ -44,6 +44,13 @@ _DEV_SECRET_KEY = 'django-insecure-dev-only-change-in-production'
 SECRET_KEY = os.environ.get('SECRET_KEY', _DEV_SECRET_KEY)
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
+# Dev convenience: the iOS Simulator / a physical phone reaches the dev server
+# via the Mac's LAN IP (which changes with the network), not 127.0.0.1. Allow
+# any host in DEBUG so on-device testing works without chasing the IP — even if
+# a (stale) ALLOWED_HOSTS is set in a local .env. Prod (DEBUG=False) keeps the
+# explicit allow-list above and the boot guard, so this never loosens prod.
+if DEBUG:
+    ALLOWED_HOSTS = ['*']
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 ADMIN_URL = os.environ.get('ADMIN_URL', 'admin/')
 

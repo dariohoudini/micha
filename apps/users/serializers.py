@@ -104,7 +104,10 @@ class UserSerializer(serializers.ModelSerializer):
         # FIX: Explicit read-only fields — is_staff and is_verified_seller CANNOT be set via API
         fields = [
             'id', 'email', 'phone', 'username',
-            'is_seller', 'is_verified_seller',
+            # is_staff/is_superuser were only in read_only_fields (which does
+            # nothing unless the field is also in `fields`), so the profile
+            # never returned them → the app couldn't route admins to /admin.
+            'is_seller', 'is_verified_seller', 'is_staff', 'is_superuser',
             'is_email_verified', 'is_phone_verified',
             'two_fa_enabled', 'status', 'date_joined',
             'language', 'currency', 'dark_mode',

@@ -133,7 +133,10 @@ export const useAuthStore = create(
       updateUser: (updates) => {
         const updated = { ...get().user, ...updates }
         tokenStorage.setUser(updated)
-        set({ user: updated, isSeller: updated.is_seller || false })
+        // Must also refresh isStaff — login awaits getProfile() then reads
+        // isStaff from the store to route admins to /admin. Without this it
+        // stayed false and staff landed on the buyer home.
+        set({ user: updated, isSeller: updated.is_seller || false, isStaff: updated.is_staff || false })
       },
     }),
     {

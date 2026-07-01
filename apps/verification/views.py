@@ -57,7 +57,10 @@ class MyVerificationStatusView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        return get_object_or_404(SellerVerification, user=self.request.user)
+        # SellerVerification's FK to the user is ``seller`` (there is no
+        # ``user`` field) — querying user= raised FieldError → 500 on every
+        # call to the verification-status endpoint.
+        return get_object_or_404(SellerVerification, seller=self.request.user)
 
 
 class UpdateSelfieView(APIView):

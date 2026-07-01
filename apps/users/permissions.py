@@ -10,6 +10,25 @@ from rest_framework.permissions import BasePermission
 from middleware.security import log_security_event
 
 
+class IsNotAdminStaff(BasePermission):
+    """Admins are management-only: they may NOT buy or sell on the platform.
+
+    Apply to the buyer 'buy' actions (checkout / order creation) and the
+    seller 'sell' actions (product creation / seller onboarding) so a staff /
+    superuser account is blocked from commerce. Read/list endpoints are left
+    open; this only gates the commit actions. Pairs with IsSellerOrSuperuser
+    on sell endpoints — the two together let a real seller through while
+    denying staff (DRF ANDs permission_classes).
+    """
+    message = 'Admin accounts cannot buy or sell — the console is for platform management only.'
+
+    def has_permission(self, request, view):
+        u = request.user
+        if not (u and u.is_authenticated):
+            return False
+        return not (u.is_staff or u.is_superuser)
+
+
 class IsNotSuspended(BasePermission):
     """Block suspended or banned users from all actions."""
     message = 'Your account has been suspended. Contact support.'

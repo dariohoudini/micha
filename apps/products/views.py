@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 
-from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser
+from apps.users.permissions import IsNotSuspended, IsSellerOrSuperuser, IsNotAdminStaff
 from apps.idempotency.decorators import idempotent
 from .models import Product, Category, ProductImage, ProductQA
 from .serializers import (
@@ -388,7 +388,10 @@ class ProductCreateView(generics.CreateAPIView):
     only defence.
     """
     serializer_class = ProductWriteSerializer
-    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
+    # IsNotAdminStaff: admins are management-only and cannot sell (create
+    # listings). A real seller (is_seller, not staff) still passes.
+    permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser,
+                          IsNotSuspended, IsNotAdminStaff]
 
     @idempotent(required=True)
     def post(self, request, *args, **kwargs):

@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.parsers import MultiPartParser
 
-from apps.users.permissions import IsNotSuspended, IsBuyerOfOrder, IsSellerOrSuperuser
+from apps.users.permissions import IsNotSuspended, IsBuyerOfOrder, IsSellerOrSuperuser, IsNotAdminStaff
 from apps.idempotency.decorators import idempotent
 from middleware.security import log_security_event
 from .models import Order, OrderItem, Refund, OrderTrackingEvent
@@ -57,7 +57,8 @@ class RefundSerializer(serializers.ModelSerializer):
 
 
 class CheckoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    # IsNotAdminStaff: admins are management-only and cannot buy (checkout).
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsNotAdminStaff]
     throttle_classes = [CheckoutThrottle]
 
     # Idempotency-Key is MANDATORY on checkout.

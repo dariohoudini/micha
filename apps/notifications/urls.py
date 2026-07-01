@@ -5,9 +5,17 @@ from .views import (
     UnsubscribeView, SESWebhookView,
 )
 from .whatsapp_webhook import whatsapp_webhook
+from .broadcast_service import BroadcastListView, BroadcastSendView
 
 
 urlpatterns = [
+    # Admin platform-wide broadcast (staff-only via IsAdminUser). The views
+    # existed but were never wired to a URL, so the admin console had no way
+    # to send a message to all users.
+    path("admin/broadcasts/", BroadcastListView.as_view(), name="broadcast-list"),
+    path("admin/broadcasts/<int:broadcast_id>/send/",
+         BroadcastSendView.as_view(), name="broadcast-send"),
+
     path("", NotificationListView.as_view(), name="list"),
     path("unread-count/", UnreadCountView.as_view(), name="unread-count"),
     path("mark-all-read/", MarkAllReadView.as_view(), name="mark-all-read"),

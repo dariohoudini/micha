@@ -4,7 +4,7 @@ FIX: DynamicFieldsMixin — ?fields=id,title,price returns only those fields
      Mobile apps no longer download 30 fields when they need 4
 """
 from rest_framework import serializers
-from .models import Product, Category, ProductImage, ProductQA, PriceTier
+from .models import Product, Category, ProductImage, ProductQA, PriceTier, ProductTag
 from apps.inventory.models import ProductVariantCombo
 
 
@@ -200,6 +200,12 @@ class ProductWriteSerializer(serializers.ModelSerializer):
     """Serialiser for creating/updating products — explicit writable fields only."""
     # §15 — accept attributes as JSON string from FormData payloads.
     attributes = _JSONStringField(required=False)
+    # Tags arrive from the seller as free text (a comma-separated string or a
+    # list of names), NOT primary keys — so accept names and get-or-create the
+    # ProductTag rows below. The default ModelSerializer M2M field expects PKs,
+    # which 400s the product-create form ("Expected pk value, received str").
+    tags = serializers.CharField(required=False, allow_blank=True,
+                                 write_only=True)
 
     class Meta:
         model = Product
@@ -226,6 +232,33 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         if value < 0:
             raise serializers.ValidationError("Quantity cannot be negative.")
         return value
+
+    def _apply_tags(self, product, raw):
+        """Turn free-text tag input ('casual, verão' or ['casual','verão'])
+        into ProductTag rows and attach them."""
+        if raw in (None, ''):
+            return
+        names = raw if isinstance(raw, (list, tuple)) else str(raw).split(',')
+        cleaned = []
+        for n in names:
+            n = (n or '').strip()[:50]
+            if n:
+                cleaned.append(n)
+        tags = [ProductTag.objects.get_or_create(name=n)[0] for n in cleaned]
+        product.tags.set(tags)
+
+    def create(self, validated_data):
+        raw_tags = validated_data.pop('tags', None)
+        product = super().create(validated_data)
+        self._apply_tags(product, raw_tags)
+        return product
+
+    def update(self, instance, validated_data):
+        raw_tags = validated_data.pop('tags', None)
+        product = super().update(instance, validated_data)
+        if raw_tags is not None:
+            self._apply_tags(product, raw_tags)
+        return product
 
 
 class ProductQASerializer(serializers.ModelSerializer):

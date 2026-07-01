@@ -13,7 +13,7 @@ urlpatterns = [
     # existed but were never wired to a URL, so the admin console had no way
     # to send a message to all users.
     path("admin/broadcasts/", BroadcastListView.as_view(), name="broadcast-list"),
-    path("admin/broadcasts/<int:broadcast_id>/send/",
+    path("admin/broadcasts/<uuid:broadcast_id>/send/",
          BroadcastSendView.as_view(), name="broadcast-send"),
 
     path("", NotificationListView.as_view(), name="list"),

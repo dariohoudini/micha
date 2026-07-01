@@ -14,6 +14,7 @@ import uuid
 class BroadcastNotification(models.Model):
     """Records every broadcast sent for audit and analytics."""
     SEGMENT_TYPES = [
+        ('all',               'Todos os utilizadores'),
         ('all_buyers',        'Todos os compradores'),
         ('all_sellers',       'Todos os vendedores'),
         ('province',          'Província específica'),
@@ -73,7 +74,11 @@ class BroadcastService:
         User = get_user_model()
         qs = User.objects.filter(is_active=True)
 
-        if segment == 'all_buyers':
+        if segment == 'all':
+            # Everyone active except admins (admins are management-only and
+            # don't receive platform broadcasts meant for buyers/sellers).
+            qs = qs.filter(is_staff=False)
+        elif segment == 'all_buyers':
             qs = qs.filter(is_seller=False, is_staff=False)
         elif segment == 'all_sellers':
             qs = qs.filter(is_seller=True)

@@ -97,6 +97,7 @@ const AdminChargebacksPage  = lazy(() => import('@/pages/admin/AdminChargebacksP
 const AdminAMLPage          = lazy(() => import('@/pages/admin/AdminAMLPage'))
 const SellerDashboardR7Page = lazy(() => import('@/pages/seller/SellerDashboardR7Page'))
 const AdminCommandCenterPage = lazy(() => import('@/pages/admin/AdminCommandCenterPage'))
+const AdminBroadcastPage    = lazy(() => import('@/pages/admin/AdminBroadcastPage'))
 
 function PageLoader() {
   return (
@@ -365,6 +366,7 @@ export default function App() {
             <Route path="/admin/aml"           element={<A><AdminAMLPage /></A>} />
             <Route path="/seller/analytics-r7" element={<S><SellerDashboardR7Page /></S>} />
             <Route path="/admin/command-center" element={<A><AdminCommandCenterPage /></A>} />
+            <Route path="/admin/broadcast"     element={<A><AdminBroadcastPage /></A>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

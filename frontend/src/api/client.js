@@ -117,6 +117,18 @@ api.interceptors.request.use(
 let isRefreshing = false
 let failedQueue = []
 
+// Redirect to /login WITHOUT looping. The old code did a hard
+// `window.location.href='/login'` on every 401-with-no-refresh; if a
+// background request (e.g. cart) keeps 401ing, that full reload re-fires the
+// request → 401 → reload → "flashing". Guard: only navigate if not already on
+// /login, and use replace() so we don't stack history.
+const redirectToLogin = () => {
+  if (typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/login')) {
+    window.location.replace('/login')
+  }
+}
+
 const processQueue = (error, token = null) => {
   failedQueue.forEach(({ resolve, reject }) => {
     if (error) reject(error)
@@ -213,13 +225,18 @@ api.interceptors.response.use(
 
       if (!refreshToken) {
         tokenStorage.clearAll()
-        window.location.href = '/login'
+        redirectToLogin()
         return Promise.reject(error)
       }
 
       try {
+        // Use the SAME base as the api instance (relative '' in dev → Vite
+        // proxy → Django). The old hardcoded http://127.0.0.1:8000 was
+        // unreachable from the iOS simulator, so EVERY token refresh failed
+        // → forced logout + a hard-reload loop ("flashing").
+        const refreshBase = api.defaults.baseURL || ''
         const { data } = await axios.post(
-          `${import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'}/api/v1/auth/token/refresh/`,
+          `${refreshBase}/api/v1/auth/token/refresh/`,
           { refresh: refreshToken }
         )
         tokenStorage.setAccessToken(data.access)
@@ -229,7 +246,7 @@ api.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError, null)
         tokenStorage.clearAll()
-        window.location.href = '/login'
+        redirectToLogin()
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false

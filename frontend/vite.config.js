@@ -7,6 +7,10 @@ export default defineConfig({
 
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
+    // Force a SINGLE copy of React. Without this, if dep pre-bundling is
+    // skipped (e.g. the optional @sentry/browser scan failing), React can
+    // load twice → "Invalid hook call" crashes every page in dev.
+    dedupe: ['react', 'react-dom'],
   },
 
   server: {
@@ -17,6 +21,10 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: false,
+    // Vite 8 blocks Host headers not in this list (DNS-rebinding guard).
+    // The iOS Simulator / a phone reaches us via the Mac's .local hostname
+    // or LAN IP, so allow any host in dev. Dev-only; never used in prod.
+    allowedHosts: true,
     proxy: {
       // Dev-only proxy: when phone hits 172.x.x.x:5173 the page
       // makes calls to "/api/..." (relative), Vite forwards to the
@@ -50,5 +58,9 @@ export default defineConfig({
 
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-router-dom', 'axios', 'zustand', '@tanstack/react-query'],
+    // @sentry/browser is intentionally NOT installed (lazy/optional — only
+    // used when VITE_SENTRY_DSN is set). Excluding it stops the dep scan
+    // from failing and skipping pre-bundling (which broke React dedup).
+    exclude: ['@sentry/browser'],
   },
 })

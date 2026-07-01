@@ -88,11 +88,40 @@ export default function AdminSellersPage() {
                     </span>
                   </div>
 
-                  {v.id_document_url && (
-                    <a href={v.id_document_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: `1px solid ${BORDER}`, color: BLUE, fontFamily: "'DM Sans'", fontSize: 12, textDecoration: 'none', marginBottom: 12 }}>
-                      📄 Ver documento de identidade
-                    </a>
-                  )}
+                  {/* Identity details */}
+                  <div style={{ background: '#0d0d0d', border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontFamily: "'DM Sans'", fontSize: 11, color: MUTED }}>Nº do BI / Identidade</span>
+                      <span style={{ fontFamily: "'DM Sans'", fontSize: 13, color: TEXT, fontWeight: 600 }}>{v.id_number || '—'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontFamily: "'DM Sans'", fontSize: 11, color: MUTED }}>Validade</span>
+                      <span style={{ fontFamily: "'DM Sans'", fontSize: 13, color: v.is_id_expired ? RED : TEXT }}>
+                        {v.id_expiry_date ? new Date(v.id_expiry_date).toLocaleDateString('pt-AO') : '—'}{v.is_id_expired ? ' · expirado' : ''}
+                      </span>
+                    </div>
+                    {v.id_validation_error && (
+                      <p style={{ fontFamily: "'DM Sans'", fontSize: 11, color: RED, margin: '6px 0 0' }}>⚠ {v.id_validation_error}</p>
+                    )}
+                  </div>
+
+                  {/* Documents + selfie */}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {v.selfie_url && (
+                      <a href={v.selfie_url} target="_blank" rel="noreferrer">
+                        <img src={v.selfie_url} alt="selfie" style={{ width: 52, height: 52, borderRadius: 8, objectFit: 'cover', border: `1px solid ${BORDER}` }} />
+                      </a>
+                    )}
+                    {v.id_document_url && (
+                      <a href={v.id_document_url} target="_blank" rel="noreferrer" style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${BORDER}`, color: BLUE, fontFamily: "'DM Sans'", fontSize: 12, textDecoration: 'none' }}>📄 BI (frente)</a>
+                    )}
+                    {v.id_document_back_url && (
+                      <a href={v.id_document_back_url} target="_blank" rel="noreferrer" style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${BORDER}`, color: BLUE, fontFamily: "'DM Sans'", fontSize: 12, textDecoration: 'none' }}>📄 BI (verso)</a>
+                    )}
+                    {!v.id_document_url && !v.selfie_url && (
+                      <span style={{ fontFamily: "'DM Sans'", fontSize: 12, color: MUTED }}>Sem documentos carregados</span>
+                    )}
+                  </div>
 
                   {v.status === 'pending' && (
                     <div style={{ display: 'flex', gap: 8 }}>

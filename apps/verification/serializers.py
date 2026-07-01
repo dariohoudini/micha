@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from .models import SellerVerification, VerificationLog, validate_angolan_bi
 
@@ -16,6 +17,14 @@ class SellerVerificationSerializer(serializers.ModelSerializer):
     is_id_expired = serializers.SerializerMethodField()
     needs_selfie_update = serializers.SerializerMethodField()
     id_validation_error = serializers.SerializerMethodField()
+    # Fields the admin KYC console reads. The raw ImageField serialises to a
+    # relative path and the FK to just an id, so the admin UI (which expects
+    # ``id_document_url`` / ``seller_email`` / ``submitted_at``) showed nothing.
+    seller_email = serializers.SerializerMethodField()
+    submitted_at = serializers.SerializerMethodField()
+    id_document_url = serializers.SerializerMethodField()
+    id_document_back_url = serializers.SerializerMethodField()
+    selfie_url = serializers.SerializerMethodField()
 
     class Meta:
         model = SellerVerification
@@ -31,6 +40,8 @@ class SellerVerificationSerializer(serializers.ModelSerializer):
             # ImproperlyConfigured on every instantiation.
             'is_id_expired', 'needs_selfie_update',
             'id_validation_error', 'created_at', 'updated_at', 'logs',
+            'seller_email', 'submitted_at', 'id_document_url',
+            'id_document_back_url', 'selfie_url',
             # AliExpress §4.2 — business-account additional documents.
             'business_licence', 'bank_proof', 'power_of_attorney',
             'id_document_back', 'is_business_account',
@@ -41,13 +52,60 @@ class SellerVerificationSerializer(serializers.ModelSerializer):
         ]
 
     def get_is_id_expired(self, obj):
-        return obj.is_id_expired()
+        # The model has no is_id_expired() method — compute from the stored
+        # expiry date. A missing date is treated as "not expired" so the
+        # admin list never crashes on a partially-filled record.
+        if not obj.id_expiry_date:
+            return False
+        return obj.id_expiry_date <= timezone.now().date()
 
     def get_needs_selfie_update(self, obj):
-        return obj.needs_selfie_update()
+        # No last_selfie_update field on the model → nothing to compare
+        # against. Kept for API shape; always False until periodic
+        # re-verification is implemented.
+        return False
 
     def get_id_validation_error(self, obj):
-        return obj.get_id_validation_error()
+        # Surface a BI-format problem to the admin reviewer without crashing
+        # the list. Decrypting id_number can raise if the key rotated, so
+        # guard everything.
+        try:
+            value = obj.id_number
+            if not value:
+                return None
+            validate_angolan_bi(value)
+        except ValidationError as exc:
+            return exc.messages[0] if getattr(exc, 'messages', None) else str(exc)
+        except Exception:
+            return None
+        return None
+
+    def get_seller_email(self, obj):
+        return getattr(obj.seller, 'email', None)
+
+    def get_submitted_at(self, obj):
+        return obj.created_at
+
+    def _abs(self, filefield):
+        """Absolute media URL so the mobile WebView can load it from Django
+        (its own origin can't serve /media/)."""
+        if not filefield:
+            return None
+        try:
+            url = filefield.url
+        except ValueError:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(url) if request else url
+
+    def get_id_document_url(self, obj):
+        return self._abs(obj.id_document)
+
+    def get_id_document_back_url(self, obj):
+        return self._abs(obj.id_document_back)
+
+    def get_selfie_url(self, obj):
+        return self._abs(obj.selfie)
 
     def validate_id_number(self, value):
         """Validate Angolan BI number format on submission."""

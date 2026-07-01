@@ -30,6 +30,7 @@ export default defineConfig({
       // makes calls to "/api/..." (relative), Vite forwards to the
       // Django dev server on 127.0.0.1:8000.
       '/api':  { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/media': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/ws':   { target: 'ws://127.0.0.1:8001',   ws: true, changeOrigin: true },
       // Backend serves AASA + sitemap + robots at the root.
       '/.well-known': { target: 'http://127.0.0.1:8000', changeOrigin: true },

@@ -71,7 +71,7 @@ class UpdateSelfieView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def post(self, request):
-        verification = get_object_or_404(SellerVerification, user=request.user)
+        verification = get_object_or_404(SellerVerification, seller=request.user)
 
         if verification.status != 'approved':
             return Response(
@@ -99,7 +99,9 @@ class AdminVerificationListView(generics.ListAPIView):
 
     def get_queryset(self):
         status_filter = self.request.query_params.get('status')
-        qs = SellerVerification.objects.select_related('user').prefetch_related('logs')
+        # FK to the user is ``seller`` — select_related('user') raised
+        # FieldError → 500 on the whole admin KYC list.
+        qs = SellerVerification.objects.select_related('seller').prefetch_related('logs')
         if status_filter:
             qs = qs.filter(status=status_filter)
         return qs.order_by('-created_at')
@@ -121,11 +123,13 @@ class AdminVerificationActionView(APIView):
         note = serializer.validated_data.get('note', '')
 
         verification.status = action
-        verification.rejection_reason = note if action == 'rejected' else None
+        # rejection_reason is a non-null TextField — store '' not None or the
+        # save would violate NOT NULL on Postgres.
+        verification.rejection_reason = note if action == 'rejected' else ''
         verification.save()
 
-        # Sync user flags
-        user = verification.user
+        # Sync user flags. FK is ``seller`` (there is no ``user`` field).
+        user = verification.seller
         if action == 'approved':
             user.is_seller = True
             user.is_verified_seller = True

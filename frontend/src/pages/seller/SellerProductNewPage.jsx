@@ -1089,6 +1089,9 @@ export default function SellerProductNewPage() {
     s.add(5)  // variants is always considered complete (optional toggle)
     if (form.processing_days) s.add(6)
     s.add(7)  // attributes are all optional
+    s.add(8)  // review step — nothing to fill, always complete (otherwise
+              // completed.size can never reach TOTAL_STEPS and the Publish
+              // button stays permanently disabled)
     return s
   }, [form, images])
 

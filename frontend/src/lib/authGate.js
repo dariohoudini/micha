@@ -66,24 +66,24 @@ const REPLAY_HANDLERS = {
   add_to_cart: async ({ product_id, quantity = 1, variant_id }) => {
     if (!product_id) return
     const { default: api } = await import('@/api/client')
-    await api.post('/api/v1/cart/items/', {
-      product_id, quantity, variant_id,
+    await api.post('/api/v1/cart/add/', {
+      product_id, quantity, variant_combo_id: variant_id,
     })
   },
   wishlist_add: async ({ product_id }) => {
     if (!product_id) return
     const { default: api } = await import('@/api/client')
-    await api.post(`/api/v1/products/${product_id}/wishlist/`)
+    await api.post('/api/v1/wishlist/add/', { product_id })
   },
   follow_seller: async ({ seller_id }) => {
     if (!seller_id) return
     const { default: api } = await import('@/api/client')
-    await api.post(`/api/v1/sellers/${seller_id}/follow/`)
+    await api.post(`/api/v1/seller-tools/stores/${seller_id}/follow/`)
   },
   collect_coupon: async ({ coupon_id }) => {
     if (!coupon_id) return
     const { default: api } = await import('@/api/client')
-    await api.post(`/api/v1/coupons/${coupon_id}/collect/`)
+    await api.post('/api/v1/promotions/coupons/collect/', { coupon_id })
   },
   // Pure-navigation gates (cart_tab, account_tab, checkout) carry no
   // side-effect — just the returnTo navigation handles them.

@@ -189,6 +189,7 @@ class BroadcastSendView(APIView):
 
         # Outbox: durable intent. Survives broker outage; dispatcher
         # picks it up and runs send_broadcast_task inline.
+        from django.conf import settings as _settings
         from django.db import transaction as _tx
         from apps.outbox.service import publish as _ob_publish
         with _tx.atomic():
@@ -200,6 +201,22 @@ class BroadcastSendView(APIView):
                 dedupe_key=f'broadcast.queued:{broadcast.id}',
                 ref_type='broadcast', ref_id=str(broadcast.id),
             )
+
+        # Dev delivery (DEBUG only): no celery beat runs locally, so the
+        # outbox would sit undrained forever and users would never see
+        # the broadcast. Drain inline right after commit — the same
+        # idempotent work the beat 'outbox.drain' job does in production
+        # (where this branch is skipped and fan-out stays async).
+        if _settings.DEBUG:
+            def _drain_now():
+                try:
+                    from apps.outbox.dispatcher import drain
+                    drain(batch_size=20)
+                except Exception:
+                    import logging
+                    logging.getLogger('outbox').exception(
+                        'inline dev drain after broadcast send failed')
+            _tx.on_commit(_drain_now)
 
         return Response({
             'status': 'sending',

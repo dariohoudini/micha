@@ -22,10 +22,37 @@ def send_broadcast_task(broadcast_id: str):
         broadcast.segment, broadcast.segment_value
     )
 
+    # In-app channel: the actual Notification rows the app's sino (bell)
+    # lists. This was MISSING — 'inapp'/'both' broadcasts marked
+    # themselves sent without any user ever seeing anything. Idempotent
+    # via the broadcast_id in data: re-running skips users who already
+    # got this broadcast.
+    inapp_rows = 0
+    if broadcast.channel in ('inapp', 'both'):
+        from .models import Notification
+        already = set(
+            Notification.objects.filter(
+                data__broadcast_id=str(broadcast.id)
+            ).values_list('user_id', flat=True)
+        )
+        to_create = [
+            Notification(
+                user_id=user_id, type='system',
+                title=broadcast.title, message=broadcast.body,
+                data={'type': 'broadcast', 'broadcast_id': str(broadcast.id),
+                      'deep_link': broadcast.deep_link},
+            )
+            for user_id in target_users if user_id not in already
+        ]
+        inapp_rows = len(Notification.objects.bulk_create(to_create, batch_size=500))
+
     sent = 0
     for user_id in target_users:
-        try:
-            if broadcast.channel in ('push', 'both'):
+        if broadcast.channel in ('push', 'both'):
+            # Push enqueue failure (e.g. no broker in dev) must not zero
+            # the recipient count — the in-app rows above were already
+            # delivered to these same users.
+            try:
                 send_push_notification.delay(
                     user_id=str(user_id),
                     title=broadcast.title,
@@ -36,16 +63,17 @@ def send_broadcast_task(broadcast_id: str):
                         'deep_link': broadcast.deep_link,
                     }
                 )
-            sent += 1
-        except Exception as e:
-            logger.error(f"Broadcast send failed for user {user_id}: {e}")
+            except Exception as e:
+                logger.error(f"Broadcast push enqueue failed for user {user_id}: {e}")
+        sent += 1
 
     broadcast.status = 'sent'
     broadcast.sent_at = timezone.now()
     broadcast.recipient_count = sent
     broadcast.save()
 
-    logger.info(f"Broadcast {broadcast_id} sent to {sent} users")
+    logger.info(f"Broadcast {broadcast_id} sent to {sent} users "
+                f"({inapp_rows} in-app rows)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

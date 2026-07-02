@@ -10,7 +10,7 @@ import { useSellerDashboard, useSellerOrders } from '@/hooks/useQueries'
 // Seller AI assistant helper
 const askSellerAI = async (message) => {
   try {
-    const res = await client.post('/api/v1/ai/chat/', {
+    const res = await client.post('/api/v1/ai/chat/start/', {
       message,
       context: 'seller_assistant',
     })

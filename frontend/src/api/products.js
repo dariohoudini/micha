@@ -25,7 +25,7 @@ export const productsAPI = {
   }}),
 
   getPersonalisedFeed: (cursor) => api.get('/api/v1/recommendations/feed/', { params: { cursor } }),
-  getSimilarProducts: (productId) => api.get(`/api/v1/recommendations/similar/${productId}/`),
+  getSimilarProducts: (productId) => api.get(`/api/v1/ai/similar/${productId}/`),
   getTrending: () => api.get('/api/v1/search/trending/'),
   getSearchSuggestions: (q) => api.get('/api/v1/search/suggestions/', { params: { q } }),
 

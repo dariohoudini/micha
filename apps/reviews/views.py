@@ -134,6 +134,33 @@ class ReviewCreateView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
 
+class MyReviewsView(APIView):
+    """GET /api/v1/reviews/my-reviews/ — the caller's own reviews.
+
+    The profile screen shows a review count; this endpoint never existed
+    so the count silently read 0 forever. Returns both kinds (product +
+    seller reviews) with a combined count.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        product_reviews = ProductReview.objects.filter(
+            reviewer=request.user).order_by('-created_at')
+        seller_reviews = Review.objects.filter(
+            reviewer=request.user).order_by('-created_at')
+        results = [
+            {'id': r.id, 'kind': 'product', 'rating': r.rating,
+             'created_at': r.created_at}
+            for r in product_reviews[:50]
+        ] + [
+            {'id': r.id, 'kind': 'seller', 'rating': r.rating,
+             'created_at': r.created_at}
+            for r in seller_reviews[:50]
+        ]
+        return Response({'count': product_reviews.count() + seller_reviews.count(),
+                         'results': results})
+
+
 class SellerReviewListView(generics.ListAPIView):
     serializer_class = ReviewSerializer
     permission_classes = [AllowAny]

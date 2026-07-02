@@ -160,7 +160,7 @@ export function useProfile() {
 export function useWishlist() {
   return useQuery({
     queryKey: QUERY_KEYS.user.wishlist,
-    queryFn: () => import('@/api/client').then(m => m.default.get('/products/wishlist/')),
+    queryFn: () => import('@/api/client').then(m => m.default.get('/api/v1/wishlist/')),
     select: (res) => res.data?.results || [],
   })
 }

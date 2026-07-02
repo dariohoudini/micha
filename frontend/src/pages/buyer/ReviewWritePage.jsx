@@ -72,7 +72,7 @@ export default function ReviewWritePage() {
       if (r.anonymous) fd.append('is_anonymous', 'true')
       ;(r.photos || []).forEach((p, i) => fd.append(`photo_${i}`, p.file, p.file.name))
       if (r.video) fd.append('video', r.video.file, r.video.file.name)
-      await client.post('/api/v1/reviews/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      await client.post('/api/v1/reviews/product/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
       track('review.submitted', { product_id: productId, rating: r.rating, has_photo: (r.photos || []).length > 0, has_video: !!r.video, anonymous: !!r.anonymous })
       // Coins task post (best-effort; backend may enforce caps).
       try { await client.post('/api/v1/loyalty/coins/tasks/complete/', { task: 'post_review' }) } catch {}

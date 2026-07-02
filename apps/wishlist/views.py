@@ -30,7 +30,8 @@ class AddToWishlistView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def post(self, request):
-        product_id = request.data.get('product_id')
+        # 'product' accepted for offline-replay compat (older queue payloads)
+        product_id = request.data.get('product_id') or request.data.get('product')
         product = get_object_or_404(Product, pk=product_id, is_active=True)
         wishlist, _ = Wishlist.objects.get_or_create(user=request.user)
         _, created = WishlistItem.objects.get_or_create(

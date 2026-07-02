@@ -32,13 +32,19 @@ import { haptic } from '@/hooks/useUX'
 import { track } from '@/lib/events'
 
 
+// Keyed on the REAL backend Order.status machine:
+//   confirmed (paid) → processing (seller confirms/prepares)
+//   processing       → shipped
+//   shipped          → delivered
+// The previous map POSTed to /confirm/ /ship/ /deliver/ endpoints that
+// never existed — the core seller fulfilment buttons all 404'd. The
+// real endpoint is PATCH /orders/<id>/status/ {status}, which requires
+// an Idempotency-Key so a network retry can't fire "shipped" events
+// (buyer emails, carrier webhooks) twice.
 const ACTIONS = {
-  pending:          { label: 'Confirmar pedido',     path: 'confirm',  color: '#22C55E' },
-  awaiting_seller:  { label: 'Confirmar pedido',     path: 'confirm',  color: '#22C55E' },
-  confirmed:        { label: 'Marcar como expedido', path: 'ship',     color: '#6366F1' },
-  awaiting_ship:    { label: 'Marcar como expedido', path: 'ship',     color: '#6366F1' },
-  shipped:          { label: 'Marcar como entregue', path: 'deliver',  color: '#22C55E' },
-  in_transit:       { label: 'Marcar como entregue', path: 'deliver',  color: '#22C55E' },
+  confirmed:  { label: 'Confirmar pedido',     to: 'processing', color: '#22C55E' },
+  processing: { label: 'Marcar como expedido', to: 'shipped',    color: '#6366F1' },
+  shipped:    { label: 'Marcar como entregue', to: 'delivered',  color: '#22C55E' },
 }
 
 
@@ -51,15 +57,17 @@ export default function SellerOrderActionFlow({ order, onUpdated, compact = fals
   const handle = async () => {
     setBusy(true)
     try {
-      const { data } = await client.post(
-        `/api/v1/orders/${order.id}/${action.path}/`,
+      const { data } = await client.patch(
+        `/api/v1/orders/${order.id}/status/`,
+        { status: action.to },
+        { headers: { 'Idempotency-Key': `order-${order.id}-${action.to}` } },
       )
       haptic.medium()
       toast.success(action.label)
       track('order_action', {
-        order_id: order.id, action: action.path,
+        order_id: order.id, action: action.to,
       })
-      onUpdated?.(data || { ...order, status: nextStatus(order.status) })
+      onUpdated?.(data?.id ? data : { ...order, status: action.to })
     } catch (e) {
       haptic.error()
       toast.error(e?.response?.data?.detail || 'Falhou. Tenta de novo.')
@@ -104,18 +112,6 @@ export default function SellerOrderActionFlow({ order, onUpdated, compact = fals
       `}</style>
     </button>
   )
-}
-
-
-function nextStatus(current) {
-  return ({
-    pending: 'confirmed',
-    awaiting_seller: 'confirmed',
-    confirmed: 'shipped',
-    awaiting_ship: 'shipped',
-    shipped: 'delivered',
-    in_transit: 'delivered',
-  })[current] || current
 }
 
 

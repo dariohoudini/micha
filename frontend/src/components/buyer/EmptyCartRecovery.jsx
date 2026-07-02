@@ -40,7 +40,7 @@ export default function EmptyCartRecovery() {
   useEffect(() => {
     let aborted = false
     // Try personalised recommendations first; fall back to popular.
-    client.get('/api/v1/recommendations/?limit=6')
+    client.get('/api/v1/recommendations/feed/?limit=6')
       .then((r) => {
         if (aborted) return
         const list = r.data?.results || r.data?.products || r.data || []

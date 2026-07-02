@@ -118,7 +118,7 @@ export default function RentalsPage() {
       if (province !== 'Todas') params.province = province
       if (priceMax) params.price_max = priceMax
 
-      const res = await client.get('/api/v1/rentals/', { params })
+      const res = await client.get('/api/v1/rentals/browse/', { params })
       setListings(asList(res.data))
       setTotal(res.data.count || 0)
     } catch {

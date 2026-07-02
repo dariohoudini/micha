@@ -188,12 +188,18 @@ class CollectCouponView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
 
     def post(self, request):
+        # Accept either the human code (voucher wall input) or coupon_id
+        # (offline replay / one-tap collect chips carry only the id).
         code = (request.data.get('code') or '').strip().upper()
-        if not code:
-            return Response({'error': 'code required'}, status=400)
+        coupon_id = request.data.get('coupon_id')
         try:
-            coupon = Coupon.objects.get(code=code, is_active=True)
-        except Coupon.DoesNotExist:
+            if code:
+                coupon = Coupon.objects.get(code=code, is_active=True)
+            elif coupon_id:
+                coupon = Coupon.objects.get(pk=coupon_id, is_active=True)
+            else:
+                return Response({'error': 'code required'}, status=400)
+        except (Coupon.DoesNotExist, ValueError, TypeError):
             return Response({'error': 'invalid', 'detail': 'Cupão inválido.'}, status=404)
         now = timezone.now()
         if coupon.valid_until and coupon.valid_until < now:

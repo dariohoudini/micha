@@ -69,13 +69,13 @@ async function executeAction(client, action) {
   const headers = { 'Idempotency-Key': action.id }
   switch (action.type) {
     case 'WISHLIST_ADD':
-      return client.post('/api/v1/wishlist/',
+      return client.post('/api/v1/wishlist/add/',
         { product: action.payload.productId }, { headers })
     case 'WISHLIST_REMOVE':
       return client.delete(
-        `/api/v1/wishlist/${action.payload.wishlistItemId}/`, { headers })
+        `/api/v1/wishlist/items/${action.payload.wishlistItemId}/`, { headers })
     case 'REVIEW_SUBMIT':
-      return client.post('/api/v1/reviews/', action.payload, { headers })
+      return client.post('/api/v1/reviews/product/', action.payload, { headers })
     default:
       throw new Error(`unknown sync action: ${action.type}`)
   }

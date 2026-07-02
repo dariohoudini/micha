@@ -22,10 +22,10 @@ export function BlockUserButton({ userId, username }) {
     setLoading(true)
     try {
       if (blocked) {
-        await client.delete(`/api/v1/accounts/block/${userId}/`)
+        await client.delete(`/api/v1/accounts/unblock/${userId}/`)
         setBlocked(false)
       } else {
-        await client.post('/api/v1/accounts/block/', { blocked_user: userId })
+        await client.post('/api/v1/accounts/block/', { blocked: userId })
         setBlocked(true)
       }
       setOpen(false)
@@ -94,7 +94,7 @@ export function ReportButton({ targetType, targetId, targetName }) {
     if (!reason) return
     setLoading(true)
     try {
-      await client.post('/api/v1/reports/', {
+      await client.post('/api/v1/reports/create/', {
         target_type: targetType,
         target_id: targetId,
         reason,

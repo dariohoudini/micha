@@ -13,7 +13,9 @@ from .content_views import (
 urlpatterns = [
     path('onboarding-quiz/', views.OnboardingQuizView.as_view()),
     path('feed/', views.HyperPersonalisedFeedView.as_view(), name='hyper-feed'),
-    path('similar/<uuid:product_id>/', views.SimilarProductsView.as_view()),
+    # Product PK is an int (BigAutoField) — the <uuid:> converter meant
+    # this route could NEVER match a real product id (permanent 404).
+    path('similar/<int:product_id>/', views.SimilarProductsView.as_view()),
     path('event/', views.TrackEventView.as_view()),
     path('search/', views.SmartSearchView.as_view()),
     path('chat/start/', views.AIChatStartView.as_view()),

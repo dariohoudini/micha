@@ -10,7 +10,7 @@ function useRecommendations(type, params = {}) {
   return useQuery({
     queryKey: ['recommendations', type, params],
     queryFn: async () => {
-      const res = await client.get('/api/v1/recommendations/', { params: { type, limit: 10, ...params } })
+      const res = await client.get('/api/v1/recommendations/feed/', { params: { type, limit: 10, ...params } })
       return asList(res.data)
     },
     staleTime: 5 * 60 * 1000,

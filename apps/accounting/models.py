@@ -114,12 +114,67 @@ class JournalEntry(models.Model):
     total_cents = models.BigIntegerField(default=0)  # sum of debits (=credits)
     posted_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
+    # ── Tamper-evidence (Gap-Coverage CH7) ───────────────────────────
+    # Same hash-chain the admin audit trail carries (core.audit_chain):
+    # append-only alone doesn't detect a privileged UPDATE/DELETE of a
+    # historical money entry; the chain makes any alteration, deletion,
+    # or insertion mathematically detectable + locatable. Sealed at the
+    # END of post_journal — after the lines exist — because the lines
+    # ARE the money content and must be inside the integrity envelope.
+    # seq nullable only so the field can be added to the live table;
+    # the backfill migration chains legacy rows and post_journal always
+    # seals thereafter.
+    seq = models.PositiveBigIntegerField(null=True, blank=True, unique=True)
+    prev_hash = models.CharField(max_length=80, blank=True, default='')
+    entry_hash = models.CharField(max_length=80, blank=True, default='', db_index=True)
+
     class Meta:
         ordering = ['-posted_at']
         indexes = [
             models.Index(fields=['period', 'entry_date']),
             models.Index(fields=['source_type', 'source_id']),
+            models.Index(fields=['seq']),
         ]
+
+    def chain_payload(self):
+        """Canonical hashed content — must be deterministic and recomputable
+        by the verification job from stored fields alone. Lines are included
+        (ordered by pk) because they carry the actual debits/credits."""
+        return {
+            'seq': self.seq,
+            'entry_date': self.entry_date.isoformat() if self.entry_date else None,
+            'period': self.period,
+            'description': self.description,
+            'source_type': self.source_type,
+            'source_id': self.source_id,
+            'posted_by_id': self.posted_by_id,
+            'is_auto': self.is_auto,
+            'is_reversal': self.is_reversal,
+            'reversed_entry_id': str(self.reversed_entry_id) if self.reversed_entry_id else None,
+            'total_cents': self.total_cents,
+            'lines': [
+                [ln.account_id, ln.debit_cents, ln.credit_cents]
+                for ln in self.lines.order_by('pk')
+            ],
+        }
+
+    def seal_chain(self):
+        """Assign seq/prev_hash/entry_hash inside the posting transaction.
+        Locks the current sealed tail so concurrent posts can't fork the
+        chain off the same prev_hash (unique seq is the fail-safe if they
+        ever race past the lock)."""
+        from apps.core.audit_chain import compute_entry_hash
+        last = (
+            JournalEntry.objects
+            .exclude(seq__isnull=True)   # never chain off an unsealed row
+            .select_for_update()
+            .order_by('-seq')
+            .first()
+        )
+        self.seq = (last.seq + 1) if (last and last.seq) else 1
+        self.prev_hash = last.entry_hash if last else ''
+        self.entry_hash = compute_entry_hash(self.chain_payload(), self.prev_hash)
+        self.save(update_fields=['seq', 'prev_hash', 'entry_hash'])
 
     def __str__(self):
         return f'JE {self.id} {self.period} {self.description[:40]}'

@@ -287,6 +287,7 @@ def embed_single_product(self, product_id: str):
 @shared_task(
     name='ai_engine.embed_all_products_nightly',
     queue='ai_heavy',
+    soft_time_limit=1500, time_limit=1800,  # nightly full sweep: 25/30 min
 )
 def embed_all_products_nightly():
     """
@@ -309,6 +310,7 @@ def embed_all_products_nightly():
 @shared_task(
     name='ai_engine.compute_all_similar_products_nightly',
     queue='ai_heavy',
+    soft_time_limit=1500, time_limit=1800,  # nightly full sweep: 25/30 min
 )
 def compute_all_similar_products_nightly():
     """

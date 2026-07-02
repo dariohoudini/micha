@@ -40,7 +40,8 @@ def run_dq_checks_task():
     return services.run_dq_checks()
 
 
-@shared_task(name='data_analytics.refresh_c360_all')
+@shared_task(name='data_analytics.refresh_c360_all',
+             soft_time_limit=900, time_limit=1080)  # all-user sweep: 15/18 min
 def refresh_c360_all():
     from django.contrib.auth import get_user_model
     from . import services
@@ -57,7 +58,8 @@ def refresh_c360_all():
     return {'refreshed': n}
 
 
-@shared_task(name='data_analytics.predict_churn_all')
+@shared_task(name='data_analytics.predict_churn_all',
+             soft_time_limit=900, time_limit=1080)  # all-user sweep: 15/18 min
 def predict_churn_all():
     from django.contrib.auth import get_user_model
     from . import services
@@ -74,7 +76,8 @@ def predict_churn_all():
     return {'predicted': n}
 
 
-@shared_task(name='data_analytics.compute_monthly_cohorts')
+@shared_task(name='data_analytics.compute_monthly_cohorts',
+             soft_time_limit=900, time_limit=1080)  # 6-month recompute: 15/18 min
 def compute_monthly_cohorts():
     """Recompute the last 6 acquisition-month cohorts."""
     from datetime import timedelta

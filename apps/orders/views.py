@@ -5,6 +5,8 @@ All IDOR protection maintained from previous fix
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from rest_framework import generics, permissions, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -56,6 +58,10 @@ class RefundSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "status", "admin_note", "created_at"]
 
 
+# Gap-Coverage CH9C: explicit no-cache on money endpoints — belt-and-
+# braces over the secure-by-default middleware, so neither a default
+# change nor a missed decorator can ever cache a money response.
+@method_decorator(never_cache, name='dispatch')
 class CheckoutView(APIView):
     # IsNotAdminStaff: admins are management-only and cannot buy (checkout).
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended, IsNotAdminStaff]

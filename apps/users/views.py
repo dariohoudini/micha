@@ -16,7 +16,8 @@ from rest_framework import generics, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from apps.core.throttling import FailClosedAnonRateThrottle
 
@@ -119,6 +120,13 @@ class UserRegisterView(generics.CreateAPIView):
             fail_silently=True,
         )
         _log(user, 'register', request)
+        # Funnel KPI (Gap-Coverage CH9B) — pairs with cart_additions and
+        # GMV so a drop can be located to a funnel stage.
+        try:
+            from apps.telemetry.metrics import signups_total
+            signups_total.inc()
+        except Exception:
+            pass
         return Response({
             'detail': 'Account created. Check your email for the verification code.',
             'email': user.email,
@@ -191,6 +199,62 @@ class ResendEmailOTPView(APIView):
             fail_silently=True,
         )
         return Response({'detail': 'If that email exists, a code has been sent.'})
+
+
+# ── Token refresh: reuse detection + family revocation ───────────────────────
+
+class FamilyRevokingTokenRefreshView(TokenRefreshView):
+    """POST /api/v1/auth/token/refresh/ (IAM/Security CH11, Gap-Coverage CH10).
+
+    Rotation + blacklist already make each refresh token single-use.
+    This view adds the CONTAINMENT: presenting an already-rotated
+    (blacklisted) refresh token means the legitimate client has moved
+    past it — whoever sent it holds a STOLEN copy. Response: revoke the
+    user's ENTIRE outstanding-token family and force re-auth, so the
+    thief and the victim are both logged out and the compromised session
+    lineage dies. The reuse event is security-logged as a theft signal.
+    """
+
+    def post(self, request, *args, **kwargs):
+        try:
+            return super().post(request, *args, **kwargs)
+        except (InvalidToken, TokenError):
+            self._contain_reuse(request)
+            raise
+
+    @staticmethod
+    def _contain_reuse(request):
+        """Detect reuse and revoke the family. NEVER raises — containment
+        must not change the 401 the caller is already getting."""
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import (
+                BlacklistedToken, OutstandingToken,
+            )
+            raw = (request.data or {}).get('refresh') or ''
+            if not raw:
+                return
+            # Every issued refresh token (login + each rotation) has an
+            # OutstandingToken row (`refresh.outstand()`), so an exact-string
+            # match identifies the token without trusting its signature.
+            presented = OutstandingToken.objects.filter(token=raw).first()
+            if presented is None or presented.user_id is None:
+                return   # forged/garbage/expired-unknown → not a reuse signal
+            if not BlacklistedToken.objects.filter(token=presented).exists():
+                return   # invalid for some other reason (not rotation reuse)
+            # REUSE of a rotated token → revoke the whole family.
+            revoked = 0
+            for tok in OutstandingToken.objects.filter(user_id=presented.user_id):
+                _, created = BlacklistedToken.objects.get_or_create(token=tok)
+                revoked += int(created)
+            log_security_event(
+                'refresh_token_reuse_family_revoked', request=request,
+                severity='CRITICAL',
+                details={'user_id': presented.user_id,
+                         'reused_jti': presented.jti,
+                         'newly_revoked': revoked},
+            )
+        except Exception:
+            logger.exception('refresh-token reuse containment failed')
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────

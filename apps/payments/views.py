@@ -26,7 +26,8 @@ from apps.users.permissions import (
     Requires2FAForFinancial,
 )
 from middleware.security import log_security_event
-from apps.inbound_webhooks.decorators import verified_webhook
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from apps.idempotency.decorators import idempotent
 from .models import SellerWallet, WalletTransaction, SellerBankAccount, PayoutRequest
 
@@ -78,6 +79,10 @@ class PayoutSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "status", "admin_note", "processed_at", "created_at"]
 
 
+# Gap-Coverage CH9C: explicit no-cache on money endpoints — belt-and-
+# braces over the secure-by-default middleware, so neither a default
+# change nor a missed decorator can ever cache a money response.
+@method_decorator(never_cache, name='dispatch')
 class WalletView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsSellerOrSuperuser, IsNotSuspended]
 
@@ -92,6 +97,10 @@ class WalletTransactionPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
+# Gap-Coverage CH9C: explicit no-cache on money endpoints — belt-and-
+# braces over the secure-by-default middleware, so neither a default
+# change nor a missed decorator can ever cache a money response.
+@method_decorator(never_cache, name='dispatch')
 class WalletTransactionListView(generics.ListAPIView):
     serializer_class = TransactionSerializer
     pagination_class = WalletTransactionPagination
@@ -412,63 +421,12 @@ class PayoutScheduleView(APIView):
         return Response({'upcoming_payouts': data, 'total_pending': str(total)})
 
 
-class AppyPayWebhookView(APIView):
-    """
-    APPYPAY Multicaixa Express webhook endpoint.
-    URL: POST /api/v1/payments/appypay/webhook/
-
-    Defense-in-depth via @verified_webhook:
-      • HMAC-SHA256 signature verification on every request
-      • Timestamp window enforcement (rejects replays older than 5 min if
-        provider supplies X-AppyPay-Timestamp)
-      • Body-hash dedupe at the storage layer — re-delivery of the byte-
-        identical body returns the original response without re-executing
-      • Forensic audit row per attempt (verified OR rejected)
-      • Critical-severity security event log on any verification failure
-    """
-    permission_classes = [AllowAny]  # verified by HMAC
-
-    @verified_webhook('appypay')
-    def post(self, request):
-        from apps.payments.gateway import PaymentProcessor
-
-        # The decorator parsed + verified the payload and attached it.
-        ctx = request._verified_webhook
-        data = ctx['payload'] or {}
-        event_type = ctx['event_type']
-        reference = data.get('reference', '')
-        amount = data.get('amount')
-
-        logger.info('AppyPay webhook verified', extra={
-            'event': event_type, 'reference': reference,
-        })
-
-        processor = PaymentProcessor()
-        try:
-            if event_type == 'payment.confirmed':
-                processor.confirm_payment(reference, data)
-            elif event_type == 'payment.failed':
-                processor.fail_payment(reference, data.get('failure_reason', 'unknown'))
-            elif event_type in ('payment.refunded', 'payment.reversed'):
-                try:
-                    from apps.orders.models import Payment
-                    payment = Payment.objects.get(gateway_reference=reference)
-                    from apps.payments.gateway import PaymentEventLogger
-                    PaymentEventLogger.log(payment, event_type,
-                                           {'amount': amount, 'reason': data.get('reason')})
-                except Exception as e:
-                    logger.error(f'Could not log refund event: {e}')
-            else:
-                logger.info(f'Unhandled AppyPay event: {event_type}')
-        except Exception as e:
-            logger.error('AppyPay webhook handler error', extra={
-                'event': event_type, 'reference': reference, 'error': str(e),
-            })
-            # Acknowledge so the gateway doesn't retry forever; reconciliation
-            # will pick up any stuck payments.
-            return Response({'status': 'error_logged'}, status=200)
-
-        return Response({'status': 'ok'}, status=200)
+# Gap-Coverage CH4: the AppyPayWebhookView that lived here was RETIRED.
+# It was a second, UNROUTED handler for the same money-critical ingress —
+# exactly the dual-path drift risk the gap-coverage spec names. The single
+# canonical APPYPAY door is apps/payments_angola.AppypayWebhookView at
+# POST /api/v1/payments-ao/webhooks/appypay/ (@verified_webhook pipeline:
+# verify → dedup → persist inbox → dispatch → ack).
 
 
 class PaymentReconcileView(APIView):

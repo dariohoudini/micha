@@ -9,7 +9,8 @@ def reference_expiry_sweep():
     return services.expire_references()
 
 
-@shared_task(name='payments_angola.settlement_reconciliation')
+@shared_task(name='payments_angola.settlement_reconciliation',
+             soft_time_limit=1500, time_limit=1800)  # recon: 25/30 min
 def settlement_reconciliation():
     """JOB 4 — APPYPAY three-way settlement match."""
     from . import services

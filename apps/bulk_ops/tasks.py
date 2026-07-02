@@ -10,7 +10,8 @@ from apps.core.task_locks import singleton_task
 log = logging.getLogger(__name__)
 
 
-@shared_task(name='bulk_ops.drive_job', bind=True, max_retries=0)
+@shared_task(name='bulk_ops.drive_job', bind=True, max_retries=0,
+             soft_time_limit=1500, time_limit=1800)  # bulk import: 25/30 min
 def drive_job(self, job_id: int, *, max_iterations: int = 200):
     """Process a single job to completion. We loop locally (rather than
     re-queueing) up to ``max_iterations`` batches — keeps total wall time

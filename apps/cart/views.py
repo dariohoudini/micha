@@ -73,6 +73,14 @@ class AddToCartView(APIView):
                 )
             cart_item.save()
 
+        # Funnel KPI (Gap-Coverage CH9B) — pairs with signups and GMV so
+        # a drop can be located to a funnel stage.
+        try:
+            from apps.telemetry.metrics import cart_additions_total
+            cart_additions_total.inc()
+        except Exception:
+            pass
+
         return Response(
             CartSerializer(cart, context={'request': request}).data,
             status=201

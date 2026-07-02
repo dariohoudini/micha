@@ -1,7 +1,6 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
-    AcceptTermsView,
+    AcceptTermsView, FamilyRevokingTokenRefreshView,
     UserRegisterView, VerifyEmailView, ResendEmailOTPView,
     MyTokenObtainPairView, LogoutView, LogoutAllSessionsView, SocialAuthView,
     ForgotPasswordView, ResetPasswordView,
@@ -24,7 +23,10 @@ urlpatterns = [
     path('login/', MyTokenObtainPairView.as_view(), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('logout-all/', LogoutAllSessionsView.as_view(), name='logout-all'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    # Gap-Coverage CH10: refresh with reuse-detection — a replayed rotated
+    # token revokes the whole token family (stolen-token containment).
+    path('token/refresh/', FamilyRevokingTokenRefreshView.as_view(),
+         name='token-refresh'),
     path('social/', SocialAuthView.as_view(), name='social-auth'),
 
     # Password (OTP-based reset — no URL tokens)

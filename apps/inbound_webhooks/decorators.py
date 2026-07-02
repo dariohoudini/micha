@@ -45,6 +45,13 @@ log = logging.getLogger(__name__)
 # we don't want to bloat the audit table if someone sends us 10MB of garbage.
 MAX_BODY_EXCERPT = 4000
 
+# Canonical rejection body for ANY verification failure (error-catalogue
+# WEBHOOK_SIGNATURE_INVALID → 401). One deliberately-vague code: the response
+# must not tell an attacker whether the signature was missing, stale, or
+# wrong — the forensic row keeps the precise reason.
+_VERIFY_FAIL_BODY = {'error': 'webhook_signature_invalid',
+                     'detail': 'Assinatura de webhook inválida.'}
+
 
 def _client_ip(request, *, security_boundary: bool = False):
     """Resolve client IP.
@@ -174,13 +181,23 @@ def verified_webhook(provider: str):
             # If this exact (provider, body) was already received, return the
             # cached response. This is the storage-level guarantee that even
             # a perfectly-signed replay attack can't cause double execution.
+            # Gap-Coverage CH4 — RETRYABLE outcomes re-run instead of
+            # replaying: a HANDLER_FAILED row means the provider is
+            # retrying BECAUSE we 500'd (transient bug, DB blip);
+            # replaying the cached 500 forever would wedge a money
+            # webhook permanently. A RECEIVED row means we crashed
+            # mid-process. Both re-run the pipeline — safe because
+            # handlers are idempotent (event-key claims + service-level
+            # idempotency). Terminal outcomes (processed / rejected)
+            # still replay verbatim without re-execution.
+            _RETRYABLE = (WebhookStatus.HANDLER_FAILED, WebhookStatus.RECEIVED)
             existing = (
                 InboundWebhookEvent.objects
                 .filter(provider=provider, body_sha256=body_hash)
                 .only('id', 'response_status', 'response_body', 'status')
                 .first()
             )
-            if existing:
+            if existing and existing.status not in _RETRYABLE:
                 # If the original was a hard fail (signature invalid, etc.) we
                 # still want a fresh fail response — but we don't run the
                 # handler. Replay the original outcome verbatim.
@@ -194,18 +211,23 @@ def verified_webhook(provider: str):
                     existing.response_body or {'status': 'replayed'},
                 )
 
-            # ── 2. Create the audit row ──────────────────────────────────
+            # ── 2. Create (or reuse) the audit row ───────────────────────
             ip = _client_ip(request)
             ua = (request.META.get('HTTP_USER_AGENT') or '')[:200]
             try:
-                event = InboundWebhookEvent.objects.create(
-                    provider=provider, body_sha256=body_hash,
-                    body_excerpt=(body[:MAX_BODY_EXCERPT].decode('utf-8', errors='replace')),
-                    signature_header=signature_header,
-                    timestamp_header=timestamp_header,
-                    source_ip=ip or None, user_agent=ua,
-                    status=WebhookStatus.RECEIVED,
-                )
+                if existing:
+                    # Retryable re-run: keep the original forensic row —
+                    # this attempt's outcome overwrites its status/response.
+                    event = InboundWebhookEvent.objects.get(pk=existing.pk)
+                else:
+                    event = InboundWebhookEvent.objects.create(
+                        provider=provider, body_sha256=body_hash,
+                        body_excerpt=(body[:MAX_BODY_EXCERPT].decode('utf-8', errors='replace')),
+                        signature_header=signature_header,
+                        timestamp_header=timestamp_header,
+                        source_ip=ip or None, user_agent=ua,
+                        status=WebhookStatus.RECEIVED,
+                    )
             except IntegrityError:
                 # A concurrent webhook hit us with the same body in the
                 # tiny window between our SELECT and INSERT. Re-fetch and
@@ -234,24 +256,29 @@ def verified_webhook(provider: str):
                 result = verifier.verify(request)
             except Exception as e:
                 log.exception('verifier exploded: %s', e)
-                _finalise(event, WebhookStatus.SIGNATURE_INVALID, 400,
-                          {'error': 'invalid_signature'}, start,
+                _finalise(event, WebhookStatus.SIGNATURE_INVALID, 401,
+                          _VERIFY_FAIL_BODY, start,
                           error=f'verifier_exception: {e}')
                 _safe_log_security(
                     'webhook_verifier_exception', request, 'CRITICAL',
                     {'provider': provider, 'error': str(e)[:200]},
                 )
-                return _response_for(400, {'error': 'invalid_signature'})
+                return _response_for(401, _VERIFY_FAIL_BODY)
 
             if not result.ok:
-                _finalise(event, result.fail_status, 400,
-                          {'error': result.fail_status}, start)
+                # Canonical error-catalogue code (WEBHOOK_SIGNATURE_INVALID,
+                # 401) for EVERY verification failure. The precise reason
+                # (missing sig / stale ts / bad sig) is kept in the forensic
+                # row only — the response deliberately doesn't tell an
+                # attacker WHY verification failed (Gap-Coverage CH4).
+                _finalise(event, result.fail_status, 401,
+                          _VERIFY_FAIL_BODY, start)
                 _safe_log_security(
                     'webhook_verification_failed', request, 'CRITICAL',
                     {'provider': provider, 'reason': result.fail_status,
                      'sig_excerpt': signature_header[:30]},
                 )
-                return _response_for(400, {'error': result.fail_status})
+                return _response_for(401, _VERIFY_FAIL_BODY)
 
             # ── 4. Run the handler with parsed payload attached ─────────
             request._verified_webhook = {

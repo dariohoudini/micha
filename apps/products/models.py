@@ -278,6 +278,28 @@ class Product(models.Model):
             models.Index(fields=['publish_at', 'is_active']),
             models.Index(fields=['created_by']),
         ]
+        constraints = [
+            # Gap-Coverage CH6: money invariants at the lowest layer. A
+            # zero/negative price reaching storage = free goods sold — the
+            # DB refuses it no matter which code path writes (bulk import,
+            # data migration, admin raw edit). Data audit 2026-07-02:
+            # 0 violating rows, so the unconditional form is safe.
+            models.CheckConstraint(
+                condition=models.Q(price__gt=0),
+                name='product_price_positive'),
+            models.CheckConstraint(
+                condition=models.Q(promo_price__isnull=True)
+                | models.Q(promo_price__gt=0),
+                name='product_promo_price_positive'),
+            models.CheckConstraint(
+                condition=models.Q(compare_at_price__isnull=True)
+                | models.Q(compare_at_price__gt=0),
+                name='product_compare_at_price_positive'),
+            models.CheckConstraint(
+                condition=models.Q(cost_price__isnull=True)
+                | models.Q(cost_price__gte=0),
+                name='product_cost_price_non_negative'),
+        ]
 
     def save(self, *args, **kwargs):
         # Stock-out auto-deactivation (legacy behaviour preserved)

@@ -483,14 +483,17 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 #   soft: raises SoftTimeLimitExceeded so the task can clean up + record
 #         failure; hard: force-kills the child, which is then replaced.
 #   The doc's reference is soft 300 / hard 360, with per-task overrides
-#   for legitimately long jobs (bulk import/export, AI generation,
-#   reconciliation). Those overrides don't exist yet, so the global hard
-#   limit is set generously (10 min) to bound truly-wedged tasks without
-#   killing legit multi-minute batch work; tighten per-queue/per-task as
-#   overrides land. Override on a long task with
-#   @shared_task(time_limit=..., soft_time_limit=...).
-CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get('CELERY_TASK_SOFT_TIME_LIMIT', 540))
-CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', 600))
+#   for legitimately long jobs. Gap-Coverage CH5: those overrides NOW
+#   EXIST — bulk_ops.drive_job, imagery.generate_variants,
+#   forecasting.run_all, the ai_engine nightly sweeps, the
+#   data_analytics all-user sweeps, payments_angola.settlement_
+#   reconciliation, and accounting.verify_journal_chain each declare
+#   their own soft/hard budget sized to their real runtime — so the
+#   global default is the TIGHT safety net for un-annotated tasks.
+#   Annotate any new long runner with
+#   @shared_task(soft_time_limit=..., time_limit=...).
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get('CELERY_TASK_SOFT_TIME_LIMIT', 300))
+CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', 360))
 # MEMORY SAFETY — recycle a prefork child after N tasks (bounds slow
 # leaks from long-running workers + heavy C-extension libraries) and if
 # its RSS exceeds the ceiling (hard guard against a task ballooning RAM).
@@ -1322,6 +1325,14 @@ CELERY_BEAT_SCHEDULE = {
     # and the chain walk is cheap at admin-action volume.
     'audit-verify-admin-chain': {
         'task': 'audit.verify_admin_chain',
+        'schedule': 3600,
+        'options': {'queue': 'low'},
+    },
+    # Same treatment for the FINANCIAL journal (Gap-Coverage CH7) — the
+    # money record has the same tamper-evidence priority as the admin
+    # trail, and a silent alteration must page within the hour.
+    'accounting-verify-journal-chain': {
+        'task': 'accounting.verify_journal_chain',
         'schedule': 3600,
         'options': {'queue': 'low'},
     },

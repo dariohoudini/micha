@@ -76,7 +76,17 @@ class AppyPayVerifier(BaseVerifier):
     timestamp_header_name = 'HTTP_X_APPYPAY_TIMESTAMP'
 
     def _secret(self) -> str:
-        return getattr(settings, 'APPYPAY_SECRET', '') or ''
+        # Gap-Coverage CH4: ONE secret source of truth for the ONE ingress.
+        # APPYPAY_WEBHOOK_SECRET is the setting the live endpoint + env
+        # validation use; APPYPAY_SECRET kept as legacy fallback. The
+        # 'dev-secret' fallback only exists under DEBUG so simulator/test
+        # flows work without env; production with no secret fails closed
+        # (refuse all).
+        secret = (getattr(settings, 'APPYPAY_WEBHOOK_SECRET', '')
+                  or getattr(settings, 'APPYPAY_SECRET', ''))
+        if not secret and getattr(settings, 'DEBUG', False):
+            secret = 'dev-secret'
+        return secret
 
     def _require_timestamp(self) -> bool:
         return bool(getattr(settings, 'APPYPAY_REQUIRE_TIMESTAMP', False))

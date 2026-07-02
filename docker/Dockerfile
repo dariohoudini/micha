@@ -96,6 +96,15 @@ EXPOSE 8000
 # children that exhaust the PID table over weeks.
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/entrypoint.sh"]
 
+# Readiness probe (Gap-Coverage CH9D): the orchestrator must distinguish
+# a started-but-not-ready container from a healthy one. /health/ready
+# checks DB + cache; /health/ (liveness alias) only proves the process
+# is up. Only meaningful for the web/daphne roles — worker/beat
+# containers get their healthcheck overridden (or disabled) per-service
+# in compose / the orchestrator, since they serve no HTTP port.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD curl -fsS http://localhost:8000/health/ready || exit 1
+
 # Default role: gunicorn web. Override with one of:
 #   "worker" | "beat" | "daphne" | "migrate" | "shell"
 CMD ["web"]

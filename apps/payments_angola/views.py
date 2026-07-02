@@ -1,15 +1,15 @@
 """Angola payments — REST endpoints under /api/v1/payments-ao/.
 
-Webhook endpoint is AllowAny (HMAC-verified). Buyer endpoints require auth.
-Admin/finance endpoints require is_staff.
+Webhook endpoint is AllowAny (HMAC-verified via @verified_webhook).
+Buyer endpoints require auth. Admin/finance endpoints require is_staff.
 """
-import hashlib
-import hmac
-
-from django.conf import settings
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
+from apps.inbound_webhooks.decorators import verified_webhook
 
 from . import services
 from .models import (
@@ -155,6 +155,10 @@ class P2PTransferView(APIView):
         return Response(result, status=code)
 
 
+# Gap-Coverage CH9C: explicit no-cache on money endpoints — belt-and-
+# braces over the secure-by-default middleware, so neither a default
+# change nor a missed decorator can ever cache a money response.
+@method_decorator(never_cache, name='dispatch')
 class WalletBalanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -167,24 +171,23 @@ class WalletBalanceView(APIView):
 # ── CH5/CH6 APPYPAY webhook ───────────────────────────────────────────
 
 class AppypayWebhookView(APIView):
-    """HMAC-verified webhook (doc CH17). Raw body signature, constant-time
-    compare, idempotent processing, amount integrity.
+    """THE single APPYPAY webhook ingress (Gap-Coverage CH4).
+
+    Signature verification, body-hash replay protection, inbox
+    persistence, and the forensic audit row all live in
+    @verified_webhook — the shared pipeline (verify → dedup → persist →
+    dispatch → ack). This view is only the DISPATCH stage: the event-key
+    idempotency claim (second dedup layer for re-sends whose body
+    differs) + the Angola payments state machine. The inline HMAC that
+    used to live here and the unrouted duplicate handler in
+    apps/payments were retired — one money door, hardened, idempotent.
     """
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
+    @verified_webhook('appypay')
     def post(self, request):
-        # 1. HMAC verify (raw body, constant-time) — API doc Part 2 CH33.
-        secret = getattr(settings, 'APPYPAY_WEBHOOK_SECRET', '') or 'dev-secret'
-        raw = request.body
-        provided = request.headers.get('X-APPYPAY-Signature', '')
-        expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(provided, expected):
-            services.log_event(None, 'webhook.rejected_signature', {})
-            return Response({'error': 'webhook_signature_invalid',
-                             'detail': 'Assinatura de webhook inválida.'},
-                            status=status.HTTP_401_UNAUTHORIZED)
-        data = request.data
+        data = request._verified_webhook['payload'] or {}
         merchant_order_id = data.get('merchant_order_id')
         amount_cents = int(round(float(data.get('amount', 0)) * 100))
         psp_status = (data.get('status') or '').upper()

@@ -34,6 +34,17 @@ orders_status_transitions = Counter(
     'Order.status transitions.',
     ['from_status', 'to_status'],
 )
+# Gap-Coverage CH9B — instrument the WHOLE funnel, not just the money
+# end. GMV alone says revenue fell; signups + cart-adds say WHERE the
+# funnel broke (acquisition vs consideration vs checkout).
+signups_total = Counter(
+    'micha_signups_total',
+    'Completed user registrations (top of funnel).',
+)
+cart_additions_total = Counter(
+    'micha_cart_additions_total',
+    'Add-to-cart events (mid funnel).',
+)
 checkout_blocked_by_risk = Counter(
     'micha_checkout_blocked_by_risk_total',
     'Checkouts blocked by the fraud engine.',

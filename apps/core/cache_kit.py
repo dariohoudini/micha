@@ -141,11 +141,55 @@ def build_key(prefix: str, tags: Sequence[str] = (), *parts) -> str:
     versions. We hash long composite keys so we don't blow Redis's
     250-char key limit.
     """
+    if prefix in PER_USER_PREFIXES:
+        raise ValueError(
+            f'cache prefix {prefix!r} is registered as PER-USER — build its '
+            f'keys with build_user_key(prefix, principal_id, ...) so the '
+            f'principal is structurally part of the key (Gap-Coverage CH9A).'
+        )
     versions = '.'.join(f'{t}={get_tag_version(t)}' for t in tags)
     raw = f'{prefix}:{versions}:' + ':'.join(str(p) for p in parts)
     if len(raw) > 200:
         h = hashlib.sha1(raw.encode('utf-8')).hexdigest()[:32]
         return f'{prefix}:hash:{h}'
+    return raw
+
+
+# ─── Per-user key safety (Gap-Coverage CH9A) ────────────────────────────────
+# A per-user cache key that omits the user id serves one user's data to
+# another — the worst class of cache bug, invisible until an incident.
+# The guard is STRUCTURAL: register every principal-scoped namespace here,
+# build its keys ONLY through build_user_key() (which refuses a missing
+# principal), and build_key() refuses registered prefixes outright — so a
+# future per-user cache that forgets user_id fails CI/dev loudly, not
+# production silently. (Audit 2026-07-02: no current per-user cached_call
+# offender — this is the keep-it-that-way lock.)
+PER_USER_PREFIXES: set = set()
+
+
+def register_per_user_prefix(prefix: str) -> str:
+    """Declare a cache namespace as principal-scoped. Idempotent."""
+    PER_USER_PREFIXES.add(prefix)
+    return prefix
+
+
+def build_user_key(prefix: str, principal_id, tags: Sequence[str] = (),
+                   *parts) -> str:
+    """build_key for principal-scoped data. The principal id is REQUIRED
+    and baked into the key right after the prefix; the prefix is
+    auto-registered so plain build_key() can never quietly rebuild the
+    same namespace without it."""
+    if principal_id in (None, '', 0):
+        raise ValueError(
+            f'per-user cache key for {prefix!r} requires a principal_id — '
+            f'a key without it would serve one user\'s data to another.'
+        )
+    register_per_user_prefix(prefix)
+    versions = '.'.join(f'{t}={get_tag_version(t)}' for t in tags)
+    raw = f'{prefix}:u{principal_id}:{versions}:' + ':'.join(str(p) for p in parts)
+    if len(raw) > 200:
+        h = hashlib.sha1(raw.encode('utf-8')).hexdigest()[:32]
+        return f'{prefix}:u{principal_id}:hash:{h}'
     return raw
 
 

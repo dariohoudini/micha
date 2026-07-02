@@ -128,6 +128,11 @@ def post_journal(*, entry_date, description, lines, source_type='system_auto',
             currency=line.get('currency', 'AOA'),
             party=line.get('party') if getattr(line.get('party'), 'pk', None)
             else None)
+    # Gap-Coverage CH7: seal the tamper-evidence chain AFTER the lines
+    # exist — they are part of the hashed payload. Still inside this
+    # function's @transaction.atomic, so entry + lines + seal commit or
+    # roll back as one.
+    entry.seal_chain()
     return entry
 
 

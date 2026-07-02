@@ -9,7 +9,8 @@ from apps.core.task_locks import singleton_task
 log = logging.getLogger(__name__)
 
 
-@shared_task(name='forecasting.run_all')
+@shared_task(name='forecasting.run_all',
+             soft_time_limit=900, time_limit=1080)  # catalog sweep: 15/18 min
 @singleton_task('beat:forecasting.run_all')
 def run_forecasting_all(batch_size: int = 500, lead_time_days: int = 7):
     """Daily forecast pass for every active product. Bounded to ``batch_size``

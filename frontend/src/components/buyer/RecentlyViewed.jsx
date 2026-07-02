@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C'
 const CARD = '#141414'
@@ -15,7 +16,7 @@ export default function RecentlyViewed({ onPress }) {
   useEffect(() => {
     // Get from browsing session / recommendations feed with type=recent
     client.get('/api/v1/recommendations/feed/', { params: { type: 'recent', limit: 8 } })
-      .then(r => setProducts(r.data.results || r.data?.products || []))
+      .then(r => setProducts(asList(r.data, 'products')))
       .catch(() => {
         // Fallback: get from local storage
         try {

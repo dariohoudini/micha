@@ -21,6 +21,7 @@ const askSellerAI = async (message) => {
 }
 import { SellerCoachPanel } from '@/components/shared/HelperBot'
 import { PayoutScheduleCalendar } from '@/components/shared/MichaUXComponents'
+import { asList } from '@/lib/asList'
 
 
 const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
@@ -50,9 +51,9 @@ export default function SellerDashboardPage() {
         client.get('/api/v1/products/my/?limit=10'),
       ])
       if (dashRes.status === 'fulfilled') setStats(dashRes.value.data)
-      if (ordersRes.status === 'fulfilled') setPendingOrders(ordersRes.value.data.results || ordersRes.value.data || [])
+      if (ordersRes.status === 'fulfilled') setPendingOrders(asList(ordersRes.value.data))
       if (productsRes.status === 'fulfilled') {
-        const products = productsRes.value.data.results || productsRes.value.data || []
+        const products = asList(productsRes.value.data)
         setLowStock(products.filter(p => (p.stock || 0) <= 5))
       }
     } catch (err) { console.error(err) }

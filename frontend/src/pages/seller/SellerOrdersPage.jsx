@@ -6,6 +6,7 @@ import OrderKanban, { PendingActionsBar } from '@/components/seller/SellerOrderM
 import SellerCheckpointModal from '@/components/seller/SellerCheckpointModal'
 import SellerReturnsList from '@/components/seller/SellerReturnsList'
 import { haptic } from '@/hooks/useUX'
+import { asList } from '@/lib/asList'
 
 
 const STATUS_CONFIG = {
@@ -31,7 +32,7 @@ export default function SellerOrdersPage() {
     try {
       const params = filter !== 'all' ? `?status=${filter}` : ''
       const res = await client.get(`/api/v1/orders/seller/${params}`)
-      setOrders(res.data.results || res.data || [])
+      setOrders(asList(res.data))
     } catch { setOrders([]) }
     finally { setLoading(false) }
   }, [filter])

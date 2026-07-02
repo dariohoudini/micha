@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -84,7 +85,7 @@ export default function AdminDashboardPage() {
   const loadFraudAlerts = async () => {
     try {
       const res = await client.get('/api/v1/security/fraud-alerts/?limit=5')
-      setFraudAlerts(res.data.results || res.data || [])
+      setFraudAlerts(asList(res.data))
     } catch {}
   }
 

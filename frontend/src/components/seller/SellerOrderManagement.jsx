@@ -5,6 +5,7 @@ import client from '@/api/client'
  * 45 (Packing slip), 46 (Batch confirm), 47 (Add tracking number)
  */
 import { useState } from 'react'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C'
 const BG = '#0A0A0A'
@@ -156,7 +157,7 @@ export function OrderKanban() {
   const [orders, setOrders] = useState([])
   useEffect(() => {
     client.get('/api/v1/orders/seller/').then(r => {
-      setOrders(r.data.results || r.data || [])
+      setOrders(asList(r.data))
     }).catch(() => setOrders([]))
   }, [])
   const [selected, setSelected] = useState([])

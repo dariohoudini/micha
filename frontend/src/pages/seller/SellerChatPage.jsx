@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import { chatApi } from '@/api/chat'
 import { useChatWS } from '@/hooks/useChatWS'
+import { asList } from '@/lib/asList'
 
 const S = { fontFamily: "'DM Sans', sans-serif" }
 
@@ -168,7 +169,7 @@ export default function SellerChatPage() {
 
   useEffect(() => {
     chatApi.listConversations()
-      .then(r => setConversations(r.data.results || r.data || []))
+      .then(r => setConversations(asList(r.data)))
       .catch(() => setConversations([]))
       .finally(() => setLoading(false))
   }, [])

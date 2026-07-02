@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C'
 const TEXT = '#FFFFFF'
@@ -145,7 +146,7 @@ export default function SellerReturnsList() {
     try {
       const params = statusFilter !== 'all' ? { status: statusFilter } : {}
       const res = await client.get('/api/v1/orders/returns/seller/', { params })
-      setReturns(res.data.results || [])
+      setReturns(asList(res.data))
     } catch { setReturns([]) }
     finally { setLoading(false) }
   }, [statusFilter])

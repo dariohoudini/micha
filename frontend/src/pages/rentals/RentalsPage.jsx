@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const CATEGORIES = [
   { id: 'all', label: 'Todos', icon: '🏠' },
@@ -118,7 +119,7 @@ export default function RentalsPage() {
       if (priceMax) params.price_max = priceMax
 
       const res = await client.get('/api/v1/rentals/', { params })
-      setListings(res.data.results || res.data || [])
+      setListings(asList(res.data))
       setTotal(res.data.count || 0)
     } catch {
       setListings([])

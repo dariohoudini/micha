@@ -5,6 +5,7 @@ import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import { SellerOfflineToggle, FlashSaleCreator, ProductBoostUI } from '@/components/shared/MichaUXComponents'
 import { haptic } from '@/hooks/useUX'
+import { asList } from '@/lib/asList'
 
 
 const formatPrice = (n) => Number(n || 0).toLocaleString() + ' Kz'
@@ -27,7 +28,7 @@ export default function SellerProductsPage() {
       if (filter === 'active') params.set('is_active', 'true')
       if (filter === 'inactive') params.set('is_active', 'false')
       const res = await client.get(`/api/v1/products/my/?${params}`)
-      const all = res.data.results || res.data || []
+      const all = asList(res.data)
       setProducts(filter === 'out_of_stock' ? all.filter(p => (p.stock || 0) === 0) : all)
     } catch { setProducts([]) }
     finally { setLoading(false) }

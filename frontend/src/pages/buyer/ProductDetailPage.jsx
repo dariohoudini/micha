@@ -34,7 +34,7 @@ function useFlashSaleForProduct(productId) {
     client.get('/api/v1/promotions/flash-sales/')
       .then(r => {
         if (cancelled) return
-        const list = r.data.results || r.data || []
+        const list = asList(r.data)
         const match = list.find(s => String(s.product_id) === String(productId))
         if (match) setSale(match)
       })
@@ -139,6 +139,7 @@ import StickyAddToCart from '@/components/buyer/StickyAddToCart'
 import { CartFlyParticle, useCartFly } from '@/components/shared/CartFlyAnimation'
 import { haptic } from '@/hooks/useUX'
 import { WhatsAppShareButton, PriceDropAlertToggle, ProductQASection } from '@/components/shared/MichaUXComponents'
+import { asList } from '@/lib/asList'
 
 
 function StarRating({ rating, count }) {

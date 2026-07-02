@@ -7,6 +7,7 @@ import client from '@/api/client'
 // the prior inline version had none.
 import FilterSheet from '@/components/buyer/FilterSheet'
 import ActiveFilterPills from '@/components/buyer/ActiveFilterPills'
+import { asList } from '@/lib/asList'
 
 const fmt = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 const S = { fontFamily: "'DM Sans', sans-serif" }
@@ -194,7 +195,7 @@ export default function ExplorePage() {
     else setLoadingMore(true)
     try {
       const res = await client.get('/api/v1/products/', { params: buildParams(pg) })
-      const results = res.data.results || res.data || []
+      const results = asList(res.data)
       if (pg === 1) setProducts(results)
       else setProducts(prev => [...prev, ...results])
       setTotal(res.data.count || results.length)

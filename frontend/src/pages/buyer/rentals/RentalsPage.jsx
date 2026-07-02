@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const CATEGORY_TABS = [
   { v: '', l: 'Todos', icon: '🏠' },
@@ -166,7 +167,7 @@ export default function RentalsPage() {
       params.set('page', reset ? 1 : page)
 
       const res = await client.get(`/api/v1/rentals/browse/?${params}`)
-      const data = res.data.results || res.data || []
+      const data = asList(res.data)
       if (reset) {
         setListings(data)
         setPage(2)

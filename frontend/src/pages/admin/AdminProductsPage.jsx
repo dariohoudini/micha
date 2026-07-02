@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import AdminLayout from '@/layouts/AdminLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E', TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444'
 const fmt = (n) => Number(n||0).toLocaleString('pt-AO') + ' Kz'
@@ -16,7 +17,7 @@ export default function AdminProductsPage() {
 
   useEffect(() => {
     setLoading(true)
-    client.get('/api/v1/admin-api/products/').then(r => setProducts(r.data.results || r.data || [])).catch(() => {}).finally(() => setLoading(false))
+    client.get('/api/v1/admin-api/products/').then(r => setProducts(asList(r.data))).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   const handleAction = async (productId, action) => {

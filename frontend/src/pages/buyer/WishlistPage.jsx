@@ -5,6 +5,7 @@ import client from '@/api/client'
 import { unwatchPrice, trackCartAdd } from '@/api/ai'
 import { useCartStore } from '@/stores/cartStore'
 import trackInteraction, { INTERACTION_TYPES } from '@/api/tracking'
+import { asList } from '@/lib/asList'
 
 export default function WishlistPage() {
   const navigate = useNavigate()
@@ -21,7 +22,7 @@ export default function WishlistPage() {
   const loadWishlist = async () => {
     try {
       const res = await client.get('/api/v1/wishlist/')
-      setItems(res.data.results || res.data || [])
+      setItems(asList(res.data))
     } catch {
       setItems([])
     } finally {

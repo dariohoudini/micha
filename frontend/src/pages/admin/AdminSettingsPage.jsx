@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import AdminLayout from '@/layouts/AdminLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E', TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444'
 
@@ -22,13 +23,37 @@ export default function AdminSettingsPage() {
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000) }
 
   useEffect(() => {
-    client.get('/api/v1/collections/announcements/').then(r => setAnnouncements(r.data.results || r.data || [])).catch(() => {})
+    // Real backends: the versioned KV settings store (admin-console) and
+    // the admin announcements manager. This page previously PATCHed
+    // /admin-api/settings/ (never existed → every save failed) and listed
+    // the PUBLIC announcements endpoint.
+    client.get('/api/v1/admin-console/settings/')
+      .then(r => {
+        const rows = asList(r.data, 'settings')
+        setSettings(prev => {
+          const merged = { ...prev }
+          for (const row of rows) {
+            if (row && row.key in merged && row.value !== undefined && row.value !== null) {
+              merged[row.key] = row.value
+            }
+          }
+          return merged
+        })
+      })
+      .catch(() => {})
+    client.get('/api/v1/collections/admin/announcements/')
+      .then(r => setAnnouncements(asList(r.data, 'announcements')))
+      .catch(() => {})
   }, [])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      await client.patch('/api/v1/admin-api/settings/', settings)
+      // The settings store is key/value (one POST per key, versioned with
+      // history server-side).
+      for (const [key, value] of Object.entries(settings)) {
+        await client.post('/api/v1/admin-console/settings/', { key, value })
+      }
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } catch { showToast('Erro ao guardar', 'error') }
     setSaving(false)
@@ -95,7 +120,7 @@ export default function AdminSettingsPage() {
             <select value={newAnn.type} onChange={e => setNewAnn(p => ({ ...p, type: e.target.value }))} style={{ padding: '10px 12px', background: BG, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, ...S, outline: 'none' }}>
               <option value="info">Informação</option>
               <option value="warning">Aviso</option>
-              <option value="promotion">Promoção</option>
+              <option value="promo">Promoção</option>
             </select>
             <button onClick={createAnnouncement} style={{ padding: '11px', borderRadius: 10, border: 'none', background: G, color: '#000', ...S, fontWeight: 600, cursor: 'pointer' }}>
               📢 Publicar anúncio

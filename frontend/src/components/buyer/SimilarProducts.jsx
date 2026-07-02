@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C'
 const CARD = '#141414'
@@ -16,7 +17,7 @@ export default function SimilarProducts({ productId, onPress }) {
   useEffect(() => {
     if (!productId) return
     client.get(`/api/v1/ai/similar/${productId}/`)
-      .then(r => setProducts(r.data.results || r.data || []))
+      .then(r => setProducts(asList(r.data)))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [productId])

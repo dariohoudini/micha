@@ -1,6 +1,7 @@
 import client from '@/api/client'
 import { useState, useEffect } from 'react'
 import AdminLayout, { ADMIN_COLORS } from '@/layouts/AdminLayout'
+import { asList } from '@/lib/asList'
 
 const MOCK_CHATS = [
   {
@@ -87,7 +88,8 @@ const FLAG_REASONS = [
 
 function useChatsData(set) {
   useEffect(() => {
-    client.get('/api/v1/chat/').then(r => set(r.data.results || r.data || [])).catch(() => {})
+    // /api/v1/chat/ never existed — conversations live under /conversations/.
+    client.get('/api/v1/chat/conversations/').then(r => set(asList(r.data))).catch(() => {})
   }, [])
 }
 

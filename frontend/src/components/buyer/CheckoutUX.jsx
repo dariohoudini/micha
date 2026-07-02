@@ -6,6 +6,7 @@ import api from '@/api/client'
  * 19 (Saved addresses), 20 (Promo code feedback), 21 (Progress bar)
  */
 import { useState } from 'react'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C'
 const BG = '#0A0A0A'
@@ -63,7 +64,7 @@ export function SavedAddresses({ selected, onSelect }) {
   ])
   useEffect(() => {
     client.get('/api/v1/shipping/addresses/').then(res => {
-      const data = res.data.results || res.data || []
+      const data = asList(res.data)
       if (data.length > 0) setAddresses(data.map(a => ({
         id: a.id, label: a.label || 'Casa',
         name: a.recipient_name || '', street: a.street || '',

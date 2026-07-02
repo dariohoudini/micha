@@ -165,6 +165,53 @@ class PlatformAnnouncementView(APIView):
         return Response({'announcements': announcements})
 
 
+class AdminAnnouncementView(APIView):
+    """Admin console announcements manager.
+
+    GET  /api/v1/collections/admin/announcements/ — ALL announcements
+         (including inactive/expired — the admin needs the history).
+    POST /api/v1/collections/admin/announcements/ — publish a banner.
+         The public view above serves only the live ones to users.
+    """
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        rows = [
+            {
+                'id': a.id, 'title': a.title, 'message': a.message,
+                'type': a.type, 'is_active': a.is_active,
+                'is_live': a.is_live, 'created_at': a.created_at,
+            }
+            for a in PlatformAnnouncement.objects.order_by('-created_at')[:50]
+        ]
+        return Response({'announcements': rows})
+
+    def post(self, request):
+        title = (request.data.get('title') or '').strip()
+        message = (request.data.get('message') or '').strip()
+        if not title or not message:
+            return Response({'error': 'validation_error',
+                             'detail': 'title e message são obrigatórios.'},
+                            status=400)
+        ann_type = request.data.get('type', 'info')
+        # The admin UI historically sent 'promotion'; the model choice is
+        # 'promo' — normalise instead of storing an invalid choice.
+        if ann_type == 'promotion':
+            ann_type = 'promo'
+        valid = {c[0] for c in PlatformAnnouncement.TYPE_CHOICES}
+        if ann_type not in valid:
+            ann_type = 'info'
+        a = PlatformAnnouncement.objects.create(
+            title=title[:200], message=message, type=ann_type,
+            cta_text=(request.data.get('cta_text') or '')[:50],
+            cta_link=request.data.get('cta_link') or None,
+        )
+        return Response({'id': a.id, 'title': a.title, 'message': a.message,
+                         'type': a.type, 'is_active': a.is_active,
+                         'is_live': a.is_live, 'created_at': a.created_at},
+                        status=201)
+
+
 class PriceHistoryView(APIView):
     """GET /api/collections/price-history/<product_id>/?days=90 — Price chart data."""
     permission_classes = [permissions.AllowAny]

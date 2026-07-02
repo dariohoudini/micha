@@ -2,7 +2,8 @@ from django.urls import path
 from .views import (
     CollectionListView, CollectionDetailView, AdminCollectionCreateView,
     ProductOfTheDayView, AdminSetProductOfDayView,
-    SellerSpotlightView, PlatformAnnouncementView, PriceHistoryView,
+    SellerSpotlightView, PlatformAnnouncementView, AdminAnnouncementView,
+    PriceHistoryView,
 )
 
 
@@ -13,6 +14,7 @@ urlpatterns = [
     path('admin/product-of-day/', AdminSetProductOfDayView.as_view(), name='admin-potd'),
     path('seller-spotlight/', SellerSpotlightView.as_view(), name='seller-spotlight'),
     path('announcements/', PlatformAnnouncementView.as_view(), name='announcements'),
+    path('admin/announcements/', AdminAnnouncementView.as_view(), name='admin-announcements'),
     path('price-history/<int:product_id>/', PriceHistoryView.as_view(), name='price-history'),
     # Must be last — slug catch-all
     path('<slug:slug>/', CollectionDetailView.as_view(), name='detail'),

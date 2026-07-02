@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import BuyerLayout from '@/layouts/BuyerLayout'
 import { chatApi } from '@/api/chat'
 import { useAuthStore } from '@/stores/authStore'
+import { asList } from '@/lib/asList'
 
 function ConvSkeleton() {
   return (
@@ -35,7 +36,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     chatApi.listConversations()
-      .then(r => setConversations(r.data.results || r.data || []))
+      .then(r => setConversations(asList(r.data)))
       .catch(() => setError('Não foi possível carregar as mensagens.'))
       .finally(() => setLoading(false))
   }, [])

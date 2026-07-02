@@ -5,6 +5,7 @@ import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import { OrderFilterTabs, OrdersEmptyState } from '@/components/buyer/OrderFilterTabs'
 import { haptic } from '@/hooks/useUX'
+import { asList } from '@/lib/asList'
 
 
 const STATUS_CONFIG = {
@@ -78,7 +79,7 @@ export default function OrdersPage() {
   const loadOrders = async () => {
     try {
       const res = await client.get('/api/v1/orders/my/')
-      setOrders(res.data.results || res.data || [])
+      setOrders(asList(res.data))
     } catch (err) {
       console.error('Orders load failed:', err)
       setOrders([])

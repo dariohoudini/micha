@@ -3,6 +3,7 @@ import api from '@/api/client'
  * MICHA Express — 22 UX Components
  */
 import { useState, useEffect } from 'react'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C'
 const BG = '#0A0A0A'
@@ -129,7 +130,7 @@ export function ProductQASection({ productId, isSeller = false }) {
     if (!productId) return
     setLoading(true)
     api.get(`/api/v1/products/${productId}/qa/`)
-      .then(r => setQuestions(r.data.results || r.data || []))
+      .then(r => setQuestions(asList(r.data)))
       .catch(() => setQuestions([]))
       .finally(() => setLoading(false))
   }, [productId])

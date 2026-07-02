@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import AdminLayout from '@/layouts/AdminLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E', TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444', BLUE = '#3B82F6'
 
@@ -23,8 +24,8 @@ export default function AdminSellersPage() {
       client.get('/api/v1/admin-api/sellers/'),
       client.get('/api/v1/verification/admin/'),
     ]).then(([sellersRes, verRes]) => {
-      if (sellersRes.status === 'fulfilled') setSellers(sellersRes.value.data.results || sellersRes.value.data || [])
-      if (verRes.status === 'fulfilled') setVerifications(verRes.value.data.results || verRes.value.data || [])
+      if (sellersRes.status === 'fulfilled') setSellers(asList(sellersRes.value.data))
+      if (verRes.status === 'fulfilled') setVerifications(asList(verRes.value.data))
     }).finally(() => setLoading(false))
   }, [])
 

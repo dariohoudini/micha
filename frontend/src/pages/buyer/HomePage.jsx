@@ -21,6 +21,7 @@ import DailyCheckinCard from '@/components/buyer/DailyCheckinCard'
 import TrustBadge from '@/components/buyer/ChoiceBadge'
 import SaleEventBanner from '@/components/buyer/SaleEventBanner'
 import CategoryPills from '@/components/buyer/CategoryPills'
+import { asList } from '@/lib/asList'
 
 
 // Skeleton loader for product cards
@@ -160,7 +161,7 @@ function useCollections() {
     client.get('/api/v1/collections/product-of-day/').then(r => setProductOfDay(r.data)).catch(() => {})
     client.get('/api/v1/collections/seller-spotlight/').then(r => setSpotlight(r.data)).catch(() => {})
     client.get('/api/v1/collections/announcements/').then(r => {
-      const items = r.data.results || r.data || []
+      const items = asList(r.data)
       if (items.length > 0) setAnnouncement(items[0])
     }).catch(() => {})
   }, [])

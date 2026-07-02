@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const fmt = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
@@ -10,7 +11,7 @@ function useRecommendations(type, params = {}) {
     queryKey: ['recommendations', type, params],
     queryFn: async () => {
       const res = await client.get('/api/v1/recommendations/', { params: { type, limit: 10, ...params } })
-      return res.data.results || res.data || []
+      return asList(res.data)
     },
     staleTime: 5 * 60 * 1000,
     retry: 1,

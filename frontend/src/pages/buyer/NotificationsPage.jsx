@@ -4,6 +4,7 @@ import client from '@/api/client'
 import HelperBot from '@/components/shared/HelperBot'
 import SwipeToDelete from '@/components/shared/SwipeToDelete'
 import { MarkAllReadButton, groupNotifications } from '@/components/shared/NotificationUtils'
+import { asList } from '@/lib/asList'
 
 const GOLD = '#C9A84C', CARD = '#1E1E1E', BORDER = '#2A2A2A', TEXT = '#FFFFFF', MUTED = '#9A9A9A', BG = '#0A0A0A'
 
@@ -22,7 +23,7 @@ export default function NotificationsPage() {
     setLoading(true)
     try {
       const res = await client.get('/api/v1/notifications/')
-      setNotifications(res.data.results || res.data || [])
+      setNotifications(asList(res.data))
     } catch {}
     setLoading(false)
   }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import AdminLayout from '@/layouts/AdminLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E', TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444', BLUE = '#3B82F6'
 const fmt = (n) => Number(n||0).toLocaleString('pt-AO') + ' Kz'
@@ -23,9 +24,9 @@ export default function AdminOrdersPage() {
       client.get('/api/v1/disputes/admin/'),
       client.get('/api/v1/payments/payout/admin/'),
     ]).then(([ordersRes, disputesRes, payoutsRes]) => {
-      if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value.data.results || ordersRes.value.data || [])
-      if (disputesRes.status === 'fulfilled') setDisputes(disputesRes.value.data.results || disputesRes.value.data || [])
-      if (payoutsRes.status === 'fulfilled') setPayouts(payoutsRes.value.data.results || payoutsRes.value.data || [])
+      if (ordersRes.status === 'fulfilled') setOrders(asList(ordersRes.value.data))
+      if (disputesRes.status === 'fulfilled') setDisputes(asList(disputesRes.value.data))
+      if (payoutsRes.status === 'fulfilled') setPayouts(asList(payoutsRes.value.data))
     }).finally(() => setLoading(false))
   }, [])
 

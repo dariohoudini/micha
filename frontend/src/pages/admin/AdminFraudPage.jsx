@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import AdminLayout from '@/layouts/AdminLayout'
 import client from '@/api/client'
+import { asList } from '@/lib/asList'
 
 const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E'
 const TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444', ORANGE = '#F59E0B', BLUE = '#3B82F6'
@@ -38,7 +39,7 @@ export default function AdminFraudPage() {
   const load = async () => {
     try {
       const res = await client.get('/api/v1/security/fraud-alerts/')
-      const data = res.data.results || res.data || []
+      const data = asList(res.data)
       setAlerts(data)
 
       // Compute stats

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import promotionsAPI from '@/api/promotions'
+import { asList } from '@/lib/asList'
 
 const fmt = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
@@ -10,7 +11,7 @@ function useFlashSales() {
     queryKey: ['flash-sales'],
     queryFn: async () => {
       const res = await promotionsAPI.getActiveFlashSales()
-      return res.data.results || res.data || []
+      return asList(res.data)
     },
     staleTime: 60 * 1000,
     retry: 1,

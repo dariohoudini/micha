@@ -225,7 +225,13 @@ class AdminUserActionView(APIView):
         if action == 'suspend':
             user.is_active = False
             user.save()
-            return Response({'status': 'suspended'})
+            # Doc CH5: suspension means logged out NOW — terminate the
+            # live sessions + revoke the token family, not just "cannot
+            # log in again". Stateless access tokens age out in minutes;
+            # everything refreshable dies here.
+            from .inspector import force_reauth
+            result = force_reauth(user)
+            return Response({'status': 'suspended', **result})
         elif action == 'activate':
             user.is_active = True
             user.save()

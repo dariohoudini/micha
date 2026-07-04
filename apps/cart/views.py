@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -7,6 +9,7 @@ from .models import Cart, CartItem
 from .serializers import CartSerializer, AddToCartSerializer
 from apps.products.models import Product
 from apps.users.permissions import IsNotSuspended
+from apps.idempotency.decorators import idempotent
 
 
 class CartView(APIView):
@@ -205,6 +208,11 @@ class MergeAnonCartView(APIView):
 
     MAX_ITEMS = 50
 
+    # Guest-First doc CH12: a retried merge must be a NO-OP, never a
+    # double-quantity. The client sends a stable Idempotency-Key for the
+    # post-login fold (and for each event-driven re-sync); a retry of the
+    # SAME attempt replays the cached response instead of re-summing.
+    @idempotent()
     def post(self, request):
         items_in = request.data.get('items') or []
         if not isinstance(items_in, list):
@@ -220,6 +228,15 @@ class MergeAnonCartView(APIView):
         cart, _ = Cart.objects.get_or_create(user=request.user)
         merged = 0
         skipped = 0
+        # Guest-First doc CH12: SURFACE every conflict rather than silently
+        # resolving it, so the user sees exactly what changed before
+        # checkout — never silently drop an item, cap a quantity, or carry
+        # a stale price. Each conflict: {kind, product_id, title, detail}.
+        conflicts = []
+
+        def _title(raw):
+            return (raw.get('title') or raw.get('name') or '')[:120]
+
         for raw in items_in:
             # WIDE try/except wraps the entire per-item processing: a stale
             # localStorage cart can contain garbage (bad PK type, bad combo,
@@ -236,7 +253,15 @@ class MergeAnonCartView(APIView):
                     pk=product_id, is_active=True, is_archived=False,
                 ).first()
                 if product is None:
+                    # A product that vanished / was deactivated since the
+                    # guest added it — tell the user it's gone, don't drop
+                    # it in silence.
                     skipped += 1
+                    conflicts.append({
+                        'kind': 'removed', 'product_id': product_id,
+                        'title': _title(raw),
+                        'detail': 'Já não está disponível.',
+                    })
                     continue
 
                 combo = None
@@ -246,18 +271,51 @@ class MergeAnonCartView(APIView):
                     ).first()
                     if combo is None:
                         skipped += 1
+                        conflicts.append({
+                            'kind': 'removed', 'product_id': product_id,
+                            'title': product.title,
+                            'detail': 'A variante escolhida já não existe.',
+                        })
                         continue
 
                 available = combo.quantity if combo else product.quantity
                 if available <= 0:
                     skipped += 1
+                    conflicts.append({
+                        'kind': 'removed', 'product_id': product_id,
+                        'title': product.title, 'detail': 'Esgotado.',
+                    })
                     continue
+
+                # Re-validate price: the guest's price-at-add can be stale.
+                # Surface a change so nobody is silently over/under-charged.
+                current_price = combo.price if combo else product.price
+                try:
+                    old_price = raw.get('price_at_add') or raw.get('price')
+                    if old_price is not None and \
+                            Decimal(str(old_price)) != Decimal(str(current_price)):
+                        conflicts.append({
+                            'kind': 'price_changed', 'product_id': product_id,
+                            'title': product.title,
+                            'detail': f'Preço actualizado para {current_price} Kz.',
+                        })
+                except (InvalidOperation, TypeError, ValueError):
+                    pass
 
                 existing = CartItem.objects.filter(
                     cart=cart, product=product, variant_combo=combo,
                 ).first()
+                requested = (existing.quantity if existing else 0) + qty
+                target = min(requested, available)
+                if requested > available:
+                    conflicts.append({
+                        'kind': 'stock_capped', 'product_id': product_id,
+                        'title': product.title,
+                        'detail': f'Quantidade limitada a {available} '
+                                  f'(pediu {requested}).',
+                    })
+
                 if existing is not None:
-                    target = min(existing.quantity + qty, available)
                     if target != existing.quantity:
                         existing.quantity = target
                         existing.save(update_fields=['quantity', 'updated_at'])
@@ -265,8 +323,7 @@ class MergeAnonCartView(APIView):
                 else:
                     CartItem.objects.create(
                         cart=cart, product=product, variant_combo=combo,
-                        quantity=min(qty, available),
-                        price_at_add=combo.price if combo else product.price,
+                        quantity=target, price_at_add=current_price,
                     )
                     merged += 1
             except Exception:
@@ -274,6 +331,6 @@ class MergeAnonCartView(APIView):
                 continue
 
         return Response({
-            'merged': merged, 'skipped': skipped,
+            'merged': merged, 'skipped': skipped, 'conflicts': conflicts,
             'cart': CartSerializer(cart, context={'request': request}).data,
         }, status=200)

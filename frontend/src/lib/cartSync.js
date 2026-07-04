@@ -43,10 +43,35 @@
  * in-flight flag so concurrent triggers wait for the prior call.
  */
 import client from '@/api/client'
+import { toast } from '@/components/ui/Toast'
 import { useAuthStore } from '@/stores/authStore'
 import { useCartStore } from '@/stores/cartStore'
 
 const DEBOUNCE_MS = 500
+
+// Guest-First doc CH12: surface every merge conflict so the user sees
+// what changed before checkout — never a silent drop / cap / re-price.
+function surfaceConflicts(conflicts) {
+  if (!Array.isArray(conflicts) || conflicts.length === 0) return
+  const removed = conflicts.filter(c => c.kind === 'removed')
+  const capped = conflicts.filter(c => c.kind === 'stock_capped')
+  const priced = conflicts.filter(c => c.kind === 'price_changed')
+  if (removed.length) {
+    toast.error(removed.length === 1
+      ? `"${removed[0].title || 'Um artigo'}" já não está disponível.`
+      : `${removed.length} artigos do carrinho já não estão disponíveis.`)
+  }
+  if (capped.length) {
+    toast.success(capped.length === 1
+      ? `Quantidade de "${capped[0].title || 'um artigo'}" ajustada ao stock.`
+      : `${capped.length} artigos ajustados ao stock disponível.`)
+  }
+  if (priced.length) {
+    toast.success(priced.length === 1
+      ? `O preço de "${priced[0].title || 'um artigo'}" foi actualizado.`
+      : `${priced.length} preços foram actualizados.`)
+  }
+}
 
 let inflight = false
 let debounceTimer = null
@@ -106,10 +131,19 @@ async function performSync() {
 
   setSyncStatus('syncing')
   try {
-    const res = await client.post('/api/v1/cart/merge/', { items })
+    // A stable per-snapshot Idempotency-Key: a lost response on a flaky
+    // network retries the SAME merge without doubling quantities (the
+    // decorator replays the cached result). The key is derived from the
+    // item set so distinct cart states get distinct keys.
+    const snapshotKey = 'cart-merge-' + items
+      .map(i => `${i.product_id}:${i.variant_combo_id || ''}:${i.quantity}`)
+      .sort().join('|').slice(0, 200)
+    const res = await client.post('/api/v1/cart/merge/', { items },
+      { headers: { 'Idempotency-Key': snapshotKey } })
     const cart = res?.data?.cart || {}
     const serverItems = cart.items || []
     replaceItems(serverItems)
+    surfaceConflicts(res?.data?.conflicts)
     setSyncStatus('synced')
   } catch (e) {
     // 401 is handled by the axios refresh interceptor — if we land

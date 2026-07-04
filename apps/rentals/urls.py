@@ -2,7 +2,7 @@
 apps/rentals/urls.py
 """
 from django.urls import path
-from . import views
+from . import flows, views
 
 urlpatterns = [
     # Meta — constants for frontend forms
@@ -26,6 +26,15 @@ urlpatterns = [
 
     # Inquiry / chat bridge
     path('<uuid:pk>/inquire/', views.CreateInquiryView.as_view()),
+
+    # Property Vertical doc CH11/CH12 — viewings + offer negotiation
+    path('<uuid:pk>/viewings/', flows.RequestViewingView.as_view()),
+    path('viewings/', flows.MyViewingsView.as_view()),
+    path('viewings/<uuid:pk>/action/', flows.ViewingActionView.as_view()),
+    path('<uuid:pk>/offers/', flows.SubmitOfferView.as_view()),
+    path('offers/', flows.MyOffersView.as_view()),
+    path('offers/<uuid:pk>/action/', flows.OfferActionView.as_view()),
+    path('offers/<uuid:pk>/history/', flows.OfferHistoryView.as_view()),
 
     # Save / unsave
     path('<uuid:pk>/save/', views.SaveListingView.as_view()),

@@ -563,3 +563,120 @@ class SavedListing(models.Model):
     class Meta:
         db_table = 'rental_saved_listings'
         unique_together = [('user', 'listing')]
+
+
+class Viewing(models.Model):
+    """In-person viewing scheduling — Property Vertical doc CH11/CH14.
+
+    Shared by BOTH transaction flows (a buyer views before offering; a
+    long-term renter views before committing). The record is also the
+    SAFETY + accountability trail: meeting a stranger at a property is
+    a real risk, so who/where/when is always on file.
+    """
+    STATUS = [
+        ('requested', 'Solicitada'),
+        ('confirmed', 'Confirmada'),
+        ('completed', 'Realizada'),
+        ('no_show',   'Não compareceu'),
+        ('cancelled', 'Cancelada'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    listing = models.ForeignKey(
+        Listing, on_delete=models.CASCADE, related_name='viewings'
+    )
+    requester = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='rental_viewings'
+    )
+    scheduled_at = models.DateTimeField()
+    note = models.CharField(max_length=300, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS,
+                              default='requested', db_index=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'rental_viewings'
+        ordering = ['-scheduled_at']
+        indexes = [
+            models.Index(fields=['listing', 'status']),
+            models.Index(fields=['requester', '-scheduled_at']),
+        ]
+
+    def __str__(self):
+        return f"Viewing({self.requester.email} → {self.listing.title}, {self.status})"
+
+
+class Offer(models.Model):
+    """Price negotiation — Property Vertical doc CH12.
+
+    An explicit offer/counter state machine: the buyer/renter offers,
+    the lister accepts / rejects / counters, and they loop until
+    agreement or exit. Every counter is a NEW row chained via ``parent``
+    so the negotiation history is complete and non-repudiable —
+    acceptance means the parties agree to PROCEED (the legal transfer
+    of a sale is notarised off-platform; the app records the agreement).
+    """
+    STATUS = [
+        ('submitted', 'Submetida'),
+        ('countered', 'Contraproposta feita'),
+        ('accepted',  'Aceite'),
+        ('rejected',  'Rejeitada'),
+        ('withdrawn', 'Retirada'),
+        ('expired',   'Expirada'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    listing = models.ForeignKey(
+        Listing, on_delete=models.CASCADE, related_name='offers'
+    )
+    buyer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='rental_offers'
+    )
+    # Who authored THIS version of the offer: the buyer's offers and the
+    # lister's counters alternate down the parent chain.
+    made_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='rental_offers_made'
+    )
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    message = models.CharField(max_length=500, blank=True)
+    parent = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='counters'
+    )
+    version = models.PositiveSmallIntegerField(default=1)
+    status = models.CharField(max_length=20, choices=STATUS,
+                              default='submitted', db_index=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'rental_offers'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['listing', 'status']),
+            models.Index(fields=['buyer', '-created_at']),
+        ]
+        constraints = [
+            # Money invariant at the lowest layer (Gap-Coverage CH6):
+            # a zero/negative offer is unrepresentable.
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name='rental_offer_amount_positive'),
+        ]
+
+    def __str__(self):
+        return f"Offer({self.buyer.email} → {self.listing.title}: {self.amount}, {self.status})"
+
+    @property
+    def root(self):
+        node = self
+        while node.parent_id:
+            node = node.parent
+        return node

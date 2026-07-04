@@ -38,6 +38,15 @@ export default function RentalDetailPage() {
   const [inquiryMessage, setInquiryMessage] = useState('')
   const [moveInDate, setMoveInDate] = useState('')
   const [duration, setDuration] = useState('')
+  // Property Vertical doc CH11/CH12 — viewing + offer flows
+  const [showViewingSheet, setShowViewingSheet] = useState(false)
+  const [viewingAt, setViewingAt] = useState('')
+  const [viewingNote, setViewingNote] = useState('')
+  const [showOfferSheet, setShowOfferSheet] = useState(false)
+  const [offerAmount, setOfferAmount] = useState('')
+  const [offerMessage, setOfferMessage] = useState('')
+  const [flowBusy, setFlowBusy] = useState(false)
+  const [flowDone, setFlowDone] = useState('')
 
   useEffect(() => {
     loadListing()
@@ -88,6 +97,41 @@ export default function RentalDetailPage() {
       setInquiring(false)
       setShowInquirySheet(false)
     }
+  }
+
+  const handleRequestViewing = async () => {
+    if (!user) { navigate('/login'); return }
+    if (!viewingAt) return
+    setFlowBusy(true)
+    try {
+      await client.post(`/api/v1/rentals/${id}/viewings/`, {
+        scheduled_at: new Date(viewingAt).toISOString(),
+        note: viewingNote,
+      })
+      setFlowDone('Visita solicitada! O anunciante vai confirmar.')
+      setShowViewingSheet(false)
+      setTimeout(() => setFlowDone(''), 3500)
+    } catch (err) {
+      setFlowDone(err.response?.data?.error || 'Erro ao agendar visita.')
+      setTimeout(() => setFlowDone(''), 3500)
+    } finally { setFlowBusy(false) }
+  }
+
+  const handleSubmitOffer = async () => {
+    if (!user) { navigate('/login'); return }
+    if (!offerAmount) return
+    setFlowBusy(true)
+    try {
+      await client.post(`/api/v1/rentals/${id}/offers/`, {
+        amount: offerAmount, message: offerMessage,
+      })
+      setFlowDone('Proposta enviada! Vai ser notificado da resposta.')
+      setShowOfferSheet(false)
+      setTimeout(() => setFlowDone(''), 3500)
+    } catch (err) {
+      setFlowDone(err.response?.data?.error || 'Erro ao enviar proposta.')
+      setTimeout(() => setFlowDone(''), 3500)
+    } finally { setFlowBusy(false) }
   }
 
   if (loading) return (
@@ -315,6 +359,76 @@ export default function RentalDetailPage() {
         </div>
       </div>
 
+      {/* Viewing sheet (doc CH11 — nobody commits to a house unseen) */}
+      {showViewingSheet && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 100, display: 'flex', alignItems: 'flex-end' }}
+          onClick={e => { if (e.target === e.currentTarget) setShowViewingSheet(false) }}>
+          <div style={{ background: '#141414', borderRadius: '20px 20px 0 0', border: '1px solid #1E1E1E', padding: '20px 20px 40px', width: '100%', maxWidth: 430, margin: '0 auto' }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: '#2A2A2A', margin: '0 auto 20px' }} />
+            <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: '#FFFFFF', marginBottom: 6 }}>Agendar visita</h3>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A', marginBottom: 20 }}>
+              A visita fica registada na plataforma — pela sua segurança, prefira horários diurnos.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 6 }}>Data e hora</p>
+                <input type="datetime-local" value={viewingAt} onChange={e => setViewingAt(e.target.value)}
+                  style={{ width: '100%', background: '#1E1E1E', border: '1px solid #2A2A2A', borderRadius: 12, padding: '12px 14px', color: '#FFFFFF', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 6 }}>Nota (opcional)</p>
+                <input type="text" value={viewingNote} onChange={e => setViewingNote(e.target.value)}
+                  placeholder="ex: Posso ir de manhã"
+                  style={{ width: '100%', background: '#1E1E1E', border: '1px solid #2A2A2A', borderRadius: 12, padding: '12px 14px', color: '#FFFFFF', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+              <button onClick={handleRequestViewing} disabled={flowBusy || !viewingAt}
+                style={{ padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#0A0A0A', cursor: flowBusy ? 'not-allowed' : 'pointer', opacity: (flowBusy || !viewingAt) ? 0.6 : 1 }}>
+                {flowBusy ? 'A enviar...' : '📅 Solicitar visita'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Offer sheet (doc CH12 — property price is negotiated) */}
+      {showOfferSheet && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 100, display: 'flex', alignItems: 'flex-end' }}
+          onClick={e => { if (e.target === e.currentTarget) setShowOfferSheet(false) }}>
+          <div style={{ background: '#141414', borderRadius: '20px 20px 0 0', border: '1px solid #1E1E1E', padding: '20px 20px 40px', width: '100%', maxWidth: 430, margin: '0 auto' }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: '#2A2A2A', margin: '0 auto 20px' }} />
+            <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: '#FFFFFF', marginBottom: 6 }}>Fazer proposta</h3>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9A9A9A', marginBottom: 20 }}>
+              Preço anunciado: {Number(listing.price).toLocaleString('pt-AO')} Kz. O anunciante pode aceitar, rejeitar ou contrapropor.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 6 }}>A sua proposta (Kz)</p>
+                <input type="number" min="1" value={offerAmount} onChange={e => setOfferAmount(e.target.value)}
+                  placeholder="ex: 40000000"
+                  style={{ width: '100%', background: '#1E1E1E', border: '1px solid #2A2A2A', borderRadius: 12, padding: '12px 14px', color: '#FFFFFF', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 6 }}>Mensagem (opcional)</p>
+                <input type="text" value={offerMessage} onChange={e => setOfferMessage(e.target.value)}
+                  placeholder="ex: Pagamento à vista"
+                  style={{ width: '100%', background: '#1E1E1E', border: '1px solid #2A2A2A', borderRadius: 12, padding: '12px 14px', color: '#FFFFFF', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+              <button onClick={handleSubmitOffer} disabled={flowBusy || !offerAmount}
+                style={{ padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#0A0A0A', cursor: flowBusy ? 'not-allowed' : 'pointer', opacity: (flowBusy || !offerAmount) ? 0.6 : 1 }}>
+                {flowBusy ? 'A enviar...' : '💰 Enviar proposta'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Flow feedback toast */}
+      {flowDone && (
+        <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', background: '#059669', color: '#fff', padding: '10px 20px', borderRadius: 10, zIndex: 999, fontFamily: "'DM Sans', sans-serif", fontSize: 13, maxWidth: '85%' }}>
+          {flowDone}
+        </div>
+      )}
+
       {/* Sticky CTA */}
       <div style={{ padding: '12px 16px', paddingBottom: 'max(20px, env(safe-area-inset-bottom))', background: '#0A0A0A', borderTop: '1px solid #1E1E1E', flexShrink: 0, display: 'flex', gap: 10 }}>
         <button onClick={handleSave}
@@ -323,9 +437,21 @@ export default function RentalDetailPage() {
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
           </svg>
         </button>
+        {listing.category === 'property' && (
+          <button onClick={() => setShowViewingSheet(true)}
+            style={{ padding: '14px 16px', borderRadius: 14, border: '1.5px solid #2A2A2A', background: 'transparent', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: '#FFFFFF', cursor: 'pointer', flexShrink: 0 }}>
+            📅 Visita
+          </button>
+        )}
+        {(listing.price_negotiable || listing.purpose === 'sale') && (
+          <button onClick={() => setShowOfferSheet(true)}
+            style={{ padding: '14px 16px', borderRadius: 14, border: '1.5px solid #C9A84C', background: 'rgba(201,168,76,0.08)', fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 600, color: '#C9A84C', cursor: 'pointer', flexShrink: 0 }}>
+            💰 Proposta
+          </button>
+        )}
         <button onClick={() => setShowInquirySheet(true)}
           style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: 'none', background: '#C9A84C', fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: '#0A0A0A', cursor: 'pointer' }}>
-          💬 Contactar via chat
+          💬 Chat
         </button>
       </div>
     </BuyerLayout>

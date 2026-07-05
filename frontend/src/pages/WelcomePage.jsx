@@ -138,6 +138,27 @@ export default function WelcomePage() {
         }}>
           {slide.subtitle}
         </p>
+
+        {/* First-Run doc Screen 6 — the welcome / first-order coupon.
+            Teaser here; the real BEMVINDO15 coupon is granted to the
+            account at signup and applies at first checkout. */}
+        {current === slides.length - 1 && (
+          <div style={{
+            marginTop: 32,
+            border: '1.5px dashed #C9A84C',
+            background: 'rgba(201,168,76,0.08)',
+            borderRadius: 14,
+            padding: '14px 20px',
+            textAlign: 'center',
+          }}>
+            <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: '#C9A84C', margin: '0 0 2px' }}>
+              -15% no 1.º pedido
+            </p>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', margin: 0 }}>
+              Código <span style={{ color: '#FFFFFF', fontWeight: 600 }}>BEMVINDO15</span> · aplicado ao criar conta
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Bottom controls */}

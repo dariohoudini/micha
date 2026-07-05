@@ -127,6 +127,11 @@ class UserRegisterView(generics.CreateAPIView):
             signups_total.inc()
         except Exception:
             pass
+        # First-Run doc Screen 6 / CH7 / carry-over: the account is born
+        # holding the first-order welcome coupon, so it's present at the
+        # very first checkout. Idempotent; never breaks signup.
+        from apps.promotions.welcome import grant_welcome_coupon
+        grant_welcome_coupon(user)
         return Response({
             'detail': 'Account created. Check your email for the verification code.',
             'email': user.email,

@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    WelcomeOfferView,
     ValidateCouponView,
     AdminCouponListCreateView,
     SellerCouponListCreateView,
@@ -21,6 +22,7 @@ urlpatterns = [
     path('seller/flash-sales/', SellerFlashSaleView.as_view(), name='seller-flash-sales'),
     # User Process Flow §16.2 + §7.6 — buyer-facing coupon/stock APIs
     path('coupons/mine/', MyCouponsView.as_view(), name='my-coupons'),
+    path('welcome-offer/', WelcomeOfferView.as_view(), name='welcome-offer'),
     path('coupons/collect/', CollectCouponView.as_view(), name='collect-coupon'),
     path('stock-notify/', StockNotificationListCreateView.as_view(), name='stock-notify'),
     # AliExpress Complete 2025 CH 17.3 — major sale event calendar.

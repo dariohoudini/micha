@@ -183,6 +183,29 @@ class MyCouponsView(generics.ListAPIView):
         return qs
 
 
+class WelcomeOfferView(APIView):
+    """GET /api/v1/promotions/welcome-offer/ — the new-user first-order
+    coupon for the welcome screen (First-Run doc Screen 6 / CH7).
+
+    Returns the caller's available welcome coupon if they hold one
+    (granted at registration), else null. Idempotently ensures the
+    coupon exists so the endpoint is safe on a fresh DB.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+
+    def get(self, request):
+        from .welcome import WELCOME_CODE, grant_welcome_coupon
+        uc = (UserCoupon.objects
+              .filter(user=request.user, coupon__code=WELCOME_CODE)
+              .select_related('coupon').first())
+        # A user who registered before the grant existed still gets it.
+        if uc is None:
+            uc = grant_welcome_coupon(request.user)
+        if uc is None:
+            return Response({'offer': None})
+        return Response({'offer': UserCouponSerializer(uc).data})
+
+
 class CollectCouponView(APIView):
     """POST /api/v1/promotions/coupons/collect/ — save a coupon."""
     permission_classes = [permissions.IsAuthenticated, IsNotSuspended]

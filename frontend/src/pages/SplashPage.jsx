@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { bootstrapGuest } from '@/lib/guestProfile'
 
 export default function SplashPage() {
   const navigate = useNavigate()
   const [phase, setPhase] = useState('enter') // enter → logo → exit
 
   useEffect(() => {
+    // First-Run doc CH4 — the splash covers the bootstrap: establish the
+    // PII-free guest session behind the logo (fire-and-forget, never
+    // blocks the splash from clearing).
+    bootstrapGuest()
     // User Process Flow Chapter 1+2 — branch by ``micha_onboarded``.
     // On the very first launch the user lands on the carousel
     // (Chapter 2). Subsequent launches skip straight to the

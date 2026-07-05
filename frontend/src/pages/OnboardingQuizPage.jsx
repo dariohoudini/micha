@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import client from '@/api/client'
+import { patchGuestProfile, completeOnboarding } from '@/lib/guestProfile'
 
 const STEPS = [
   { id: 'categories', question: 'O que mais gosta de comprar?', options: ['Moda','Electrónica','Casa','Beleza','Desporto','Alimentação'] },
@@ -25,6 +26,17 @@ export default function OnboardingQuizPage() {
       setStep(s => s + 1)
     } else {
       setLoading(true)
+      // First-Run doc CH5/CH11 — write the setup answers to the PII-free
+      // GUEST profile (no account needed) so they seed the feed now and
+      // carry onto the account at signup. Interests are the cold-start
+      // signal; province refines the locale.
+      patchGuestProfile({
+        interests: newAnswers.categories ? [newAnswers.categories] : [],
+        locale: newAnswers.province ? { province: newAnswers.province } : undefined,
+      })
+      completeOnboarding(false)
+      // Keep the authed taste-profile seed too, for a logged-in user
+      // running the quiz (harmless 401 for a guest).
       try {
         await client.post('/api/v1/ai/onboarding-quiz/', newAnswers)
       } catch {}

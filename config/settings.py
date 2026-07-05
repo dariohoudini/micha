@@ -92,6 +92,7 @@ INSTALLED_APPS = [
     'apps.gift_cards',
     'apps.imagery',
     'apps.waitlist',
+    'apps.onboarding',
     'apps.telemetry',
     'apps.users',
     'apps.verification',

@@ -49,6 +49,7 @@ urlpatterns = [
     path("api/v1/verification/",    include("apps.verification.urls")),
     path("api/v1/stores/",          include("apps.stores.urls")),
     path("api/v1/products/",        include("apps.products.urls")),
+    path("api/v1/",                 include("apps.onboarding.urls")),
     path("api/v1/listings/",        include("apps.listings.urls")),
     path("api/v1/search/",          include("apps.search.urls")),
     path("api/v1/recommendations/", include("apps.recommendations.urls")),

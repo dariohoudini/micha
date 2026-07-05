@@ -132,6 +132,14 @@ class UserRegisterView(generics.CreateAPIView):
         # very first checkout. Idempotent; never breaks signup.
         from apps.promotions.welcome import grant_welcome_coupon
         grant_welcome_coupon(user)
+        # First-Run doc CH11: copy the guest profile (locale + interests +
+        # attribution) onto the new account so it's born already knowing
+        # the user — no re-ask, no second cold-start. The client passes
+        # the same device_id it used for the guest session. Idempotent.
+        device_id = (request.data.get('device_id') or '').strip()
+        if device_id:
+            from apps.onboarding.services import carry_over_guest_profile
+            carry_over_guest_profile(user, device_id)
         return Response({
             'detail': 'Account created. Check your email for the verification code.',
             'email': user.email,

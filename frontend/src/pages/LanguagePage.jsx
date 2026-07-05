@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import i18n from '@/i18n'
 import client from '@/api/client'
+import { patchGuestProfile } from '@/lib/guestProfile'
 
 const languages = [
   {
@@ -54,6 +55,12 @@ export default function LanguagePage() {
     i18n.changeLanguage(selected)
     // Best-effort: tell the server (silent if unauthenticated)
     client.patch('/api/v1/auth/profile/update/', { language: selected }).catch(() => {})
+    // First-Run doc CH3/CH4 — write the locale to the PII-free GUEST
+    // profile (works with no account) so it carries onto the account at
+    // signup. The 'pt' choice maps to Angola's pt-AO.
+    patchGuestProfile({
+      locale: { language: selected === 'pt' ? 'pt-AO' : 'en' },
+    })
     navigate('/welcome')
   }
 

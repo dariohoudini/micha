@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { registerSchema } from '@/lib/validation'
 import { authAPI } from '@/api/auth'
+import { getDeviceId } from '@/lib/guestProfile'
 import { toast } from '@/components/ui/Toast'
 import { FormField, Input, PhoneInput, ErrorBanner } from '@/components/ui/FormField'
 import { FadeIn } from '@/components/ui/PageTransition'
@@ -55,6 +56,9 @@ export default function RegisterPage() {
         privacy_consent: data.privacy_consent,
         terms_consent: data.terms_consent,
         account_type: data.account_type,
+        // First-Run doc CH11 — carry the guest profile (locale/interests)
+        // onto the new account by passing the same device id.
+        device_id: getDeviceId(),
       })
       toast.success('Conta criada! Verifique o seu email.')
       navigate('/otp', { state: { email: data.email, context: 'register' } })

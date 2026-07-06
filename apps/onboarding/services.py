@@ -59,6 +59,13 @@ def carry_over_guest_profile(user, device_id):
             except Exception:
                 log.debug('interest carry-over seeding skipped', exc_info=True)
 
+        # Merge the SERVER-SIDE guest cart into the account cart (doc
+        # CH9/CH12 semantics: clamp to stock, store the CURRENT price,
+        # sum into an existing row). This is what makes the cart survive
+        # a reinstall or a second device — the localStorage path
+        # (/cart/merge/) still runs post-login and surfaces conflicts.
+        _merge_guest_cart(user, gp)
+
         gp.linked_user = user
         gp.carried_over_at = timezone.now()
         gp.save(update_fields=['linked_user', 'carried_over_at', 'updated_at'])
@@ -66,3 +73,57 @@ def carry_over_guest_profile(user, device_id):
     except Exception:
         log.exception('guest-profile carry-over failed for device %s', device_id)
         return None
+
+
+def _merge_guest_cart(user, guest_profile):
+    """Fold the guest cart snapshot into the user's Cart, then retire
+    the snapshot. Same validation rules as /cart/merge/: dead products
+    skipped, quantity clamped to available stock, current price stored."""
+    snapshot = list(guest_profile.cart_items.all())
+    if not snapshot:
+        return
+    try:
+        from apps.cart.models import Cart, CartItem
+        from apps.inventory.models import ProductVariantCombo
+        from apps.products.models import Product
+
+        cart, _ = Cart.objects.get_or_create(user=user)
+        for row in snapshot:
+            try:
+                product = Product.objects.filter(
+                    pk=row.product_id, is_active=True, is_archived=False,
+                ).first()
+                if product is None:
+                    continue
+                combo = None
+                if row.variant_combo_id:
+                    combo = ProductVariantCombo.objects.filter(
+                        pk=row.variant_combo_id, product=product,
+                        is_active=True,
+                    ).first()
+                    if combo is None:
+                        continue
+                available = combo.quantity if combo else product.quantity
+                if available <= 0:
+                    continue
+                existing = CartItem.objects.filter(
+                    cart=cart, product=product, variant_combo=combo,
+                ).first()
+                if existing is not None:
+                    existing.quantity = min(existing.quantity + row.quantity,
+                                            available)
+                    existing.save(update_fields=['quantity', 'updated_at'])
+                else:
+                    CartItem.objects.create(
+                        cart=cart, product=product, variant_combo=combo,
+                        quantity=min(row.quantity, available),
+                        price_at_add=combo.price if combo else product.price,
+                    )
+            except Exception:
+                continue
+        # Retired: the account cart is now the truth. This also makes the
+        # carry-over idempotent for the cart (a retried signup finds an
+        # empty snapshot).
+        guest_profile.cart_items.all().delete()
+    except Exception:
+        log.exception('guest cart merge failed for guest %s', guest_profile.pk)

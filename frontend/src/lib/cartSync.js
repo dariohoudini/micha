@@ -102,9 +102,42 @@ async function performSync() {
   const { setSyncStatus, replaceItems } = useCartStore.getState()
 
   if (!isAuth) {
-    // Anonymous cart — nothing to sync to the server. Status reflects
-    // local-only mode; this is normal pre-login state.
-    setSyncStatus('idle')
+    // Anonymous cart — mirror it to the SERVER-SIDE guest cart
+    // (Guest-First doc CH6) so it survives reinstalls, reaches other
+    // devices, and merges into the account at signup even if
+    // localStorage is gone. Local remains the source of truth for the
+    // anon UX; the server is the durable copy.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setSyncStatus('offline')
+      return
+    }
+    try {
+      const { getDeviceId } = await import('@/lib/guestProfile')
+      const { items: localItems, replaceItems } = useCartStore.getState()
+      if (localItems.length > 0) {
+        await client.put('/api/v1/guest/cart/', {
+          device_id: getDeviceId(),
+          items: localItems.filter(i => i && i.id).map(i => ({
+            product_id: i.id,
+            quantity: Math.max(1, Math.min(100, Number(i.quantity) || 1)),
+            variant_combo_id: i.variantComboId || i.variant_combo_id || null,
+            price_at_add: i.price,
+            title: i.title || '',
+          })),
+        })
+      } else {
+        // Empty local cart (fresh install / cleared storage): recover
+        // the durable guest cart from the server, if any.
+        const res = await client.get('/api/v1/guest/cart/', {
+          params: { device_id: getDeviceId() },
+        })
+        const serverItems = res?.data?.items || []
+        if (serverItems.length > 0) replaceItems(serverItems)
+      }
+      setSyncStatus('idle')
+    } catch {
+      setSyncStatus('idle')   // guest mirroring is best-effort, never noisy
+    }
     return
   }
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {

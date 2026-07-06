@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path('guest/session/', views.GuestSessionView.as_view(), name='guest-session'),
     path('guest/profile/', views.GuestProfileView.as_view(), name='guest-profile'),
+    path('guest/cart/', views.GuestCartView.as_view(), name='guest-cart'),
     path('onboarding/interests/', views.OnboardingInterestsView.as_view(),
          name='onboarding-interests'),
     path('onboarding/complete/', views.OnboardingCompleteView.as_view(),

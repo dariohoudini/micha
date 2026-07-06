@@ -60,3 +60,38 @@ class GuestProfile(models.Model):
 
     def __str__(self):
         return f'GuestProfile({self.device_id[:12]}… {self.onboarding_status})'
+
+
+class GuestCartItem(models.Model):
+    """Guest-First doc CH6 — the server-side guest cart.
+
+    A snapshot of the anonymous cart keyed to the guest device, so the
+    cart survives reinstalls and reaches other devices — and is merged
+    into the account cart at signup (the carry-over). Deliberately a
+    loose snapshot (integer product ids, not FKs): the guest's local
+    cart can hold stale ids, and validation happens at read + merge
+    time against the live catalog, exactly like /cart/merge/ does.
+    """
+    guest = models.ForeignKey(
+        GuestProfile, on_delete=models.CASCADE, related_name='cart_items')
+    product_id = models.PositiveBigIntegerField()
+    variant_combo_id = models.PositiveBigIntegerField(null=True, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    price_at_add = models.DecimalField(max_digits=10, decimal_places=2,
+                                       null=True, blank=True)
+    title = models.CharField(max_length=200, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'onboarding_guest_cart_item'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['guest', 'product_id', 'variant_combo_id'],
+                name='guest_cart_item_unique'),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='guest_cart_item_qty_positive'),
+        ]
+
+    def __str__(self):
+        return f'GuestCartItem({self.guest_id} p{self.product_id} x{self.quantity})'

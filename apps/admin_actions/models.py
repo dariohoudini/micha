@@ -212,3 +212,31 @@ class ProductModeration(models.Model):
 
     def __str__(self):
         return f"Moderation({self.product.title}): {self.status}"
+
+
+class UserRestriction(models.Model):
+    """Admin User Management doc CH5 — graduated enforcement short of a
+    full suspend. A RESTRICT limits specific capabilities (cannot sell /
+    cannot withdraw / cannot message) for a targeted concern, reversible,
+    reason-required, audited — the least-force response in the ladder.
+    One row per user; ``is_active=False`` = lifted (un-restricted).
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='restriction')
+    no_selling = models.BooleanField(default=False)
+    no_withdrawal = models.BooleanField(default=False)
+    no_messaging = models.BooleanField(default=False)
+    reason = models.CharField(max_length=300, blank=True)
+    restricted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        blank=True, related_name='restrictions_applied')
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'admin_user_restriction'
+
+    def __str__(self):
+        return f'Restriction({self.user_id}, active={self.is_active})'

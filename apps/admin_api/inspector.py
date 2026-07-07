@@ -227,23 +227,37 @@ class AdminUserInspectorView(APIView):
         # "What can this user do + WHY" (doc CH13) — each gate explained.
         kyc_ok = self._kyc_status(user) == 'approved'
         active = user.is_active
+        # CH5 graduated restrictions reduce capability without a suspend.
+        r = getattr(user, 'restriction', None)
+        restr = {'selling': False, 'withdrawal': False, 'messaging': False,
+                 'reason': ''}
+        if r and r.is_active:
+            restr = {'selling': r.no_selling, 'withdrawal': r.no_withdrawal,
+                     'messaging': r.no_messaging, 'reason': r.reason}
 
         def gate(enabled, why_not=''):
             return {'enabled': bool(enabled),
                     'reason': '' if enabled else why_not}
 
         return {
+            'restriction': restr,
             'can_purchase': gate(active and not user.is_staff,
                                  'conta suspensa' if not active
                                  else 'staff não compra'),
-            'can_sell': gate(active and user.is_seller and user.is_verified_seller,
+            'can_sell': gate(active and user.is_seller and user.is_verified_seller
+                             and not restr['selling'],
                              'conta suspensa' if not active
+                             else 'restrito por admin' if restr['selling']
                              else 'não é vendedor' if not user.is_seller
                              else 'verificação de vendedor pendente'),
-            'can_withdraw': gate(active and kyc_ok,
+            'can_withdraw': gate(active and kyc_ok and not restr['withdrawal'],
                                  'conta suspensa' if not active
+                                 else 'restrito por admin' if restr['withdrawal']
                                  else 'KYC não aprovado'),
-            'can_message': gate(active, 'conta suspensa'),
+            'can_message': gate(active and not restr['messaging'],
+                                'conta suspensa' if not active
+                                else 'restrito por admin' if restr['messaging']
+                                else ''),
         }
 
     @staticmethod

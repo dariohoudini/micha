@@ -49,6 +49,30 @@ export default function AdminUsersPage() {
     setInspBusy(false)
   }
 
+  // Graduated restrict (CH5) — toggle one capability. Any active flag
+  // means a live restriction; clearing the last one un-restricts.
+  const toggleRestriction = async (kind) => {
+    const cur = inspector?.access?.restriction || {}
+    const next = { selling: !!cur.selling, withdrawal: !!cur.withdrawal, messaging: !!cur.messaging }
+    next[kind] = !next[kind]
+    const anyOn = next.selling || next.withdrawal || next.messaging
+    setInspBusy(true)
+    try {
+      if (anyOn) {
+        const reason = cur.reason || prompt('Motivo da restrição:') || 'Restrição administrativa'
+        await client.post(`/api/v1/admin-api/users/${inspecting.id}/action/`, {
+          action: 'restrict', reason,
+          no_selling: next.selling, no_withdrawal: next.withdrawal, no_messaging: next.messaging,
+        })
+      } else {
+        await client.post(`/api/v1/admin-api/users/${inspecting.id}/action/`, { action: 'unrestrict' })
+      }
+      showToast('Restrições actualizadas')
+      openInspector(inspecting)
+    } catch { showToast('Erro ao actualizar restrições', 'error') }
+    setInspBusy(false)
+  }
+
   useEffect(() => {
     setLoading(true)
     client.get('/api/v1/admin-actions/users/').then(r => setUsers(asList(r.data))).catch(() => {}).finally(() => setLoading(false))
@@ -186,9 +210,28 @@ export default function AdminUsersPage() {
 
                   {/* Access gates */}
                   <Section title="Acessos e capacidades">
-                    {Object.entries(inspector.access).map(([cap, g]) => (
+                    {Object.entries(inspector.access).filter(([cap]) => cap !== 'restriction').map(([cap, g]) => (
                       <Row key={cap} left={cap.replace('can_', 'pode ').replace('_', ' ')} right={g.enabled ? '✅' : `❌ ${g.reason}`} />
                     ))}
+                  </Section>
+
+                  {/* Graduated restrictions (CH5) */}
+                  <Section title="Restrições (sem suspender)">
+                    {['selling', 'withdrawal', 'messaging'].map(k => {
+                      const on = inspector.access.restriction?.[k]
+                      const LABEL = { selling: 'Vender', withdrawal: 'Levantar', messaging: 'Mensagens' }
+                      return (
+                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontFamily: "'DM Sans'", fontSize: 11, color: MUTED }}>{LABEL[k]}</span>
+                          <button onClick={() => toggleRestriction(k)} style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${on ? RED : BORDER}`, background: on ? 'rgba(239,68,68,0.12)' : 'none', color: on ? RED : MUTED, fontFamily: "'DM Sans'", fontSize: 11, cursor: 'pointer' }}>
+                            {on ? '🚫 Restrito' : 'Permitido'}
+                          </button>
+                        </div>
+                      )
+                    })}
+                    {inspector.access.restriction?.reason && (
+                      <p style={{ fontFamily: "'DM Sans'", fontSize: 10, color: MUTED, margin: '4px 0 0' }}>Motivo: {inspector.access.restriction.reason}</p>
+                    )}
                   </Section>
 
                   {/* History timeline */}

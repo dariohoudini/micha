@@ -395,6 +395,13 @@ class ProductCreateView(generics.CreateAPIView):
 
     @idempotent(required=True)
     def post(self, request, *args, **kwargs):
+        # Admin User Management CH5 — a selling restriction blocks new
+        # listings without a full suspend.
+        if request.user.is_restricted('selling'):
+            return Response({'error': 'restricted',
+                             'detail': 'A publicação de anúncios está '
+                                       'temporariamente restrita nesta conta.'},
+                            status=403)
         # §18 — duplicate product detection. Same store + identical
         # title within the last 24h almost certainly = accidental
         # double-submit. Front-end shows a modal and the seller picks

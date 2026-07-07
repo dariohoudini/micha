@@ -56,6 +56,12 @@ class ConversationListCreateView(generics.ListCreateAPIView):
         user=self.request.user
         return Chat.objects.filter(Q(buyer=user)|Q(seller=user)).prefetch_related('messages').order_by('-last_message_at')
     def create(self,request,*args,**kwargs):
+        # Admin User Management CH5 — a messaging restriction blocks
+        # opening new conversations without a full suspend.
+        if request.user.is_restricted('messaging'):
+            return Response({'error': 'restricted',
+                             'detail': 'As mensagens estão temporariamente '
+                                       'restritas nesta conta.'}, status=403)
         seller_id=request.data.get('seller_id')
         if not seller_id: return Response({'error': 'seller_id required.'}, status=400)
         seller=get_object_or_404(User,pk=seller_id,is_seller=True)

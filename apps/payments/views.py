@@ -181,6 +181,13 @@ class RequestPayoutView(APIView):
         if not ok:
             return Response(err, status=code)
 
+        # Admin User Management CH5 — a withdrawal restriction blocks
+        # money-out without a full suspend.
+        if request.user.is_restricted('withdrawal'):
+            return Response({'error': 'restricted',
+                             'detail': 'Os levantamentos estão temporariamente '
+                                       'restritos nesta conta.'}, status=403)
+
         from apps.core.money import to_decimal
 
         raw_amount = request.data.get("amount")

@@ -181,6 +181,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_locked_out(self): return bool(self.locked_until and timezone.now() < self.locked_until)
     def has_role(self, role_name): return self.roles.filter(name=role_name).exists()
 
+    def is_restricted(self, kind):
+        """Admin User Management CH5 — graduated enforcement. ``kind`` is
+        'selling' | 'withdrawal' | 'messaging'. True if an ACTIVE
+        restriction bars that capability."""
+        r = getattr(self, 'restriction', None)
+        return bool(r and r.is_active and getattr(r, f'no_{kind}', False))
+
     def assign_role(self, role_name, assigned_by=None, ip_address=None):
         """FIX: Privilege escalation logged — who assigned what role, when, from where."""
         role, _ = Role.objects.get_or_create(name=role_name)

@@ -240,6 +240,31 @@ class AdminUserActionView(APIView):
             user.is_seller = True
             user.save()
             return Response({'status': 'seller_enabled'})
+        elif action == 'restrict':
+            # Admin User Management CH5 — graduated enforcement short of a
+            # suspend: limit specific capabilities, reason required.
+            from apps.admin_actions.models import UserRestriction
+            reason = (request.data.get('reason') or '').strip()
+            if not reason:
+                return Response({'error': 'reason_required',
+                                 'detail': 'Indique o motivo da restrição.'},
+                                status=400)
+            r, _ = UserRestriction.objects.get_or_create(user=user)
+            r.no_selling = bool(request.data.get('no_selling'))
+            r.no_withdrawal = bool(request.data.get('no_withdrawal'))
+            r.no_messaging = bool(request.data.get('no_messaging'))
+            r.reason = reason[:300]
+            r.restricted_by = request.user
+            r.is_active = True
+            r.save()
+            return Response({'status': 'restricted',
+                             'no_selling': r.no_selling,
+                             'no_withdrawal': r.no_withdrawal,
+                             'no_messaging': r.no_messaging})
+        elif action == 'unrestrict':
+            from apps.admin_actions.models import UserRestriction
+            UserRestriction.objects.filter(user=user).update(is_active=False)
+            return Response({'status': 'unrestricted'})
 
         return Response({'error': 'Invalid action'}, status=400)
 

@@ -15,7 +15,7 @@
 # ╭─────────────────────────────────────────────────────────────────╮
 # │  Builder stage                                                  │
 # ╰─────────────────────────────────────────────────────────────────╯
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # System deps needed to COMPILE Python packages with C extensions
 # (psycopg2, cryptography, Pillow). NOT in the runtime image — runtime
@@ -46,7 +46,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # ╭─────────────────────────────────────────────────────────────────╮
 # │  Runtime stage                                                  │
 # ╰─────────────────────────────────────────────────────────────────╯
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Runtime system deps. Image-vision libs need their shared libraries
 # (libjpeg, libwebp, libpng) at runtime even though we built wheels.

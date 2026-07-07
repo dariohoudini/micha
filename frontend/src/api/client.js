@@ -66,10 +66,19 @@ import('./fingerprint')
   .then((fp) => { _deviceFp = fp || '' })
   .catch(() => {})
 
+// Admin User Management CH17 — impersonation. An in-memory token
+// override so an operator can "view as" a user WITHOUT touching their
+// own persisted session (their real access/refresh tokens stay put).
+// Vanishes on exit or reload; the token is time-boxed server-side.
+let _imperToken = null
+export function setImpersonationToken(t) { _imperToken = t || null }
+export function clearImpersonationToken() { _imperToken = null }
+export function isImpersonating() { return !!_imperToken }
+
 // ── Request: attach access token + request ID + idempotency key ───────────
 api.interceptors.request.use(
   (config) => {
-    const token = tokenStorage.getAccessToken()
+    const token = _imperToken || tokenStorage.getAccessToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -205,6 +214,20 @@ api.interceptors.response.use(
         import('@/lib/perfMetrics')
           .then(({ recordApiFailure }) => recordApiFailure()).catch(() => {})
       } catch {}
+    }
+
+    // Impersonation (CH17): an expired impersonation token must NOT
+    // trigger the operator's refresh (that would refresh the operator,
+    // not the target). End impersonation instead — the store listener
+    // restores the operator's own session.
+    if (error.response?.status === 401 && _imperToken) {
+      _imperToken = null
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('micha:impersonation-expired'))
+        }
+      } catch {}
+      return Promise.reject(error)
     }
 
     if (error.response?.status === 401 && !original._retry) {

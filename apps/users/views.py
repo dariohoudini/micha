@@ -26,7 +26,7 @@ from .serializers import (
     UserRegisterSerializer, UserSerializer, UpdateProfileSerializer,
     ChangePasswordSerializer, MyTokenObtainPairSerializer, SocialAuthSerializer,
 )
-from .permissions import IsNotSuspended
+from .permissions import IsNotSuspended, NotImpersonated
 from apps.idempotency.decorators import idempotent
 from middleware.security import log_security_event, require_recent_auth
 
@@ -736,7 +736,7 @@ class UpdateProfileView(generics.UpdateAPIView):
 
 
 class ChangePasswordView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, NotImpersonated]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
@@ -807,7 +807,7 @@ class ChangePhoneView(APIView):
 
 class DeleteAccountView(APIView):
     """FIX: @require_recent_auth applied — account deletion requires password confirmation."""
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, NotImpersonated]
 
     @require_recent_auth()
     def post(self, request):
@@ -880,7 +880,7 @@ class Setup2FAView(APIView):
 
 
 class Enable2FAView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsNotSuspended]
+    permission_classes = [permissions.IsAuthenticated, IsNotSuspended, NotImpersonated]
 
     def post(self, request):
         code = request.data.get('code', '').strip()

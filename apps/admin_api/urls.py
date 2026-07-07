@@ -16,6 +16,8 @@ urlpatterns = [
          inspector.AdminUserInspectorView.as_view()),
     path('users/<int:user_id>/sessions/terminate/',
          inspector.AdminUserTerminateSessionsView.as_view()),
+    path('users/<int:user_id>/impersonate/',
+         inspector.AdminUserImpersonateView.as_view()),
     path('users/<int:user_id>/password-reset/',
          inspector.AdminUserPasswordResetView.as_view()),
     path('orders/', views.AdminOrdersListView.as_view()),

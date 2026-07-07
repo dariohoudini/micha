@@ -70,6 +70,17 @@ def check_money_out_stepup(request, scope='money_out'):
     factor, so an unenrolled user is told to enable it first (never
     allowed through on session alone). On success the window is consumed
     (single-use)."""
+    # Admin User Management CH17 — money-out is BLOCKED even under
+    # impersonation. An operator viewing-as a user can never move funds
+    # (they can't hold the target's second factor anyway, but this is
+    # the explicit, auditable refusal).
+    from .impersonation import is_impersonated
+    if is_impersonated(request):
+        return (False,
+                {'error': 'blocked_under_impersonation',
+                 'detail': 'Esta acção está bloqueada durante a personificação.'},
+                403)
+
     user = request.user
     if not getattr(user, 'two_fa_enabled', False):
         return (False,

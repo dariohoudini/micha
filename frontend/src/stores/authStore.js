@@ -19,6 +19,42 @@ export const useAuthStore = create(
       isSeller: false,
       isStaff: false,
       loading: true,
+      // Admin User Management CH17 — impersonation ("view as"). The
+      // operator's real user is stashed here and restored on exit.
+      impersonating: null,   // { id, email } of the acted-as user
+      _operatorSnapshot: null,
+
+      enterImpersonation: async (token, actingAs) => {
+        const { setImpersonationToken } = await import('@/api/client')
+        setImpersonationToken(token)
+        const snapshot = {
+          user: get().user, isSeller: get().isSeller, isStaff: get().isStaff,
+        }
+        try {
+          const { profileAPI } = await import('@/api/auth')
+          const res = await profileAPI.getProfile()
+          set({
+            _operatorSnapshot: snapshot,
+            impersonating: actingAs,
+            user: res.data,
+            isSeller: res.data.is_seller || false,
+            isStaff: false,        // never act with staff powers
+          })
+        } catch {
+          // Couldn't load the target — abort cleanly.
+          setImpersonationToken(null)
+        }
+      },
+
+      exitImpersonation: async () => {
+        const { clearImpersonationToken } = await import('@/api/client')
+        clearImpersonationToken()
+        const snap = get()._operatorSnapshot
+        set({
+          impersonating: null, _operatorSnapshot: null,
+          ...(snap ? { user: snap.user, isSeller: snap.isSeller, isStaff: snap.isStaff } : {}),
+        })
+      },
 
       init: () => {
         tokenStorage.migrateFromLocalStorage()

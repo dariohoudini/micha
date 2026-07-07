@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AdminLayout from '@/layouts/AdminLayout'
 import client from '@/api/client'
 import { asList } from '@/lib/asList'
+import { useAuthStore } from '@/stores/authStore'
 
 const G = '#C9A84C', BG = '#0A0A0A', CARD = '#111', BORDER = '#1E1E1E', TEXT = '#fff', MUTED = '#666', GREEN = '#059669', RED = '#EF4444'
 const STATUS_COLORS = { active: GREEN, warned: G, suspended: RED, banned: RED }
@@ -10,6 +12,7 @@ const LADDER_LABELS = ['L0 · Não verificado', 'L1 · Contacto verificado', 'L2
 const RISK_COLORS = { low: GREEN, elevated: '#F59E0B', high: RED }
 
 export default function AdminUsersPage() {
+  const navigate = useNavigate()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -71,6 +74,25 @@ export default function AdminUsersPage() {
       openInspector(inspecting)
     } catch { showToast('Erro ao actualizar restrições', 'error') }
     setInspBusy(false)
+  }
+
+  // Impersonation (CH17) — "Ver como". Mint a time-boxed token, hand it
+  // to the auth store (which swaps the in-memory session to the target
+  // WITHOUT touching the operator's persisted tokens), then drop the
+  // operator onto the home feed seeing exactly what the user sees. The
+  // fixed banner + safe-exit are handled globally by ImpersonationBanner.
+  const impersonate = async () => {
+    if (!confirm(`Ver a plataforma como ${inspecting.email}?\n\nAcções sensíveis (pagamentos, password, apagar conta) ficam bloqueadas. A sessão expira em 15 min. Tudo fica registado em auditoria.`)) return
+    setInspBusy(true)
+    try {
+      const r = await client.post(`/api/v1/admin-api/users/${inspecting.id}/impersonate/`)
+      await useAuthStore.getState().enterImpersonation(r.data.access, r.data.acting_as)
+      if (!useAuthStore.getState().impersonating) { showToast('Não foi possível iniciar a sessão', 'error'); setInspBusy(false); return }
+      navigate('/home')
+    } catch (e) {
+      showToast(e.response?.data?.detail || 'Erro ao iniciar "ver como"', 'error')
+      setInspBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -248,6 +270,9 @@ export default function AdminUsersPage() {
                     </button>
                     <button disabled={inspBusy} onClick={triggerPasswordReset} style={{ flex: 1, minWidth: 150, padding: 12, borderRadius: 10, border: `1px solid ${BORDER}`, background: CARD, color: TEXT, fontFamily: "'DM Sans'", fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                       ✉️ Enviar reset de password
+                    </button>
+                    <button disabled={inspBusy} onClick={impersonate} style={{ flex: 1, minWidth: 150, padding: 12, borderRadius: 10, border: '1px solid #7C3AED', background: 'rgba(124,58,237,0.12)', color: '#A78BFA', fontFamily: "'DM Sans'", fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                      👁️ Ver como utilizador
                     </button>
                   </div>
                 </div>

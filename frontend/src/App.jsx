@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import OfflineBanner from '@/components/ui/OfflineBanner'
 import CookieConsentBanner from '@/components/CookieConsentBanner'
+import ImpersonationBanner from '@/components/shared/ImpersonationBanner'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { attachCartSync } from '@/lib/cartSync'
 import { useDeepLinks } from '@/lib/deepLinks'
@@ -279,6 +280,7 @@ export default function App() {
         </a>
         <OfflineBanner />
         <CookieConsentBanner />
+        <ImpersonationBanner />
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Onboarding */}

@@ -298,6 +298,45 @@ class AdminUserTerminateSessionsView(APIView):
         return Response({'status': 'terminated', **result})
 
 
+class AdminUserImpersonateView(APIView):
+    """POST /api/v1/admin-api/users/<id>/impersonate/ — view-as.
+
+    Mints a time-boxed token to act AS the user, recorded on BOTH sides
+    (the audit row attributes it to the real operator). Dangerous
+    actions stay blocked even with this token (see users.stepup /
+    users.impersonation). Staff/superusers cannot be impersonated."""
+    permission_classes = [IsAdminUser]
+
+    @audit_admin_action('user.impersonated', target_kwarg='user_id',
+                        target_lookup=_lookup_user)
+    def post(self, request, user_id):
+        from apps.users.impersonation import (
+            IMPERSONATION_MINUTES, issue_impersonation_token)
+        target = _lookup_user(user_id)
+        if target is None:
+            return Response({'error': 'Não encontrado'}, status=404)
+        # Never impersonate another operator (privilege-escalation guard).
+        if target.is_staff or target.is_superuser:
+            return Response({'error': 'cannot_impersonate_staff',
+                             'detail': 'Não é possível personificar outro operador.'},
+                            status=403)
+        token = issue_impersonation_token(target, request.user)
+        # Recorded on the target's own timeline too (the watched user
+        # can see "an operator viewed as me").
+        try:
+            from apps.users.models import UserActivityLog
+            UserActivityLog.objects.create(
+                user=target, action='impersonation_started',
+                device=f'by {request.user.email}')
+        except Exception:
+            pass
+        return Response({
+            'access': token,
+            'expires_in_minutes': IMPERSONATION_MINUTES,
+            'acting_as': {'id': target.id, 'email': target.email},
+        })
+
+
 class AdminUserPasswordResetView(APIView):
     """POST /api/v1/admin-api/users/<id>/password-reset/ — trigger the
     SECURE, USER-COMPLETED reset flow (doc CH6). The operator never sets

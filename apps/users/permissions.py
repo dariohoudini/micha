@@ -122,6 +122,18 @@ class IsAdminOrSuperuser(BasePermission):
         return False
 
 
+class NotImpersonated(BasePermission):
+    """Admin User Management CH17 — block security-sensitive actions
+    (password, 2FA, account deletion) while an operator is impersonating
+    the user. View-as is for support, never for changing their
+    credentials or destroying their account."""
+    message = 'This action is blocked during impersonation.'
+
+    def has_permission(self, request, view):
+        from apps.users.impersonation import is_impersonated
+        return not is_impersonated(request)
+
+
 class Requires2FAForFinancial(BasePermission):
     """
     FIX: Enforce 2FA for financial operations.

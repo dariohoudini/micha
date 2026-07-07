@@ -1,11 +1,14 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import SellerLayout from '@/layouts/SellerLayout'
 import { PayoutScheduleCalendar } from '@/components/shared/MichaUXComponents'
 import { useWallet, useWalletTransactions, useRequestPayout } from '@/hooks/useQueries'
+import { walletApi } from '@/api/wallet'
 
 const formatPrice = (n) => Number(n || 0).toLocaleString('pt-AO') + ' Kz'
 
 export default function SellerWalletPage() {
+  const navigate = useNavigate()
   const [showWithdraw, setShowWithdraw] = useState(false)
   const [withdrawStep, setWithdrawStep] = useState(1) // 1: amount, 2: confirm, 3: success
   const [withdrawAmount, setWithdrawAmount] = useState('')
@@ -14,6 +17,10 @@ export default function SellerWalletPage() {
   const [amountError, setAmountError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showBalance, setShowBalance] = useState(true)
+  // Gap-Coverage CH16 — money-out step-up (fresh 2FA before funds move).
+  const [needTotp, setNeedTotp] = useState(false)   // show the code field
+  const [totp, setTotp] = useState('')
+  const [needEnroll, setNeedEnroll] = useState(false) // 2FA not enabled
 
   const { data: walletData, isLoading: walletLoading } = useWallet()
   const { data: txData, isLoading: txLoading } = useWalletTransactions()
@@ -52,11 +59,30 @@ export default function SellerWalletPage() {
   const handleWithdraw = async () => {
     if (!validateWithdraw()) return
     setLoading(true)
+    setAmountError('')
+    const payload = {
+      amount: Number(withdrawAmount),
+      phone: `+244${phone.replace(/\s/g, '')}`,
+      method: 'multicaixa',
+      ...(totp ? { totp_code: totp } : {}),
+    }
     try {
-      await requestPayout({ amount: Number(withdrawAmount), phone: `+244${phone.replace(/\s/g, '')}`, method: 'multicaixa' })
+      await requestPayout(payload)
+      setNeedTotp(false); setTotp('')
       setWithdrawStep(3)
     } catch (err) {
-      setAmountError(err.response?.data?.detail || err.response?.data?.error || 'Erro ao processar levantamento.')
+      const code = err.response?.data?.error
+      if (code === 'mfa_required_for_payout') {
+        // Money-out demands an enrolled second factor — send them to
+        // enable 2FA first (protecting their own funds).
+        setNeedEnroll(true)
+      } else if (code === 'stepup_required' || code === 'invalid_2fa') {
+        // Ask for a fresh 2FA code, then retry with it.
+        setNeedTotp(true)
+        setAmountError(code === 'invalid_2fa' ? 'Código 2FA inválido.' : '')
+      } else {
+        setAmountError(err.response?.data?.detail || code || 'Erro ao processar levantamento.')
+      }
     } finally { setLoading(false) }
   }
 
@@ -166,8 +192,33 @@ export default function SellerWalletPage() {
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: '#C9A84C' }}>{formatPrice(Number(withdrawAmount))}</span>
                 </div>
               </div>
-              <button className="btn-primary" onClick={handleWithdraw} disabled={loading} style={{ opacity: loading ? 0.7 : 1, marginBottom: 10 }}>
-                {loading ? 'A processar...' : 'Confirmar levantamento'}
+              {/* Money-out step-up (Gap-Coverage CH16) */}
+              {needEnroll && (
+                <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 12, padding: 14, marginBottom: 12 }}>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#FCA5A5', margin: '0 0 8px' }}>
+                    🔒 Para levantar fundos, active a verificação em duas etapas (2FA) — é a proteção do seu dinheiro.
+                  </p>
+                  <button className="btn-primary" onClick={() => navigate('/security')}>
+                    Activar 2FA
+                  </button>
+                </div>
+              )}
+              {needTotp && !needEnroll && (
+                <div style={{ marginBottom: 12 }}>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: '#9A9A9A', marginBottom: 6 }}>
+                    Introduza o seu código 2FA para confirmar o levantamento
+                  </p>
+                  <input
+                    value={totp} onChange={e => setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    inputMode="numeric" placeholder="000000" autoFocus
+                    style={{ width: '100%', textAlign: 'center', letterSpacing: 8, fontSize: 22, fontWeight: 700, padding: '12px 14px', background: '#0F0F0F', border: '1px solid #2A2A2A', borderRadius: 12, color: '#FFFFFF', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+              )}
+              <button className="btn-primary" onClick={handleWithdraw}
+                disabled={loading || needEnroll || (needTotp && totp.length < 6)}
+                style={{ opacity: (loading || needEnroll || (needTotp && totp.length < 6)) ? 0.7 : 1, marginBottom: 10 }}>
+                {loading ? 'A processar...'
+                  : needTotp ? 'Confirmar com 2FA' : 'Confirmar levantamento'}
               </button>
               <button onClick={() => setWithdrawStep(1)} className="btn-secondary">Voltar</button>
             </>}

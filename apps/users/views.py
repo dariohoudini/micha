@@ -1188,6 +1188,36 @@ class DailyCheckinView(APIView):
         }, status=201)
 
 
+class StepUpView(APIView):
+    """POST /api/v1/auth/step-up/  { totp_code }
+
+    Gap-Coverage CH16/CH17 — establish a short windowed step-up for
+    sensitive money-out actions (payout, bank change). Verifies a fresh
+    second factor and grants a 5-minute one-time window the money
+    endpoints check for. Requires 2FA enrolled — the whole point is that
+    a session alone can never move funds.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .stepup import WINDOW_SECONDS, grant_stepup, verify_totp
+        if not request.user.two_fa_enabled:
+            return Response({'error': 'mfa_required_for_payout',
+                             'detail': 'Active a 2FA para levantar fundos.'},
+                            status=403)
+        code = (request.data.get('totp_code')
+                or request.META.get('HTTP_X_TOTP_CODE', '')).strip()
+        if not verify_totp(request.user, code):
+            log_security_event('stepup_failed', request=request,
+                               severity='WARNING',
+                               details={'user_id': request.user.id})
+            return Response({'error': 'invalid_2fa',
+                             'detail': 'Código 2FA inválido.'}, status=403)
+        grant_stepup(request.user.id, 'money_out')
+        return Response({'status': 'stepped_up',
+                         'expires_in': WINDOW_SECONDS})
+
+
 class AcceptTermsView(APIView):
     """POST /api/v1/auth/accept-terms/ — Re-accept updated T&C."""
     permission_classes = [permissions.IsAuthenticated]

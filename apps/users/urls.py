@@ -11,6 +11,7 @@ from .views import (
     DataExportView,
     SessionListView, RevokeSessionView,
     ReferralView, LoyaltyView, RedeemPointsView, DailyCheckinView,
+    StepUpView,
 )
 
 urlpatterns = [
@@ -45,6 +46,7 @@ urlpatterns = [
     path('cancel-deletion/', CancelDeletionView.as_view(), name='cancel-deletion'),
 
     # 2FA
+    path('step-up/', StepUpView.as_view(), name='step-up'),
     path('2fa/setup/', Setup2FAView.as_view(), name='2fa-setup'),
     path('2fa/enable/', Enable2FAView.as_view(), name='2fa-enable'),
     path('2fa/disable/', Disable2FAView.as_view(), name='2fa-disable'),

@@ -123,20 +123,13 @@ class BankAccountListCreateView(APIView):
         return Response(BankAccountSerializer(accounts, many=True).data)
 
     def post(self, request):
-        # FIX: Adding a bank account requires 2FA verification
-        if request.user.two_fa_enabled:
-            totp_code = request.META.get("HTTP_X_TOTP_CODE", "").strip()
-            if not totp_code:
-                return Response({'error': '2fa_required',
-                                 "detail": "Send your 2FA code in X-TOTP-Code header to add a bank account."}, status=403)
-            try:
-                import pyotp
-                totp = pyotp.TOTP(request.user.two_fa_secret)
-                if not totp.verify(totp_code, valid_window=1):
-                    log_security_event("bank_account_2fa_failed", request=request, severity="WARNING")
-                    return Response({'error': 'invalid_2fa', "detail": "Invalid 2FA code."}, status=403)
-            except Exception:
-                return Response({'error': '2fa_error', "detail": "2FA verification failed."}, status=403)
+        # Gap-Coverage CH16 — a bank-change is money-out-adjacent (it
+        # redirects where funds go), so it demands the same fresh second
+        # factor, not session-only.
+        from apps.users.stepup import check_money_out_stepup
+        ok, err, code = check_money_out_stepup(request, scope='money_out')
+        if not ok:
+            return Response(err, status=code)
 
         serializer = BankAccountSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -153,19 +146,11 @@ class BankAccountDetailView(APIView):
     def delete(self, request, pk):
         account = get_object_or_404(SellerBankAccount, pk=pk, seller=request.user)
 
-        # FIX: Deleting a bank account requires 2FA
-        if request.user.two_fa_enabled:
-            totp_code = request.META.get("HTTP_X_TOTP_CODE", "").strip()
-            if not totp_code:
-                return Response({'error': '2fa_required',
-                                 "detail": "Send your 2FA code in X-TOTP-Code header to remove a bank account."}, status=403)
-            try:
-                import pyotp
-                totp = pyotp.TOTP(request.user.two_fa_secret)
-                if not totp.verify(totp_code, valid_window=1):
-                    return Response({'error': 'invalid_2fa', "detail": "Invalid 2FA code."}, status=403)
-            except Exception:
-                return Response({'error': '2fa_error', "detail": "2FA verification failed."}, status=403)
+        # Gap-Coverage CH16 — same fresh-second-factor gate as adding.
+        from apps.users.stepup import check_money_out_stepup
+        ok, err, code = check_money_out_stepup(request, scope='money_out')
+        if not ok:
+            return Response(err, status=code)
 
         log_security_event("bank_account_removed", request=request,
                            details={"bank": account.bank_name, "user_id": request.user.id})
@@ -186,20 +171,15 @@ class RequestPayoutView(APIView):
 
     @idempotent(required=True)
     def post(self, request):
-        # FIX: Payout requires 2FA
-        if request.user.two_fa_enabled:
-            totp_code = request.META.get("HTTP_X_TOTP_CODE", "").strip()
-            if not totp_code:
-                return Response({'error': '2fa_required',
-                                 "detail": "Send your 2FA code in X-TOTP-Code header to request a payout."}, status=403)
-            try:
-                import pyotp
-                totp = pyotp.TOTP(request.user.two_fa_secret)
-                if not totp.verify(totp_code, valid_window=1):
-                    log_security_event("payout_2fa_failed", request=request, severity="CRITICAL")
-                    return Response({'error': 'invalid_2fa', "detail": "Invalid 2FA code."}, status=403)
-            except Exception:
-                return Response({'error': '2fa_error', "detail": "2FA verification failed."}, status=403)
+        # Gap-Coverage CH16 — money-out demands a FRESH SECOND FACTOR.
+        # The previous code only challenged when 2FA happened to be
+        # enabled; a seller WITHOUT 2FA could withdraw on the session
+        # alone (the #1 money hole). Now: require an enrolled 2FA and a
+        # live step-up window (or a fresh X-TOTP-Code on this request).
+        from apps.users.stepup import check_money_out_stepup
+        ok, err, code = check_money_out_stepup(request, scope='money_out')
+        if not ok:
+            return Response(err, status=code)
 
         from apps.core.money import to_decimal
 
